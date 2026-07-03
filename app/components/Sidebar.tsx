@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
-import { useState } from "react";
+import { usePathname, useRouter } from "next/navigation";
+import { useEffect, useState } from "react";
 import {
   BarChart3,
   CalendarDays,
@@ -12,9 +12,19 @@ import {
   FolderKanban,
   GanttChartSquare,
   LayoutDashboard,
+  LogOut,
   Settings,
   Truck,
+  Users,
 } from "lucide-react";
+import { supabase } from "@/lib/supabase";
+
+type EmployeeProfile = {
+  name: string;
+  position: string | null;
+  role: string | null;
+  email: string | null;
+};
 
 const menuItems = [
   { href: "/", label: "대시보드", icon: LayoutDashboard },
@@ -23,16 +33,110 @@ const menuItems = [
   { href: "/shipments", label: "출고 관리", icon: Truck },
   { href: "/calendar", label: "캘린더", icon: CalendarDays },
   { href: "/gantt", label: "간트차트", icon: GanttChartSquare },
+  { href: "/employees", label: "직원관리", icon: Users },
   { href: "/settings", label: "설정", icon: Settings },
 ];
 
 export default function Sidebar() {
   const pathname = usePathname();
-  const [isCollapsed, setIsCollapsed] = useState(false);
+  const router = useRouter();
+
+  const [isCollapsed, setIsCollapsed] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return localStorage.getItem("sidebar-collapsed") === "true";
+  });
+
+  const [userEmail, setUserEmail] = useState<string | null>(null);
+  const [employeeProfile, setEmployeeProfile] =
+    useState<EmployeeProfile | null>(null);
+
+  useEffect(() => {
+    async function loadProfile(email: string) {
+      const { data, error } = await supabase
+        .from("employees")
+        .select("name, position, role, email")
+        .eq("email", email)
+        .maybeSingle();
+
+      if (error || !data) {
+        setEmployeeProfile(null);
+        return;
+      }
+
+      setEmployeeProfile(data);
+    }
+
+    async function loadSession() {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
+      const email = session?.user?.email ?? null;
+
+      setUserEmail(email);
+
+      if (email) {
+        await loadProfile(email);
+      } else {
+        setEmployeeProfile(null);
+      }
+    }
+
+    loadSession();
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange(async (_event, session) => {
+      const email = session?.user?.email ?? null;
+
+      setUserEmail(email);
+
+      if (email) {
+        await loadProfile(email);
+      } else {
+        setEmployeeProfile(null);
+      }
+    });
+
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, []);
 
   function isActive(href: string) {
     if (href === "/") return pathname === "/";
     return pathname.startsWith(href);
+  }
+
+  function toggleSidebar() {
+    const next = !isCollapsed;
+
+    setIsCollapsed(next);
+    localStorage.setItem("sidebar-collapsed", String(next));
+
+    window.dispatchEvent(
+      new CustomEvent("sidebar-change", {
+        detail: next,
+      })
+    );
+  }
+
+  function getRoleLabel(role: string | null) {
+    if (role === "admin") return "관리자";
+    if (role === "manager") return "팀장";
+    if (role === "viewer") return "조회전용";
+    if (role === "member") return "직원";
+    return "직원";
+  }
+
+  async function handleLogout() {
+    const confirmed = window.confirm("로그아웃 하시겠습니까?");
+
+    if (!confirmed) return;
+
+    await supabase.auth.signOut();
+
+    window.location.href = "/login";
   }
 
   return (
@@ -42,34 +146,13 @@ export default function Sidebar() {
       }`}
     >
       <button
-  onClick={() => setIsCollapsed((prev) => !prev)}
-  title={isCollapsed ? "메뉴 펼치기" : "메뉴 접기"}
-  className="
-    absolute
-    -right-4
-    top-24
-    flex
-    h-8
-    w-8
-    items-center
-    justify-center
-    rounded-full
-    border
-    border-slate-700
-    bg-slate-900
-    text-slate-300
-    shadow-lg
-    transition
-    hover:bg-blue-600
-    hover:text-white
-  "
->
-  {isCollapsed ? (
-    <ChevronRight size={16} />
-  ) : (
-    <ChevronLeft size={16} />
-  )}
-</button>
+        onClick={toggleSidebar}
+        title={isCollapsed ? "메뉴 펼치기" : "메뉴 접기"}
+        className="absolute -right-4 top-24 flex h-8 w-8 items-center justify-center rounded-full border border-slate-700 bg-slate-900 text-slate-300 shadow-lg transition hover:bg-blue-600 hover:text-white"
+      >
+        {isCollapsed ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
+      </button>
+
       <div className="border-b border-slate-800 px-4 py-6">
         <div
           className={`flex items-center ${
@@ -112,7 +195,6 @@ export default function Sidebar() {
               }`}
             >
               <Icon size={19} />
-
               {!isCollapsed && <span>{item.label}</span>}
             </Link>
           );
@@ -120,33 +202,41 @@ export default function Sidebar() {
       </nav>
 
       <div className="border-t border-slate-800 p-4">
-        {!isCollapsed && (
-          <div className="mb-4 rounded-2xl bg-slate-900 p-4">
-            <p className="text-sm font-semibold">공무팀 업무관리</p>
-            <p className="mt-1 text-xs leading-5 text-slate-400">
-              프로젝트 · 업무 · 출고 일정을 통합 관리합니다.
+        {!isCollapsed ? (
+          <div className="rounded-2xl bg-slate-900 p-4">
+            <p className="text-sm font-semibold">
+              {employeeProfile?.name || "로그인 사용자"}
             </p>
+
+            <p className="mt-2 truncate text-xs text-slate-400">
+              {employeeProfile?.position || "직책 없음"}
+            </p>
+
+            <p className="mt-1 text-xs font-semibold text-blue-400">
+              {getRoleLabel(employeeProfile?.role || null)}
+            </p>
+
+            <p className="mt-3 truncate text-[11px] text-slate-500">
+              {employeeProfile?.email || userEmail || "사용자 정보 없음"}
+            </p>
+
+            <button
+              onClick={handleLogout}
+              className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl bg-slate-800 px-3 py-2 text-sm text-slate-300 transition hover:bg-red-600 hover:text-white"
+            >
+              <LogOut size={15} />
+              로그아웃
+            </button>
           </div>
+        ) : (
+          <button
+            onClick={handleLogout}
+            title="로그아웃"
+            className="flex w-full items-center justify-center rounded-xl bg-slate-800 px-3 py-3 text-sm text-slate-300 transition hover:bg-red-600 hover:text-white"
+          >
+            <LogOut size={18} />
+          </button>
         )}
-
-       <button
-  onClick={() => {
-    const next = !isCollapsed;
-
-    setIsCollapsed(next);
-    localStorage.setItem("sidebar-collapsed", String(next));
-
-    window.dispatchEvent(
-      new CustomEvent("sidebar-change", {
-        detail: next,
-      })
-    );
-  }}
-  title={isCollapsed ? "메뉴 펼치기" : "메뉴 접기"}
-  className="absolute -right-4 top-24 flex h-8 w-8 items-center justify-center rounded-full border border-slate-700 bg-slate-900 text-slate-300 shadow-lg transition hover:bg-blue-600 hover:text-white"
->
-  {isCollapsed ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
-</button>
       </div>
     </aside>
   );
