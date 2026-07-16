@@ -1,0 +1,68 @@
+[1mdiff --git a/middleware.ts b/middleware.ts[m
+[1mdeleted file mode 100644[m
+[1mindex 092d0da..0000000[m
+[1m--- a/middleware.ts[m
+[1m+++ /dev/null[m
+[36m@@ -1,61 +0,0 @@[m
+[31m-import { createServerClient } from "@supabase/ssr";[m
+[31m-import { NextResponse, type NextRequest } from "next/server";[m
+[31m-[m
+[31m-export async function middleware(request: NextRequest) {[m
+[31m-  let response = NextResponse.next({[m
+[31m-    request,[m
+[31m-  });[m
+[31m-[m
+[31m-  const supabase = createServerClient([m
+[31m-    process.env.NEXT_PUBLIC_SUPABASE_URL!,[m
+[31m-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,[m
+[31m-    {[m
+[31m-      cookies: {[m
+[31m-        getAll() {[m
+[31m-          return request.cookies.getAll();[m
+[31m-        },[m
+[31m-        setAll(cookiesToSet) {[m
+[31m-          cookiesToSet.forEach(({ name, value }) => {[m
+[31m-            request.cookies.set(name, value);[m
+[31m-          });[m
+[31m-[m
+[31m-          response = NextResponse.next({[m
+[31m-            request,[m
+[31m-          });[m
+[31m-[m
+[31m-          cookiesToSet.forEach(({ name, value, options }) => {[m
+[31m-            response.cookies.set(name, value, options);[m
+[31m-          });[m
+[31m-        },[m
+[31m-      },[m
+[31m-    }[m
+[31m-  );[m
+[31m-[m
+[31m-  const {[m
+[31m-    data: { user },[m
+[31m-  } = await supabase.auth.getUser();[m
+[31m-[m
+[31m-  const pathname = request.nextUrl.pathname;[m
+[31m-[m
+[31m-  const isLoginPage = pathname === "/login";[m
+[31m-[m
+[31m-  if (!user && !isLoginPage) {[m
+[31m-    const url = request.nextUrl.clone();[m
+[31m-    url.pathname = "/login";[m
+[31m-    return NextResponse.redirect(url);[m
+[31m-  }[m
+[31m-[m
+[31m-  if (user && isLoginPage) {[m
+[31m-    const url = request.nextUrl.clone();[m
+[31m-    url.pathname = "/";[m
+[31m-    return NextResponse.redirect(url);[m
+[31m-  }[m
+[31m-[m
+[31m-  return response;[m
+[31m-}[m
+[31m-[m
+[31m-export const config = {[m
+[31m-  matcher: [[m
+[31m-    "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",[m
+[31m-  ],[m
+[31m-};[m
+\ No newline at end of file[m

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
 
 type Employee = {
@@ -43,7 +43,7 @@ export default function EmployeesPage() {
     is_active: true,
   });
 
-  async function loadEmployees() {
+  const loadEmployees = useCallback(async function loadEmployees() {
     const { data, error } = await supabase
       .from("employees")
       .select("*")
@@ -55,11 +55,15 @@ export default function EmployeesPage() {
     }
 
     setEmployees(data || []);
-  }
+  }, []);
 
   useEffect(() => {
-    loadEmployees();
-  }, []);
+    const timer = window.setTimeout(() => {
+      void loadEmployees();
+    }, 0);
+
+    return () => window.clearTimeout(timer);
+  }, [loadEmployees]);
 
   const filteredEmployees = useMemo(() => {
     return employees.filter((employee) => {
@@ -131,7 +135,6 @@ export default function EmployeesPage() {
           phone: form.phone,
           memo: form.memo,
           is_active: form.is_active,
-          updated_at: new Date().toISOString(),
         })
         .eq("id", selectedEmployee.id);
 
@@ -174,7 +177,6 @@ export default function EmployeesPage() {
       .from("employees")
       .update({
         is_active: !employee.is_active,
-        updated_at: new Date().toISOString(),
       })
       .eq("id", employee.id);
 

@@ -1,20 +1,24 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { Plus, Search } from "lucide-react";
 import { supabase } from "@/lib/supabase";
-
-type Project = {
-  id: number;
-  project_code: string | null;
-  project_name: string;
-  process_type: string;
-  salesperson: string | null;
-  task_manager: string | null;
-  status: string | null;
-  start_date: string | null;
-  completion_due_date: string | null;
-};
+import { addActivity } from "@/lib/activity";
+import {
+  getProjects,
+  normalizeAssemblyVendor,
+  type ProjectListItem,
+} from "@/lib/projects";
+import { Badge, type BadgeVariant } from "@/components/ui/Badge";
+import { Button } from "@/components/ui/Button";
+import { EmptyState } from "@/components/ui/EmptyState";
+import {
+  getProjectStatusLabel,
+  isProjectCompleted,
+  isProjectInProgress,
+  normalizeProjectStatus,
+} from "@/lib/status";
 
 type TaskTemplate = {
   id: number;
@@ -27,7 +31,7 @@ type TaskTemplate = {
 export default function ProjectsPage() {
   const [showModal, setShowModal] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
-  const [projects, setProjects] = useState<Project[]>([]);
+  const [projects, setProjects] = useState<ProjectListItem[]>([]);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("전체");
   const [processFilter, setProcessFilter] = useState("전체");
@@ -36,32 +40,32 @@ export default function ProjectsPage() {
   const [form, setForm] = useState({
     project_code: "",
     project_name: "",
+    client_name: "",
+    assembly_vendor: "",
     process_type: "MH",
     salesperson: "이승재",
+    site_address: "",
     task_manager: "김초롱",
     start_date: "",
-    completion_due_date: "",
+    end_date: "",
   });
 
   const salesList = ["이승재", "안성현", "고민구", "홍석봉"];
   const managerList = ["김초롱", "류창석", "이재성", "김한솔"];
   const processList = ["MH", "SH", "AS", "본납-문틀", "본납-도어"];
 
-  async function fetchProjects() {
-  const { data, error } = await supabase
-    .from("projects")
-    .select("*")
-    .order("id", { ascending: false });
+  const fetchProjects = useCallback(async function fetchProjects() {
+    const { data, error } = await getProjects();
 
-  if (error) {
-    alert(error.message);
-    return;
-  }
+    if (error) {
+      alert(error.message);
+      return;
+    }
 
-  setProjects(data || []);
-}
+    setProjects(data);
+  }, []);
 
-async function loadRole() {
+const loadRole = useCallback(async function loadRole() {
   const {
     data: { session },
   } = await supabase.auth.getSession();
@@ -80,13 +84,17 @@ async function loadRole() {
   }
 
   setIsAdmin(data?.role === "admin");
-}
+}, []);
 
 
   useEffect(() => {
-  fetchProjects();
-  loadRole();
-  }, []);
+    const timer = window.setTimeout(() => {
+      void fetchProjects();
+      void loadRole();
+    }, 0);
+
+    return () => window.clearTimeout(timer);
+  }, [fetchProjects, loadRole]);
 
   async function addProject() {
     if (isSaving) return;
@@ -137,12 +145,15 @@ async function loadRole() {
           {
             project_code: form.project_code.trim(),
             project_name: form.project_name.trim(),
+            client_name: form.client_name.trim() || null,
+            assembly_vendor: normalizeAssemblyVendor(form.assembly_vendor),
             process_type: form.process_type,
             salesperson: form.salesperson,
+            site_address: form.site_address.trim() || null,
             task_manager: form.task_manager,
-            status: "진행중",
+            status: "in_progress",
             start_date: form.start_date || null,
-            completion_due_date: form.completion_due_date || null,
+            end_date: form.end_date || null,
           },
         ])
         .select()
@@ -175,30 +186,27 @@ async function loadRole() {
       setForm({
         project_code: "",
         project_name: "",
+        client_name: "",
+        assembly_vendor: "",
         process_type: "MH",
         salesperson: "이승재",
+        site_address: "",
         task_manager: "김초롱",
         start_date: "",
-        completion_due_date: "",
+        end_date: "",
       });
 
       setShowModal(false);
-      fetchProjects();
-      async function loadRole() {
-      const {
-        data: { session },
-        } = await supabase.auth.getSession();
+      await fetchProjects();
 
-        if (!session?.user?.email) return;
-
-        const { data } = await supabase
-        .from("employees")
-        .select("role")
-        .eq("email", session.user.email)
-        .maybeSingle();
-
-        setIsAdmin(data?.role === "admin");
-        }
+      await addActivity({
+        actionType: "project_create",
+        targetType: "project",
+        targetId: projectData.id,
+        projectId: projectData.id,
+        title: "프로젝트 생성",
+        description: `${projectData.project_code || "-"} - ${projectData.project_name}`,
+      });
 
       alert("프로젝트와 업무가 자동 생성되었습니다.");
     } finally {
@@ -247,34 +255,44 @@ async function loadRole() {
     alert("프로젝트가 삭제되었습니다.");
   }
 
-  function getStatusBadge(status: string | null) {
-    if (status === "완료") {
-      return "bg-emerald-100 text-emerald-700 border-emerald-200";
+  function getStatusBadgeVariant(status: string | null): BadgeVariant {
+    const statusValue = normalizeProjectStatus(status);
+
+    if (statusValue === "completed") {
+      return "success";
     }
 
-    if (status === "진행중") {
-      return "bg-blue-100 text-blue-700 border-blue-200";
+    if (statusValue === "in_progress") {
+      return "info";
     }
 
-    if (status === "지연") {
-      return "bg-red-100 text-red-700 border-red-200";
+    if (statusValue === "hold") {
+      return "warning";
     }
 
-    return "bg-slate-100 text-slate-600 border-slate-200";
+    if (statusValue === "pending") {
+      return "default";
+    }
+
+    return "default";
+  }
+
+  function formatDate(date: string | null) {
+    return date ? date.slice(0, 10) : "-";
   }
 
   const totalProjects = projects.length;
 
   const activeProjects = projects.filter(
-    (project) => project.status === "진행중"
+    (project) => isProjectInProgress(project.status)
   ).length;
 
   const completedProjects = projects.filter(
-    (project) => project.status === "완료"
+    (project) => isProjectCompleted(project.status)
   ).length;
 
   const delayedProjects = projects.filter(
-    (project) => project.status === "지연"
+    (project) => normalizeProjectStatus(project.status) === "hold"
   ).length;
 
   const filteredProjects = projects.filter((project) => {
@@ -284,12 +302,14 @@ async function loadRole() {
       keyword === "" ||
       project.project_name.toLowerCase().includes(keyword) ||
       (project.project_code || "").toLowerCase().includes(keyword) ||
+      (project.assembly_vendor || "").toLowerCase().includes(keyword) ||
       project.process_type.toLowerCase().includes(keyword) ||
       (project.salesperson || "").toLowerCase().includes(keyword) ||
       (project.task_manager || "").toLowerCase().includes(keyword);
 
     const statusMatched =
-      statusFilter === "전체" || project.status === statusFilter;
+      statusFilter === "전체" ||
+      normalizeProjectStatus(project.status) === normalizeProjectStatus(statusFilter);
 
     const processMatched =
       processFilter === "전체" || project.process_type === processFilter;
@@ -298,71 +318,76 @@ async function loadRole() {
   });
 
   return (
-    <div className="min-h-screen bg-slate-100 p-8">
-      <div className="mb-8 flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold text-slate-900">프로젝트 관리</h1>
-          <p className="mt-1 text-sm text-slate-500">
+    <div className="min-h-screen bg-slate-50 px-6 py-7 text-slate-900 lg:px-8">
+      <div className="mb-5 flex flex-col gap-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
+          <h1 className="text-3xl font-bold tracking-tight text-slate-950">프로젝트 관리</h1>
+          <p className="mt-2 text-sm leading-6 text-slate-500">
             프로젝트 등록, 진행상태, 담당자를 통합 관리합니다.
           </p>
         </div>
 
-        <button
+        <Button
           onClick={() => setShowModal(true)}
-          className="rounded-xl bg-blue-600 px-4 py-2 text-white shadow-sm hover:bg-blue-700"
+          variant="primary"
+          className="flex shrink-0 items-center justify-center gap-2 rounded-2xl px-4 py-2.5 text-sm font-medium shadow-sm transition-colors hover:bg-blue-700"
         >
+          <Plus size={16} />
           프로젝트 등록
-        </button>
+        </Button>
       </div>
 
-      <div className="mb-6 grid grid-cols-4 gap-5">
-        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-          <p className="text-sm text-slate-500">전체 프로젝트</p>
-          <p className="mt-2 text-3xl font-bold text-slate-900">
+      <div className="mb-5 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <p className="text-sm font-medium text-slate-500">전체 프로젝트</p>
+          <p className="mt-1 text-3xl font-bold tracking-tight text-slate-950">
             {totalProjects}
           </p>
         </div>
 
-        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-          <p className="text-sm text-slate-500">진행중</p>
-          <p className="mt-2 text-3xl font-bold text-blue-600">
+        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <p className="text-sm font-medium text-slate-500">진행중</p>
+          <p className="mt-1 text-3xl font-bold tracking-tight text-blue-600">
             {activeProjects}
           </p>
         </div>
 
-        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-          <p className="text-sm text-slate-500">완료</p>
-          <p className="mt-2 text-3xl font-bold text-emerald-600">
+        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <p className="text-sm font-medium text-slate-500">완료</p>
+          <p className="mt-1 text-3xl font-bold tracking-tight text-emerald-600">
             {completedProjects}
           </p>
         </div>
 
-        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-          <p className="text-sm text-slate-500">지연</p>
-          <p className="mt-2 text-3xl font-bold text-red-600">
+        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <p className="text-sm font-medium text-slate-500">지연</p>
+          <p className="mt-1 text-3xl font-bold tracking-tight text-red-600">
             {delayedProjects}
           </p>
         </div>
       </div>
 
-      <div className="mb-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-        <div className="grid grid-cols-3 gap-4">
-          <div>
-            <label className="mb-1 block text-sm text-slate-500">검색</label>
-            <input
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="프로젝트명, 코드, 공정, 담당자 검색"
-              className="w-full rounded-xl border border-slate-200 px-4 py-2 outline-none focus:border-blue-500"
-            />
+      <div className="mb-5 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+        <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,1.5fr)_minmax(160px,0.45fr)_minmax(160px,0.45fr)]">
+          <div className="min-w-0">
+            <label className="mb-1.5 block text-xs font-medium text-slate-500">검색</label>
+            <div className="flex h-10 items-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-3 transition-colors focus-within:border-blue-300 focus-within:bg-white">
+              <Search size={16} className="shrink-0 text-slate-400" />
+              <input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="프로젝트명, 코드, 공정, 담당자 검색"
+                className="h-full w-full bg-transparent text-sm text-slate-700 outline-none placeholder:text-slate-400"
+              />
+            </div>
           </div>
 
           <div>
-            <label className="mb-1 block text-sm text-slate-500">상태</label>
+            <label className="mb-1.5 block text-xs font-medium text-slate-500">상태</label>
             <select
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value)}
-              className="w-full rounded-xl border border-slate-200 px-4 py-2 outline-none focus:border-blue-500"
+              className="h-10 w-full rounded-2xl border border-slate-200 bg-slate-50 px-3 text-sm text-slate-700 outline-none transition-colors focus:border-blue-300 focus:bg-white"
             >
               <option value="전체">전체</option>
               <option value="진행중">진행중</option>
@@ -373,11 +398,11 @@ async function loadRole() {
           </div>
 
           <div>
-            <label className="mb-1 block text-sm text-slate-500">공정</label>
+            <label className="mb-1.5 block text-xs font-medium text-slate-500">공정</label>
             <select
               value={processFilter}
               onChange={(e) => setProcessFilter(e.target.value)}
-              className="w-full rounded-xl border border-slate-200 px-4 py-2 outline-none focus:border-blue-500"
+              className="h-10 w-full rounded-2xl border border-slate-200 bg-slate-50 px-3 text-sm text-slate-700 outline-none transition-colors focus:border-blue-300 focus:bg-white"
             >
               <option value="전체">전체</option>
               {processList.map((process) => (
@@ -390,83 +415,120 @@ async function loadRole() {
         </div>
       </div>
 
-      <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-        <table className="w-full min-w-[1050px]">
-          <thead>
-            <tr className="border-b text-sm text-slate-500">
-              <th className="text-left p-2">프로젝트코드</th>
-              <th className="text-left p-2">프로젝트명</th>
-              <th className="text-left p-2">공정</th>
-              <th className="text-left p-2">영업자</th>
-              <th className="text-left p-2">업무담당자</th>
-              <th className="text-left p-2">시작일</th>
-              <th className="text-left p-2">준공예정일</th>
-              <th className="text-left p-2">상태</th>
-              <th className="text-left p-2">관리</th>
-            </tr>
-          </thead>
+      <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="mb-4 flex items-center justify-between gap-3">
+          <div>
+            <h2 className="text-lg font-bold tracking-tight text-slate-950">프로젝트 목록</h2>
+            <p className="mt-1 text-sm text-slate-500">
+              검색 및 필터 조건에 맞는 프로젝트를 표시합니다.
+            </p>
+          </div>
+          <span className="shrink-0 rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600">
+            {filteredProjects.length}건
+          </span>
+        </div>
 
-          <tbody>
-            {filteredProjects.map((project) => (
-              <tr key={project.id} className="border-b hover:bg-slate-50">
-                <td className="p-2">{project.project_code}</td>
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[1180px]">
+            <colgroup>
+              <col className="w-[24%]" />
+              <col className="w-[14%]" />
+              <col className="w-[12%]" />
+              <col className="w-[12%]" />
+              <col className="w-[10%]" />
+              <col className="w-[10%]" />
+              <col className="w-[10%]" />
+              <col className="w-[9%]" />
+              <col className="w-[5%]" />
+            </colgroup>
+            <thead>
+              <tr className="border-y border-slate-200 bg-slate-50 text-xs font-semibold text-slate-500">
+                <th className="px-3 py-3 text-left">프로젝트명</th>
+                <th className="px-3 py-3 text-left">발주처</th>
+                <th className="px-3 py-3 text-left">조립처</th>
+                <th className="px-3 py-3 text-left">담당자</th>
+                <th className="px-3 py-3 text-left">진행상태</th>
+                <th className="px-3 py-3 text-left">시작일</th>
+                <th className="px-3 py-3 text-left">종료일</th>
+                <th className="px-3 py-3 text-left">등록일</th>
+                <th className="px-3 py-3 text-left">관리</th>
+              </tr>
+            </thead>
 
-                <td className="p-2">
-                  <Link
-                    href={`/projects/${project.id}`}
-                    className="font-medium text-blue-600 hover:underline"
-                  >
-                    {project.project_name}
-                  </Link>
-                </td>
-
-                <td className="p-2">{project.process_type}</td>
-                <td className="p-2">{project.salesperson}</td>
-                <td className="p-2">{project.task_manager}</td>
-                <td className="p-2">{project.start_date || "-"}</td>
-                <td className="p-2">{project.completion_due_date || "-"}</td>
-
-                <td className="p-2">
-                  <span
-                    className={`rounded-full border px-3 py-1 text-xs font-semibold ${getStatusBadge(
-                      project.status
-                    )}`}
-                  >
-                    {project.status || "미정"}
-                  </span>
-                </td>
-
-                <td className="p-2">
-                  <div className="flex gap-2">
+            <tbody>
+              {filteredProjects.map((project) => (
+                <tr
+                  key={project.id}
+                  className="border-b border-slate-100 text-sm text-slate-700 transition-colors hover:bg-slate-50"
+                >
+                  <td className="px-3 py-3.5">
                     <Link
                       href={`/projects/${project.id}`}
-                      className="rounded-lg bg-blue-600 px-3 py-1 text-sm text-white hover:bg-blue-700"
+                      className="font-semibold text-slate-950 hover:text-blue-600 hover:underline"
                     >
-                      수정
+                      {project.project_name}
                     </Link>
+                    <div className="mt-1 text-xs text-slate-400">
+                      {project.project_code || "코드 없음"}
+                    </div>
+                  </td>
 
-                    {isAdmin && (
-                     <button
-                      onClick={() => deleteProject(project.id)}
-                      className="rounded-lg bg-red-600 px-3 py-1 text-sm text-white hover:bg-red-700"
-                       >
-                         삭제
-                      </button>
+                  <td className="px-3 py-3.5">{project.client_name || "-"}</td>
+                  <td className="px-3 py-3.5">{project.assembly_vendor || "-"}</td>
+                  <td className="px-3 py-3.5">{project.task_manager || "-"}</td>
+                  <td className="px-3 py-3.5">
+                    <Badge
+                      variant={getStatusBadgeVariant(project.status)}
+                      className="font-semibold"
+                    >
+                      {getProjectStatusLabel(project.status)}
+                    </Badge>
+                  </td>
+                  <td className="px-3 py-3.5 text-slate-500">
+                    {formatDate(project.start_date)}
+                  </td>
+                  <td className="px-3 py-3.5 text-slate-500">
+                    {formatDate(project.end_date || project.completion_due_date)}
+                  </td>
+                  <td className="px-3 py-3.5 text-slate-500">
+                    {formatDate(project.created_at)}
+                  </td>
+
+                  <td className="px-3 py-3.5">
+                    <div className="flex gap-2">
+                      <Link
+                        href={`/projects/${project.id}`}
+                        className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-blue-600 transition-colors hover:border-blue-200 hover:bg-blue-50"
+                      >
+                        수정
+                      </Link>
+
+                      {isAdmin && (
+                        <button
+                          onClick={() => deleteProject(project.id)}
+                          className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-red-600 transition-colors hover:border-red-200 hover:bg-red-50"
+                        >
+                          삭제
+                        </button>
                       )}
-                  </div>
-                </td>
-              </tr>
-            ))}
+                    </div>
+                  </td>
+                </tr>
+              ))}
 
-            {filteredProjects.length === 0 && (
-              <tr>
-                <td colSpan={9} className="p-6 text-center text-slate-500">
-                  조회된 프로젝트가 없습니다.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
+              {filteredProjects.length === 0 && (
+                <tr>
+                  <td colSpan={9} className="p-0">
+                    <EmptyState
+                      message="조회된 프로젝트가 없습니다."
+                      className="rounded-2xl bg-slate-50 p-8 text-center text-sm text-slate-500"
+                    />
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       {showModal && (
@@ -493,6 +555,24 @@ async function loadRole() {
                 }
               />
 
+              <input
+                className="w-full rounded-xl border p-2"
+                placeholder="발주처"
+                value={form.client_name}
+                onChange={(e) =>
+                  setForm({ ...form, client_name: e.target.value })
+                }
+              />
+
+              <input
+                className="w-full rounded-xl border p-2"
+                placeholder="조립처"
+                value={form.assembly_vendor}
+                onChange={(e) =>
+                  setForm({ ...form, assembly_vendor: e.target.value })
+                }
+              />
+
               <select
                 className="w-full rounded-xl border p-2"
                 value={form.process_type}
@@ -504,8 +584,17 @@ async function loadRole() {
                   <option key={process} value={process}>
                     {process}
                   </option>
-                ))}
+                  ))}
               </select>
+
+              <input
+                className="w-full rounded-xl border p-2"
+                placeholder="현장주소"
+                value={form.site_address}
+                onChange={(e) =>
+                  setForm({ ...form, site_address: e.target.value })
+                }
+              />
 
               <select
                 className="w-full rounded-xl border p-2"
@@ -547,11 +636,11 @@ async function loadRole() {
               <input
                 type="date"
                 className="w-full rounded-xl border p-2"
-                value={form.completion_due_date}
+                value={form.end_date}
                 onChange={(e) =>
                   setForm({
                     ...form,
-                    completion_due_date: e.target.value,
+                    end_date: e.target.value,
                   })
                 }
               />

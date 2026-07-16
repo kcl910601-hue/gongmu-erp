@@ -1,0 +1,82 @@
+table_name,column_name,data_type,is_nullable,column_default
+activity_logs,id,bigint,NO,null
+activity_logs,created_at,timestamp with time zone,YES,now()
+activity_logs,employee_name,text,YES,null
+activity_logs,employee_email,text,YES,null
+activity_logs,action_type,text,NO,null
+activity_logs,target_type,text,YES,null
+activity_logs,target_id,bigint,YES,null
+activity_logs,project_id,bigint,YES,null
+activity_logs,title,text,NO,null
+activity_logs,description,text,YES,null
+employees,id,bigint,NO,null
+employees,name,text,NO,null
+employees,position,text,YES,null
+employees,active,boolean,YES,true
+employees,created_at,timestamp with time zone,YES,now()
+employees,email,text,YES,null
+employees,auth_user_id,uuid,YES,null
+employees,role,text,YES,null
+project_files,id,uuid,NO,gen_random_uuid()
+project_files,project_id,bigint,NO,null
+project_files,file_name,text,NO,null
+project_files,file_type,text,NO,null
+project_files,storage_path,text,NO,null
+project_files,file_size,bigint,YES,null
+project_files,mime_type,text,YES,null
+project_files,description,text,YES,null
+project_files,uploaded_by,text,YES,null
+project_files,uploaded_by_email,text,YES,null
+project_files,created_at,timestamp with time zone,NO,now()
+projects,project_name,text,NO,null
+projects,process_type,text,NO,null
+projects,salesperson,text,YES,null
+projects,task_manager,text,YES,null
+projects,status,text,YES,null
+projects,start_date,date,YES,null
+projects,completion_due_date,date,YES,null
+projects,created_at,timestamp with time zone,YES,now()
+projects,id,bigint,NO,null
+projects,project_code,text,YES,null
+projects,client_name,text,YES,null
+projects,site_address,text,YES,null
+projects,manager_id,uuid,YES,null
+projects,end_date,date,YES,null
+projects,memo,text,YES,null
+projects,updated_at,timestamp with time zone,YES,now()
+projects,assembly_vendor,text,YES,null
+shipments,id,bigint,NO,null
+shipments,project_id,bigint,NO,null
+shipments,shipment_round,bigint,YES,null
+shipments,planned_date,date,YES,null
+shipments,actual_date,date,YES,null
+shipments,memo,text,YES,null
+shipments,created_at,timestamp with time zone,YES,now()
+shipments,task_id,bigint,YES,null
+shipments,destination,text,YES,null
+shipments,receiver,text,YES,null
+shipments,driver_phone,text,YES,null
+shipments,site_name,text,YES,null
+shipments,item_name,text,YES,null
+shipments,quantity,integer,YES,null
+shipments,shipment_date,date,YES,null
+shipments,vehicle_number,text,YES,null
+shipments,driver_name,text,YES,null
+shipments,status,text,YES,'출고대기'::text
+task_templates,id,bigint,NO,null
+task_templates,process_type,text,NO,null
+task_templates,task_order,integer,NO,null
+task_templates,task_name,text,NO,null
+task_templates,task_type,text,NO,null
+task_templates,created_at,timestamp with time zone,YES,now()
+tasks,id,bigint,NO,null
+tasks,project_id,bigint,NO,null
+tasks,task_type,text,YES,null
+tasks,task_name,text,YES,null
+tasks,assignee,text,YES,null
+tasks,status,text,YES,null
+tasks,due_date,date,YES,null
+tasks,completed_date,date,YES,null
+tasks,created_at,timestamp with time zone,YES,now()
+tasks,task_order,integer,YES,null
+tasks,start_date,date,YES,null
