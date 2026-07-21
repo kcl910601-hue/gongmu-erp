@@ -5,6 +5,11 @@ import { useParams } from "next/navigation";
 import { ChevronDown, ChevronRight, GripVertical, Plus, Star } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { addActivity } from "@/lib/activity";
+import {
+  createAuditChanges,
+  PROJECT_AUDIT_FIELDS,
+  TASK_AUDIT_FIELDS,
+} from "@/lib/audit";
 import { normalizeAssemblyVendor } from "@/lib/projects";
 import {
   addFavoriteProject,
@@ -18,7 +23,24 @@ import { Badge, type BadgeVariant } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ProgressBar } from "@/components/ui/ProgressBar";
+import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
+import { EditableCombobox } from "@/components/ui/EditableCombobox";
 import { ProjectFiles } from "@/components/files/ProjectFiles";
+import ActivityTimeline from "@/components/activity/ActivityTimeline";
+import ProjectTimeline from "@/components/activity/ProjectTimeline";
+import { ProjectSectionDialog, type ProjectSectionDialogValue } from "@/components/projects/ProjectSectionDialog";
+import { getAllProcessTypes } from "@/lib/process-types";
+import {
+  calculateSectionProgress,
+  createProjectSectionWithTasks,
+  deleteProjectSectionWithTasks,
+  getComputedSectionStatus,
+  getProjectSections,
+} from "@/lib/project-sections";
+import { toast } from "@/lib/toast";
+import { getProjectEntryOptions } from "@/lib/project-master-data";
+import type { ProcessType } from "@/types/process-type";
+import type { ProjectSection } from "@/types/project-section";
 import {
   getProjectStatusLabel,
   getTaskStatusLabel,
@@ -48,6 +70,7 @@ type Project = {
 type Task = {
   id: number;
   project_id: number;
+  project_section_id?: number | null;
   task_order: number | null;
   task_type: string | null;
   task_name: string | null;
@@ -65,8 +88,6 @@ type Employee = {
 };
 
 const statusList = ["pending", "in_progress", "completed"];
-const processList = ["MH", "SH", "AS", "본관-문화", "본관-제어"];
-const salesList = ["이승민", "안성준", "고민규", "박석보"];
 
 export default function ProjectDetail() {
   const params = useParams();
@@ -74,6 +95,20 @@ export default function ProjectDetail() {
 
   const [project, setProject] = useState<Project | null>(null);
   const [tasks, setTasks] = useState<Task[]>([]);
+  const [sections, setSections] = useState<ProjectSection[]>([]);
+  const [processTypes, setProcessTypes] = useState<ProcessType[]>([]);
+  const [openSectionIds, setOpenSectionIds] = useState<Set<number>>(new Set());
+  const [selectedTaskSectionId, setSelectedTaskSectionId] = useState<number | null>(null);
+  const [sectionDialog, setSectionDialog] = useState<{ mode: "add" | "edit"; source: ProjectSection | null; target: ProjectSection | null } | null>(null);
+  const [isSavingSection, setIsSavingSection] = useState(false);
+  const [sectionPendingDelete, setSectionPendingDelete] = useState<{
+    section: ProjectSection;
+    taskCount: number;
+    completedCount: number;
+  } | null>(null);
+  const [isDeletingSection, setIsDeletingSection] = useState(false);
+  const [salespersonOptions, setSalespersonOptions] = useState<Array<{ value: string; label: string }>>([]);
+  const [assemblyVendorOptions, setAssemblyVendorOptions] = useState<string[]>([]);
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [isUpdating, setIsUpdating] = useState(false);
   const [isEditingProject, setIsEditingProject] = useState(false);
@@ -147,6 +182,31 @@ export default function ProjectDetail() {
     }
 
     setTasks(taskData || []);
+
+    const [sectionResult, processTypeResult, entryOptionResult] = await Promise.all([
+      getProjectSections(Number(projectId)),
+      getAllProcessTypes(),
+      getProjectEntryOptions(),
+    ]);
+    if (sectionResult.error || processTypeResult.error) {
+      alert(sectionResult.error?.message || processTypeResult.error?.message || "공정 정보를 불러오지 못했습니다.");
+      return;
+    }
+    const sortedSections = [...sectionResult.data].sort((a, b) => {
+      const aType = processTypeResult.data.find((item) => item.code === a.process_type);
+      const bType = processTypeResult.data.find((item) => item.code === b.process_type);
+      return (aType?.sort_order ?? a.sort_order) - (bType?.sort_order ?? b.sort_order)
+        || (aType?.name ?? a.process_type).localeCompare(bType?.name ?? b.process_type, "ko-KR")
+        || a.created_at.localeCompare(b.created_at);
+    });
+    setSections(sortedSections);
+    setProcessTypes(processTypeResult.data);
+    if (entryOptionResult.error) {
+      console.error("project entry options error:", entryOptionResult.error);
+    }
+    setSalespersonOptions(entryOptionResult.data.salespeople);
+    setAssemblyVendorOptions(entryOptionResult.data.assemblyVendors);
+    setOpenSectionIds((current) => current.size > 0 ? current : new Set(sortedSections[0] ? [sortedSections[0].id] : []));
 
     const { data: employeeData, error: employeeError } = await supabase
       .from("employees")
@@ -368,6 +428,18 @@ export default function ProjectDetail() {
 
     if (shipmentError) {
       alert(shipmentError.message);
+      return;
+    }
+
+    if (status === "출고대기") {
+      await addActivity({
+        type: "shipment_create",
+        title: "출고 생성",
+        description: `${task.task_name || "출고 업무"}에 대한 출고 대기를 생성했습니다.`,
+        projectId: project.id,
+        targetType: "shipment",
+        metadata: { taskId: task.id },
+      });
     }
   }
 
@@ -381,20 +453,33 @@ export default function ProjectDetail() {
 
     setIsUpdating(true);
 
+    const nextProjectData = {
+      project_code: projectForm.project_code.trim(),
+      project_name: projectForm.project_name.trim(),
+      client_name: projectForm.client_name.trim() || null,
+      assembly_vendor: normalizeAssemblyVendor(projectForm.assembly_vendor),
+      process_type: projectForm.process_type,
+      salesperson: projectForm.salesperson.trim() || null,
+      site_address: projectForm.site_address.trim() || null,
+      task_manager: projectForm.task_manager || null,
+      start_date: projectForm.start_date || null,
+      end_date: projectForm.end_date || null,
+    };
+    const changes = createAuditChanges(
+      project as unknown as Record<string, unknown>,
+      nextProjectData,
+      PROJECT_AUDIT_FIELDS
+    );
+
+    if (changes.length === 0) {
+      setIsEditingProject(false);
+      setIsUpdating(false);
+      return;
+    }
+
     const { data, error } = await supabase
       .from("projects")
-      .update({
-        project_code: projectForm.project_code.trim(),
-        project_name: projectForm.project_name.trim(),
-        client_name: projectForm.client_name.trim() || null,
-        assembly_vendor: normalizeAssemblyVendor(projectForm.assembly_vendor),
-        process_type: projectForm.process_type,
-        salesperson: projectForm.salesperson || null,
-        site_address: projectForm.site_address.trim() || null,
-        task_manager: projectForm.task_manager || null,
-        start_date: projectForm.start_date || null,
-        end_date: projectForm.end_date || null,
-      })
+      .update(nextProjectData)
       .eq("id", project.id)
       .select()
       .single();
@@ -406,6 +491,15 @@ export default function ProjectDetail() {
     }
 
     setProject(data);
+    await addActivity({
+      type: "project_update",
+      title: `프로젝트 수정 · ${changes.length}개 항목 변경`,
+      description: `${data.project_name} 프로젝트 정보를 수정했습니다.`,
+      projectId: data.id,
+      targetType: "project",
+      targetId: data.id,
+      metadata: { changes },
+    });
     setIsEditingProject(false);
     setIsUpdating(false);
   }
@@ -462,6 +556,24 @@ export default function ProjectDetail() {
       ...project,
       status: nextProjectStatus,
     });
+
+    const changes = createAuditChanges(
+      project as unknown as Record<string, unknown>,
+      { ...project, status: nextProjectStatus } as unknown as Record<
+        string,
+        unknown
+      >,
+      PROJECT_AUDIT_FIELDS
+    );
+    await addActivity({
+      type: "project_update",
+      title: `프로젝트 수정 · ${changes.length}개 항목 변경`,
+      description: `${project.project_name} 프로젝트 상태가 변경되었습니다.`,
+      projectId: project.id,
+      targetType: "project",
+      targetId: project.id,
+      metadata: { changes },
+    });
   }
 
   async function saveTaskOrders(nextTasks: Task[]) {
@@ -513,6 +625,32 @@ export default function ProjectDetail() {
 
     if (savedTasks) {
       setTasks(savedTasks);
+      const savedDraggedTask = savedTasks.find(
+        (task) => task.id === draggedTask.id
+      );
+      const previousDraggedTask = tasks.find(
+        (task) => task.id === draggedTask.id
+      );
+
+      if (savedDraggedTask && previousDraggedTask) {
+        const changes = createAuditChanges(
+          previousDraggedTask as unknown as Record<string, unknown>,
+          savedDraggedTask as unknown as Record<string, unknown>,
+          TASK_AUDIT_FIELDS
+        );
+
+        if (changes.length > 0) {
+          await addActivity({
+            type: "task_update",
+            title: `업무 수정 · ${changes.length}개 항목 변경`,
+            description: `${savedDraggedTask.task_name || "업무"} 순서를 변경했습니다.`,
+            projectId: savedDraggedTask.project_id,
+            targetType: "task",
+            targetId: savedDraggedTask.id,
+            metadata: { changes },
+          });
+        }
+      }
     }
 
     setDraggingTaskId(null);
@@ -531,6 +669,7 @@ export default function ProjectDetail() {
       .insert([
         {
           project_id: project.id,
+          project_section_id: task.project_section_id ?? null,
           task_order: currentIndex + 2,
           task_name: `${task.task_name || "업무"}(복사본)`,
           task_type: task.task_type,
@@ -560,11 +699,20 @@ export default function ProjectDetail() {
       await updateProjectStatus(savedTasks);
     }
 
+    await addActivity({
+      type: "task_create",
+      title: "업무 생성",
+      description: `${data.task_name || "업무"}을(를) 생성했습니다.`,
+      projectId: project.id,
+      targetType: "task",
+      targetId: data.id,
+    });
+
     setIsUpdating(false);
   }
 
   async function addTask() {
-    if (!project || isSavingTask) return;
+    if (!project || !selectedTaskSectionId || isSavingTask) return;
 
     if (!taskForm.task_name.trim()) {
       alert("업무명을 입력하세요.");
@@ -578,9 +726,10 @@ export default function ProjectDetail() {
 
     setIsSavingTask(true);
 
+    const sectionTasks = tasks.filter((task) => task.project_section_id === selectedTaskSectionId);
     const maxOrder =
-      tasks.length > 0
-        ? Math.max(...tasks.map((task) => task.task_order || 0))
+      sectionTasks.length > 0
+        ? Math.max(...sectionTasks.map((task) => task.task_order || 0))
         : 0;
 
     const savedAssignee =
@@ -593,6 +742,7 @@ export default function ProjectDetail() {
       .insert([
         {
           project_id: project.id,
+          project_section_id: selectedTaskSectionId,
           task_order: maxOrder + 1,
           task_name: taskForm.task_name.trim(),
           task_type: taskForm.task_type.trim(),
@@ -621,6 +771,14 @@ export default function ProjectDetail() {
 
     setTasks(nextTasks);
     recordTaskChange(data as Task);
+    await addActivity({
+      type: "task_create",
+      title: "업무 생성",
+      description: `${data.task_name || "업무"}을(를) 생성했습니다.`,
+      projectId: project.id,
+      targetType: "task",
+      targetId: data.id,
+    });
     setTaskForm({
       task_name: "",
       task_type: "",
@@ -630,6 +788,8 @@ export default function ProjectDetail() {
       status: "pending",
     });
     setShowTaskModal(false);
+    setOpenSectionIds((current) => new Set(current).add(selectedTaskSectionId));
+    setSelectedTaskSectionId(null);
     setIsSavingTask(false);
   }
 
@@ -661,7 +821,23 @@ export default function ProjectDetail() {
     );
 
     if (updatedTask) {
+      const changes = createAuditChanges(
+        targetTask as unknown as Record<string, unknown>,
+        updatedTask as unknown as Record<string, unknown>,
+        TASK_AUDIT_FIELDS
+      );
       recordTaskChange(updatedTask);
+      await addActivity({
+        type: "task_assignee_change",
+        description: `${updatedTask.task_name || "업무"} 담당자를 ${
+          savedAssignee || "미배정"
+        }(으)로 변경했습니다.`,
+        projectId: updatedTask.project_id,
+        targetType: "task",
+        targetId: updatedTask.id,
+        title: `업무 담당자 변경 · ${changes.length}개 항목 변경`,
+        metadata: { assignee: savedAssignee, changes },
+      });
     }
 
     setIsUpdating(false);
@@ -697,7 +873,21 @@ export default function ProjectDetail() {
     );
 
     if (updatedTask) {
+      const changes = createAuditChanges(
+        targetTask as unknown as Record<string, unknown>,
+        updatedTask as unknown as Record<string, unknown>,
+        TASK_AUDIT_FIELDS
+      );
       recordTaskChange(updatedTask);
+      await addActivity({
+        type: "task_update",
+        title: `업무 수정 · ${changes.length}개 항목 변경`,
+        description: `${updatedTask.task_name || "업무"} 시작일을 변경했습니다.`,
+        projectId: updatedTask.project_id,
+        targetType: "task",
+        targetId: updatedTask.id,
+        metadata: { changes },
+      });
     }
 
     setIsUpdating(false);
@@ -729,7 +919,21 @@ export default function ProjectDetail() {
     );
 
     if (updatedTask) {
+      const changes = createAuditChanges(
+        targetTask as unknown as Record<string, unknown>,
+        updatedTask as unknown as Record<string, unknown>,
+        TASK_AUDIT_FIELDS
+      );
       recordTaskChange(updatedTask);
+      await addActivity({
+        type: "task_update",
+        title: `업무 수정 · ${changes.length}개 항목 변경`,
+        description: `${updatedTask.task_name || "업무"} 마감일을 변경했습니다.`,
+        projectId: updatedTask.project_id,
+        targetType: "task",
+        targetId: updatedTask.id,
+        metadata: { changes },
+      });
     }
 
     setIsUpdating(false);
@@ -773,18 +977,38 @@ export default function ProjectDetail() {
       return;
     }
 
-    if (isTaskCompleted(newStatus)) {
-  await addActivity({
-    actionType: "task_complete",
-    targetType: "task",
-    targetId: targetTask.id,
-    projectId: targetTask.project_id,
-    title: "업무 완료",
-    description: `${project?.project_name || ""} - ${
-      targetTask.task_name || "업무"
-    }`,
-  });
-}
+    const changes = createAuditChanges(
+      targetTask as unknown as Record<string, unknown>,
+      updatedTask as unknown as Record<string, unknown>,
+      TASK_AUDIT_FIELDS
+    );
+
+    await addActivity({
+      type: isTaskCompleted(newStatus) ? "task_complete" : "task_status_change",
+      targetType: "task",
+      targetId: targetTask.id,
+      projectId: targetTask.project_id,
+      title: `${
+        isTaskCompleted(newStatus) ? "업무 완료" : "업무 상태 변경"
+      } · ${changes.length}개 항목 변경`,
+      description: `${targetTask.task_name || "업무"} 상태를 ${newStatus}(으)로 변경했습니다.`,
+      metadata: {
+        previousStatus: targetTask.status,
+        nextStatus: newStatus,
+        changes,
+      },
+    });
+
+    if (isTaskCompleted(newStatus) && isShipmentTask(targetTask)) {
+      await addActivity({
+        type: "shipment_complete",
+        title: "출고 완료",
+        description: `${targetTask.task_name || "출고 업무"} 완료로 출고를 완료했습니다.`,
+        projectId: targetTask.project_id,
+        targetType: "shipment",
+        metadata: { taskId: targetTask.id },
+      });
+    }
 
     if (isTaskCompleted(newStatus)) {
       if (isShipmentTask(targetTask)) {
@@ -816,6 +1040,7 @@ export default function ProjectDetail() {
 
     setIsUpdating(true);
 
+    const targetTask = tasks.find((task) => task.id === taskId);
     const { error } = await supabase.from("tasks").delete().eq("id", taskId);
 
     if (error) {
@@ -832,7 +1057,139 @@ export default function ProjectDetail() {
       setTasks(savedTasks);
     }
 
+    await addActivity({
+      type: "task_delete",
+      title: "업무 삭제",
+      description: `${targetTask?.task_name || "업무"}을(를) 삭제했습니다.`,
+      projectId: project?.id,
+      targetType: "task",
+      targetId: taskId,
+      metadata: {
+        deletedTaskName: targetTask?.task_name ?? null,
+        deletedTaskType: targetTask?.task_type ?? null,
+        deletedTaskStatus: targetTask?.status ?? null,
+      },
+    });
+
     setIsUpdating(false);
+  }
+
+  function emptySectionValue(source: ProjectSection | null): ProjectSectionDialogValue {
+    return {
+      process_type: source?.process_type ?? "",
+      assembly_vendor: source?.assembly_vendor ?? project?.assembly_vendor ?? null,
+      task_manager: source?.task_manager ?? project?.task_manager ?? null,
+      quantity: source?.quantity ?? null,
+      start_date: null,
+      end_date: null,
+      memo: source?.memo ?? null,
+    };
+  }
+
+  async function saveSection(value: ProjectSectionDialogValue) {
+    if (!project || !sectionDialog || isSavingSection) return;
+    setIsSavingSection(true);
+    const normalize = (value: string | null) => value?.trim() || null;
+
+    if (sectionDialog.mode === "add") {
+      const result = await createProjectSectionWithTasks({
+        projectId: project.id,
+        processType: value.process_type,
+        assemblyVendor: normalize(value.assembly_vendor),
+        taskManager: normalize(value.task_manager),
+        quantity: value.quantity,
+        startDate: value.start_date || null,
+        endDate: value.end_date || null,
+        memo: normalize(value.memo),
+        sourceSectionId: sectionDialog.source?.id,
+      });
+      if (result.error || !result.data) {
+        console.error("section create error:", result.error);
+        alert(result.error?.code === "23505" ? "이미 존재하는 공정입니다." : "공정을 생성하지 못했습니다. 권한과 입력값을 확인하세요.");
+        setIsSavingSection(false);
+        return;
+      }
+      await addActivity({
+        type: "project_update",
+        title: sectionDialog.source ? "기존 공정 기준 공정 추가" : "공정 생성",
+        description: `${value.process_type} 공정과 템플릿 업무 ${result.data.task_count}건을 생성했습니다.`,
+        projectId: project.id,
+        targetType: "project_section",
+        targetId: result.data.section_id,
+        metadata: { sectionId: result.data.section_id, processType: value.process_type, sourceSectionId: sectionDialog.source?.id ?? null },
+      });
+      setOpenSectionIds((current) => new Set(current).add(result.data!.section_id));
+    } else if (sectionDialog.target) {
+      const target = sectionDialog.target;
+      const { error } = await supabase.from("project_sections").update({
+        assembly_vendor: normalize(value.assembly_vendor), task_manager: normalize(value.task_manager),
+        quantity: value.quantity, start_date: value.start_date || null, end_date: value.end_date || null,
+        memo: normalize(value.memo), updated_at: new Date().toISOString(),
+      }).eq("id", target.id).eq("project_id", project.id);
+      if (error) {
+        console.error("section update error:", error);
+        alert("공정을 수정하지 못했습니다. 권한을 확인하세요.");
+        setIsSavingSection(false);
+        return;
+      }
+      await addActivity({ type: "project_update", title: "공정 수정", description: `${target.process_type} 공정 정보를 수정했습니다.`, projectId: project.id, targetType: "project_section", targetId: target.id, metadata: { sectionId: target.id, processType: target.process_type } });
+    }
+    setSectionDialog(null);
+    setIsSavingSection(false);
+    await loadProject();
+  }
+
+  async function prepareDeleteSection(section: ProjectSection) {
+    if (sections.length <= 1) {
+      alert("프로젝트에는 최소 1개의 공정이 필요합니다.");
+      return;
+    }
+
+    const { count, error } = await supabase
+      .from("tasks")
+      .select("id", { count: "exact", head: true })
+      .eq("project_id", section.project_id)
+      .eq("project_section_id", section.id);
+
+    if (error) {
+      console.error("section task count error:", error);
+      alert("공정의 업무 개수를 확인하지 못했습니다.");
+      return;
+    }
+
+    const sectionTasks = tasks.filter((task) => task.project_section_id === section.id);
+    setSectionPendingDelete({
+      section,
+      taskCount: count ?? 0,
+      completedCount: sectionTasks.filter((task) => isTaskCompleted(task.status)).length,
+    });
+  }
+
+  async function confirmDeleteSection() {
+    if (!sectionPendingDelete || isDeletingSection) return;
+    setIsDeletingSection(true);
+
+    try {
+      const result = await deleteProjectSectionWithTasks(sectionPendingDelete.section.id);
+      if (result.error || !result.data) {
+        console.error("section delete RPC error:", result.error);
+        alert(result.error?.message === "프로젝트에는 최소 1개의 공정이 필요합니다."
+          ? result.error.message
+          : "공정을 삭제하지 못했습니다. 권한과 연결 상태를 확인하세요.");
+        return;
+      }
+
+      setSectionPendingDelete(null);
+      await loadProject();
+      toast.success(result.data.deleted_task_count > 0
+        ? "공정과 업무가 삭제되었습니다."
+        : "공정이 삭제되었습니다.");
+    } catch (error) {
+      console.error("section delete unexpected error:", error);
+      alert("공정을 삭제하지 못했습니다. 잠시 후 다시 시도하세요.");
+    } finally {
+      setIsDeletingSection(false);
+    }
   }
 
   function getStatusStyle(status: string | null) {
@@ -990,7 +1347,32 @@ export default function ProjectDetail() {
         </div>
       </div>
 
-      <div className="mb-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+      <nav
+        aria-label="프로젝트 상세 메뉴"
+        className="mb-6 flex gap-1 overflow-x-auto rounded-2xl border border-slate-200 bg-white p-1.5 shadow-sm"
+      >
+        {[
+          ["#project-info", "Overview"],
+          ["#project-tasks", "Tasks"],
+          ["#project-files", "Files"],
+          ["#project-activity", "Activity"],
+          ["#project-history", "History"],
+          ["#project-timeline", "Timeline"],
+        ].map(([href, label]) => (
+          <a
+            key={label}
+            href={href}
+            className="shrink-0 rounded-xl px-4 py-2 text-sm font-semibold text-slate-600 transition-colors hover:bg-slate-100 hover:text-slate-950"
+          >
+            {label}
+          </a>
+        ))}
+      </nav>
+
+      <div
+        id="project-info"
+        className="mb-6 scroll-mt-24 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"
+      >
         <button
           type="button"
           onClick={() => setIsProjectInfoOpen((prev) => !prev)}
@@ -1086,17 +1468,7 @@ export default function ProjectDetail() {
                   }
                   placeholder="발주처"
                 />
-                <input
-                  className="h-10 w-full rounded-2xl border border-slate-200 bg-slate-50 px-3 text-sm outline-none transition-colors focus:border-blue-300 focus:bg-white"
-                  value={projectForm.assembly_vendor}
-                  onChange={(e) =>
-                    setProjectForm({
-                      ...projectForm,
-                      assembly_vendor: e.target.value,
-                    })
-                  }
-                  placeholder="조립처"
-                />
+                <EditableCombobox className="h-10 w-full rounded-2xl border border-slate-200 bg-slate-50 px-3 text-sm outline-none transition-colors focus:border-blue-300 focus:bg-white" placeholder="조립업체 검색 또는 직접 입력" options={assemblyVendorOptions} value={projectForm.assembly_vendor} onChange={(value) => setProjectForm({ ...projectForm, assembly_vendor: value })} />
                 <select
                   className="h-10 w-full rounded-2xl border border-slate-200 bg-slate-50 px-3 text-sm outline-none transition-colors focus:border-blue-300 focus:bg-white"
                   value={projectForm.process_type}
@@ -1104,9 +1476,9 @@ export default function ProjectDetail() {
                     setProjectForm({ ...projectForm, process_type: e.target.value })
                   }
                 >
-                  {processList.map((process) => (
-                    <option key={process} value={process}>
-                      {process}
+                  {processTypes.filter((process) => process.is_active || process.code === projectForm.process_type).map((process) => (
+                    <option key={process.id} value={process.code}>
+                      {process.name}
                     </option>
                   ))}
                 </select>
@@ -1126,20 +1498,7 @@ export default function ProjectDetail() {
                   }
                   placeholder="현장주소"
                 />
-                <select
-                  className="h-10 w-full rounded-2xl border border-slate-200 bg-slate-50 px-3 text-sm outline-none transition-colors focus:border-blue-300 focus:bg-white"
-                  value={projectForm.salesperson}
-                  onChange={(e) =>
-                    setProjectForm({ ...projectForm, salesperson: e.target.value })
-                  }
-                >
-                  <option value="">미지정</option>
-                  {salesList.map((sales) => (
-                    <option key={sales} value={sales}>
-                      {sales}
-                    </option>
-                  ))}
-                </select>
+                <EditableCombobox className="h-10 w-full rounded-2xl border border-slate-200 bg-slate-50 px-3 text-sm outline-none transition-colors focus:border-blue-300 focus:bg-white" placeholder="영업자 검색 또는 직접 입력" options={salespersonOptions} value={projectForm.salesperson} onChange={(value) => setProjectForm({ ...projectForm, salesperson: value })} />
                 <select
                   className="h-10 w-full rounded-2xl border border-slate-200 bg-slate-50 px-3 text-sm outline-none transition-colors focus:border-blue-300 focus:bg-white"
                   value={projectForm.task_manager}
@@ -1276,26 +1635,65 @@ export default function ProjectDetail() {
         </div>
       </div>
 
-      <div className="mb-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+      <div
+        id="project-tasks"
+        className="mb-6 scroll-mt-24 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"
+      >
         <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h2 className="text-lg font-bold tracking-tight text-slate-950">
-              업무목록
+              공정 및 업무
             </h2>
             <p className="mt-1 text-sm text-slate-500">
-              담당자, 일정, 상태를 한 화면에서 관리합니다.
+              공정별 담당자, 일정, 진행률과 업무를 관리합니다.
             </p>
           </div>
           <Button
             variant="primary"
-            onClick={() => setShowTaskModal(true)}
+            onClick={() => setSectionDialog({ mode: "add", source: null, target: null })}
             className="flex items-center justify-center gap-2 rounded-2xl px-4 py-2 text-sm font-medium"
           >
             <Plus size={16} />
-            업무 추가
+            공정 추가
           </Button>
         </div>
 
+        <div className="space-y-4">
+        {[...sections].sort((a, b) => {
+          const aType = processTypes.find((item) => item.code === a.process_type);
+          const bType = processTypes.find((item) => item.code === b.process_type);
+          return (aType?.sort_order ?? a.sort_order) - (bType?.sort_order ?? b.sort_order)
+            || (aType?.name ?? a.process_type).localeCompare(bType?.name ?? b.process_type, "ko-KR")
+            || a.created_at.localeCompare(b.created_at);
+        }).map((section) => {
+          const sectionTasks = tasks.filter((task) => task.project_section_id === section.id);
+          const sectionProgress = calculateSectionProgress(sectionTasks);
+          const computedStatus = getComputedSectionStatus(sectionTasks);
+          const processType = processTypes.find((item) => item.code === section.process_type);
+          const isOpen = openSectionIds.has(section.id);
+          return (
+          <section key={section.id} className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
+            <div className="flex flex-col gap-3 bg-slate-50 p-4 xl:flex-row xl:items-center xl:justify-between">
+              <button type="button" className="flex min-w-0 flex-1 items-center gap-3 text-left" onClick={() => setOpenSectionIds((current) => { const next = new Set(current); if (next.has(section.id)) next.delete(section.id); else next.add(section.id); return next; })}>
+                {isOpen ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
+                <span className="h-3 w-3 rounded-full" style={{ backgroundColor: processType?.color ?? "#64748b" }} />
+                <span className="font-bold text-slate-950">{processType?.name ?? section.process_type}</span>
+                <span className="rounded-full bg-white px-2 py-0.5 text-[11px] font-semibold text-slate-500">업무 {sectionProgress.total}건</span>
+                <Badge variant={computedStatus === "completed" ? "success" : computedStatus === "in_progress" ? "info" : "default"}>{getProjectStatusLabel(computedStatus)}</Badge>
+              </button>
+              <div className="grid grid-cols-2 gap-x-5 gap-y-1 text-xs text-slate-600 sm:grid-cols-4">
+                <span>조립처 <b>{section.assembly_vendor || "-"}</b></span><span>담당자 <b>{section.task_manager || "-"}</b></span>
+                <span>수량 <b>{section.quantity ?? "-"}</b></span><span>기간 <b>{section.start_date || "-"} ~ {section.end_date || "-"}</b></span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="w-32"><div className="mb-1 flex justify-between text-[11px] text-slate-500"><span>{sectionProgress.completed}/{sectionProgress.total}</span><b>{sectionProgress.percentage}%</b></div><ProgressBar percent={sectionProgress.percentage} className="h-1.5" /></div>
+                <Button size="sm" variant="secondary" onClick={() => setSectionDialog({ mode: "edit", source: null, target: section })}>수정</Button>
+                <Button size="sm" variant="secondary" onClick={() => setSectionDialog({ mode: "add", source: section, target: null })}>공정 추가</Button>
+                <Button size="sm" variant="danger" onClick={() => void prepareDeleteSection(section)}>삭제</Button>
+              </div>
+            </div>
+            {isOpen && <div className="border-t border-slate-200 p-3">
+              <div className="mb-3 flex items-center justify-between text-xs text-slate-500"><span>대기 {sectionProgress.pending} · 진행 {sectionProgress.inProgress} · 완료 {sectionProgress.completed} · 지연 {sectionProgress.delayed}</span><Button size="sm" variant="primary" onClick={() => { setSelectedTaskSectionId(section.id); setShowTaskModal(true); setOpenSectionIds((current) => new Set(current).add(section.id)); }}><Plus size={14} /> 업무 추가</Button></div>
         <div className="overflow-x-auto">
           <table className="w-full min-w-[1120px] table-fixed text-sm">
             <thead>
@@ -1312,7 +1710,7 @@ export default function ProjectDetail() {
             </thead>
 
             <tbody>
-              {tasks.map((task, index) => {
+              {sectionTasks.map((task, index) => {
                 const dueDateBadge = getDueDateBadge(task);
 
                 return (
@@ -1445,7 +1843,7 @@ export default function ProjectDetail() {
                 );
               })}
 
-              {tasks.length === 0 && (
+              {sectionTasks.length === 0 && (
                 <tr>
                   <td colSpan={8} className="p-0">
                     <EmptyState
@@ -1458,9 +1856,106 @@ export default function ProjectDetail() {
             </tbody>
           </table>
         </div>
+            </div>}
+          </section>
+          );
+        })}
+        {tasks.some((task) => task.project_section_id == null) && (
+          <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+            <b>공정 미지정 레거시 업무 {tasks.filter((task) => task.project_section_id == null).length}건</b>
+            <p className="mt-1 text-xs">데이터 보호를 위해 자동 배정하지 않았습니다: {tasks.filter((task) => task.project_section_id == null).map((task) => task.task_name || `업무 #${task.id}`).join(", ")}</p>
+          </div>
+        )}
+        {sections.length === 0 && <EmptyState message="등록된 공정이 없습니다." />}
+        </div>
       </div>
 
       <ProjectFiles projectId={projectId} />
+
+      <section
+        id="project-activity"
+        className="mb-6 scroll-mt-24 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"
+      >
+        <div className="mb-3">
+          <h2 className="text-lg font-bold tracking-tight text-slate-950">
+            최근 활동
+          </h2>
+          <p className="mt-1 text-sm text-slate-500">
+            이 프로젝트의 최신 활동 10건입니다.
+          </p>
+        </div>
+        <ActivityTimeline limit={10} projectId={Number(projectId)} />
+      </section>
+
+      <section
+        id="project-history"
+        className="mb-6 scroll-mt-24 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"
+      >
+        <div className="mb-3">
+          <h2 className="text-lg font-bold tracking-tight text-slate-950">
+            변경 이력
+          </h2>
+          <p className="mt-1 text-sm text-slate-500">
+            실제 값이 변경된 프로젝트, 업무 및 출고 이력입니다.
+          </p>
+        </div>
+        <ActivityTimeline
+          limit={30}
+          projectId={Number(projectId)}
+          historyOnly
+        />
+      </section>
+
+      <section
+        id="project-timeline"
+        className="mb-6 scroll-mt-24 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"
+      >
+        <div className="mb-4">
+          <h2 className="text-lg font-bold tracking-tight text-slate-950">
+            Project Timeline
+          </h2>
+          <p className="mt-1 text-sm text-slate-500">
+            프로젝트 생성부터 완료까지의 핵심 이벤트를 시간순으로 확인합니다.
+          </p>
+        </div>
+        <ProjectTimeline projectId={Number(projectId)} />
+      </section>
+
+      <ConfirmDialog
+        open={sectionPendingDelete !== null}
+        title="⚠️ 공정 삭제"
+        description={sectionPendingDelete ? (
+          sectionPendingDelete.taskCount > 0
+            ? `'${processTypes.find((item) => item.code === sectionPendingDelete.section.process_type)?.name ?? sectionPendingDelete.section.process_type}' 공정에는 업무 ${sectionPendingDelete.taskCount}개가 포함되어 있습니다.\n\n삭제하면 다음 정보가 함께 삭제됩니다.\n• 업무 ${sectionPendingDelete.taskCount}개\n• 일정\n• 담당자\n• 진행상태\n\n완료 업무 ${sectionPendingDelete.completedCount}건이 포함되어 있으며, 이 작업은 되돌릴 수 없습니다.`
+            : `'${processTypes.find((item) => item.code === sectionPendingDelete.section.process_type)?.name ?? sectionPendingDelete.section.process_type}' 공정을 삭제하시겠습니까?\n\n이 작업은 되돌릴 수 없습니다.`
+        ) : ""}
+        confirmLabel={sectionPendingDelete?.taskCount ? "공정 및 업무 모두 삭제" : "공정 삭제"}
+        danger
+        isPending={isDeletingSection}
+        onClose={() => { if (!isDeletingSection) setSectionPendingDelete(null); }}
+        onConfirm={() => void confirmDeleteSection()}
+      />
+
+      {sectionDialog && (
+        <ProjectSectionDialog
+          open
+          mode={sectionDialog.mode}
+          processTypes={processTypes.filter((item) => item.is_active && !sections.some((section) => section.process_type === item.code))}
+          employees={employees}
+          saving={isSavingSection}
+          initialValue={sectionDialog.mode === "edit" && sectionDialog.target ? {
+            process_type: sectionDialog.target.process_type,
+            assembly_vendor: sectionDialog.target.assembly_vendor,
+            task_manager: sectionDialog.target.task_manager,
+            quantity: sectionDialog.target.quantity,
+            start_date: sectionDialog.target.start_date,
+            end_date: sectionDialog.target.end_date,
+            memo: sectionDialog.target.memo,
+          } : { ...emptySectionValue(sectionDialog.source), process_type: "" }}
+          onClose={() => setSectionDialog(null)}
+          onSubmit={(value) => void saveSection(value)}
+        />
+      )}
 
       {showTaskModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
@@ -1470,7 +1965,7 @@ export default function ProjectDetail() {
                 업무 추가
               </h2>
               <p className="mt-1 text-sm text-slate-500">
-                업무명, 유형, 담당자와 일정을 입력합니다.
+                {sections.find((section) => section.id === selectedTaskSectionId)?.process_type || "선택 공정"}에 업무명, 유형, 담당자와 일정을 입력합니다.
               </p>
             </div>
 
@@ -1539,7 +2034,7 @@ export default function ProjectDetail() {
             <div className="mt-6 flex justify-end gap-3">
               <Button
                 variant="secondary"
-                onClick={() => setShowTaskModal(false)}
+                onClick={() => { setShowTaskModal(false); setSelectedTaskSectionId(null); }}
                 disabled={isSavingTask}
                 className="rounded-2xl px-4 py-2 text-sm"
               >

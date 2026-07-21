@@ -4,66 +4,37 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  BriefcaseBusiness,
-  FileText,
   FolderKanban,
+  History,
+  ListTodo,
   Search,
-  Star,
+  SearchX,
+  Truck,
   User,
   X,
 } from "lucide-react";
-import { supabase } from "@/lib/supabase";
-import { Badge, type BadgeVariant } from "@/components/ui/Badge";
-import { EmptyState } from "@/components/ui/EmptyState";
+import { Badge } from "@/components/ui/Badge";
 import {
-  getProjectStatusLabel,
-  getTaskStatusLabel,
-  isProjectCompleted,
-  isProjectInProgress,
-  isTaskCompleted,
-  isTaskInProgress,
-} from "@/lib/status";
-import { getRecentUserScope, readFavoriteProjects } from "@/lib/recent";
+  GLOBAL_SEARCH_MAX_LENGTH,
+  GLOBAL_SEARCH_MIN_LENGTH,
+  RECENT_SEARCH_STORAGE_KEY,
+} from "@/lib/search";
+import {
+  getRecentUserScope,
+  hydrateFavoriteProjectsFromDatabase,
+  readFavoriteProjects,
+} from "@/lib/recent";
+import type {
+  EmployeeSearchResult,
+  GlobalSearchResponse,
+  ProjectSearchResult,
+  ShipmentSearchResult,
+  TaskSearchResult,
+} from "@/types/search";
 
-type ProjectSearchRow = {
-  id: number;
-  project_code: string | null;
-  project_name: string;
-  client_name: string | null;
-  assembly_vendor: string | null;
-  salesperson: string | null;
-  site_address: string | null;
-  status: string | null;
-};
-
-type TaskSearchRow = {
-  id: number;
-  project_id: number;
-  task_name: string | null;
-  task_type: string | null;
-  assignee: string | null;
-  status: string | null;
-};
-
-type ProjectNameRow = {
-  id: number;
-  project_name: string;
-};
-
-type EmployeeSearchRow = {
-  id: string;
-  name: string;
-  email: string;
-  role: string | null;
-  department: string | null;
-  position: string | null;
-};
-
-type NoticeSearchRow = {
-  id: number;
-  title: string;
-  description: string;
-  date: string;
+type GlobalSearchProps = {
+  isOpen: boolean;
+  onClose: () => void;
 };
 
 type SearchItem = {
@@ -71,150 +42,175 @@ type SearchItem = {
   href: string;
 };
 
-type GlobalSearchProps = {
-  isOpen: boolean;
-  onClose: () => void;
+const EMPTY_RESULTS: GlobalSearchResponse = {
+  projects: [],
+  tasks: [],
+  shipments: [],
+  employees: [],
 };
 
-const noticeRows: NoticeSearchRow[] = [
-  {
-    id: 1,
-    title: "공지사항 기능 준비 중",
-    description: "공무팀 공지와 전달사항을 이곳에서 관리할 예정입니다.",
-    date: "2026-07-06",
-  },
-];
+const quickLinks = [
+  { href: "/projects", label: "프로젝트" },
+  { href: "/tasks", label: "업무" },
+  { href: "/shipments", label: "출고" },
+] as const;
 
-function getProjectVariant(status: string | null): BadgeVariant {
-  if (isProjectCompleted(status)) return "success";
-  if (isProjectInProgress(status)) return "info";
-  return "default";
-}
-
-function getTaskVariant(status: string | null): BadgeVariant {
-  if (isTaskCompleted(status)) return "success";
-  if (isTaskInProgress(status)) return "info";
-  return "default";
-}
-
-function getSearchFilter(query: string, columns: string[]) {
-  const value = query.replace(/[,%]/g, " ").trim();
-  return columns.map((column) => `${column}.ilike.%${value}%`).join(",");
+function readRecentSearches() {
+  try {
+    const value = JSON.parse(
+      localStorage.getItem(RECENT_SEARCH_STORAGE_KEY) ?? "[]"
+    ) as unknown;
+    return Array.isArray(value)
+      ? value.filter((item): item is string => typeof item === "string").slice(0, 5)
+      : [];
+  } catch {
+    return [];
+  }
 }
 
 export default function GlobalSearch({ isOpen, onClose }: GlobalSearchProps) {
   const router = useRouter();
+  const inputRef = useRef<HTMLInputElement>(null);
+  const itemRefs = useRef<Record<string, HTMLAnchorElement | null>>({});
+  const lastRequestedQuery = useRef("");
   const [query, setQuery] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
-  const [projects, setProjects] = useState<ProjectSearchRow[]>([]);
-  const [tasks, setTasks] = useState<TaskSearchRow[]>([]);
-  const [employees, setEmployees] = useState<EmployeeSearchRow[]>([]);
-  const [notices, setNotices] = useState<NoticeSearchRow[]>([]);
-  const [projectNames, setProjectNames] = useState<Record<number, string>>({});
-  const [favoriteProjectIds, setFavoriteProjectIds] = useState<Set<number>>(
-    () => new Set()
-  );
+  const [results, setResults] = useState<GlobalSearchResponse>(EMPTY_RESULTS);
+  const [recentSearches, setRecentSearches] = useState<string[]>([]);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
-  const inputRef = useRef<HTMLInputElement>(null);
-  const itemRefs = useRef<Record<string, HTMLAnchorElement | null>>({});
+  const [favoriteProjectIds, setFavoriteProjectIds] = useState<Set<number>>(
+    () => new Set()
+  );
 
   const normalizedQuery = debouncedQuery.trim();
-  const hasQuery = normalizedQuery.length > 0;
-  const searchItems = useMemo<SearchItem[]>(() => {
-    return [
-      ...projects.map((project) => ({
+  const canSearch = normalizedQuery.length >= GLOBAL_SEARCH_MIN_LENGTH;
+  const sortedProjects = useMemo(
+    () =>
+      [...results.projects].sort(
+        (left, right) =>
+          Number(favoriteProjectIds.has(right.id)) -
+          Number(favoriteProjectIds.has(left.id))
+      ),
+    [favoriteProjectIds, results.projects]
+  );
+  const searchItems = useMemo<SearchItem[]>(
+    () => [
+      ...sortedProjects.map((project) => ({
         key: `project-${project.id}`,
         href: `/projects/${project.id}`,
       })),
-      ...tasks.map((task) => ({
+      ...results.tasks.map((task) => ({
         key: `task-${task.id}`,
-        href: `/projects/${task.project_id}`,
+        href: `/projects/${task.projectId}?task=${task.id}`,
       })),
-      ...employees.map((employee) => ({
+      ...results.shipments.map((shipment) => ({
+        key: `shipment-${shipment.id}`,
+        href: shipment.projectId
+          ? `/projects/${shipment.projectId}`
+          : "/shipments",
+      })),
+      ...results.employees.map((employee) => ({
         key: `employee-${employee.id}`,
         href: "/employees",
       })),
-      ...notices.map((notice) => ({
-        key: `notice-${notice.id}`,
-        href: "/notices",
-      })),
-    ];
-  }, [employees, notices, projects, tasks]);
+    ],
+    [results.employees, results.shipments, results.tasks, sortedProjects]
+  );
   const hasResults = searchItems.length > 0;
 
-  const resetSearch = useCallback(function resetSearch() {
+  useEffect(() => {
+    if (!isOpen) return;
+    let isMounted = true;
+    let currentScope: string | null = null;
+
+    async function loadFavorites() {
+      currentScope = await getRecentUserScope();
+      const favorites = await hydrateFavoriteProjectsFromDatabase(currentScope);
+      if (!isMounted) return;
+      setFavoriteProjectIds(
+        new Set(favorites.map((project) => project.project_id))
+      );
+    }
+
+    function handleFavoritesUpdated() {
+      setFavoriteProjectIds(
+        new Set(
+          readFavoriteProjects(currentScope).map(
+            (project) => project.project_id
+          )
+        )
+      );
+    }
+
+    void loadFavorites();
+    window.addEventListener("gongmu-recent-updated", handleFavoritesUpdated);
+    return () => {
+      isMounted = false;
+      window.removeEventListener(
+        "gongmu-recent-updated",
+        handleFavoritesUpdated
+      );
+    };
+  }, [isOpen]);
+
+  const resetSearch = useCallback(() => {
     setQuery("");
     setDebouncedQuery("");
-    setProjects([]);
-    setTasks([]);
-    setEmployees([]);
-    setNotices([]);
-    setProjectNames({});
+    setResults(EMPTY_RESULTS);
     setSelectedIndex(0);
     setErrorMessage("");
+    setIsLoading(false);
+    lastRequestedQuery.current = "";
   }, []);
 
-  const closeSearch = useCallback(function closeSearch() {
+  const closeSearch = useCallback(() => {
     resetSearch();
     onClose();
   }, [onClose, resetSearch]);
 
-  const loadFavoriteProjects = useCallback(async function loadFavoriteProjects() {
-    const scope = await getRecentUserScope();
-    const favoriteIds = new Set(
-      readFavoriteProjects(scope).map((project) => project.project_id)
-    );
+  const saveRecentSearch = useCallback((value: string) => {
+    const normalized = value.trim();
+    if (!normalized) return;
 
-    setFavoriteProjectIds(favoriteIds);
+    const next = [
+      normalized,
+      ...readRecentSearches().filter((item) => item !== normalized),
+    ].slice(0, 5);
+    localStorage.setItem(RECENT_SEARCH_STORAGE_KEY, JSON.stringify(next));
+    setRecentSearches(next);
   }, []);
 
+  const openResult = useCallback(
+    (item: SearchItem) => {
+      saveRecentSearch(normalizedQuery);
+      closeSearch();
+      router.push(item.href);
+    },
+    [closeSearch, normalizedQuery, router, saveRecentSearch]
+  );
+
   useEffect(() => {
     if (!isOpen) return;
-
     const timer = window.setTimeout(() => {
-      void loadFavoriteProjects();
+      setRecentSearches(readRecentSearches());
+      inputRef.current?.focus();
     }, 0);
-
     return () => window.clearTimeout(timer);
-  }, [isOpen, loadFavoriteProjects]);
-
-  useEffect(() => {
-    if (!isOpen) return;
-
-    function handleRecentUpdated() {
-      void loadFavoriteProjects();
-    }
-
-    window.addEventListener("gongmu-recent-updated", handleRecentUpdated);
-
-    return () => {
-      window.removeEventListener("gongmu-recent-updated", handleRecentUpdated);
-    };
-  }, [isOpen, loadFavoriteProjects]);
-
-  useEffect(() => {
-    if (!isOpen) return;
-
-    window.setTimeout(() => inputRef.current?.focus(), 0);
-  }, [closeSearch, isOpen]);
+  }, [isOpen]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
       setDebouncedQuery(query.trim());
-    }, 250);
-
+    }, 300);
     return () => window.clearTimeout(timer);
   }, [query]);
 
   useEffect(() => {
     const selectedItem = searchItems[selectedIndex];
     if (!selectedItem) return;
-
-    itemRefs.current[selectedItem.key]?.scrollIntoView({
-      block: "nearest",
-    });
+    itemRefs.current[selectedItem.key]?.scrollIntoView({ block: "nearest" });
   }, [searchItems, selectedIndex]);
 
   useEffect(() => {
@@ -223,177 +219,118 @@ export default function GlobalSearch({ isOpen, onClose }: GlobalSearchProps) {
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key === "Escape") {
         closeSearch();
+        return;
       }
-
       if (!hasResults) return;
 
       if (event.key === "ArrowDown") {
         event.preventDefault();
         setSelectedIndex((current) => (current + 1) % searchItems.length);
-      }
-
-      if (event.key === "ArrowUp") {
+      } else if (event.key === "ArrowUp") {
         event.preventDefault();
         setSelectedIndex(
           (current) => (current - 1 + searchItems.length) % searchItems.length
         );
-      }
-
-      if (event.key === "Enter") {
+      } else if (event.key === "Enter") {
         const selectedItem = searchItems[selectedIndex];
         if (!selectedItem) return;
-
         event.preventDefault();
-        closeSearch();
-        router.push(selectedItem.href);
+        openResult(selectedItem);
       }
     }
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [closeSearch, hasResults, isOpen, router, searchItems, selectedIndex]);
+  }, [
+    closeSearch,
+    hasResults,
+    isOpen,
+    openResult,
+    searchItems,
+    selectedIndex,
+  ]);
 
   useEffect(() => {
     if (!isOpen) return;
 
-    async function search() {
-      if (!normalizedQuery) {
-        setProjects([]);
-        setTasks([]);
-        setEmployees([]);
-        setNotices([]);
-        setProjectNames({});
+    if (!canSearch) {
+      const timer = window.setTimeout(() => {
+        setResults(EMPTY_RESULTS);
         setSelectedIndex(0);
         setErrorMessage("");
         setIsLoading(false);
-        return;
-      }
+        lastRequestedQuery.current = "";
+      }, 0);
+      return () => window.clearTimeout(timer);
+    }
 
+    if (lastRequestedQuery.current === normalizedQuery) return;
+    lastRequestedQuery.current = normalizedQuery;
+    const controller = new AbortController();
+
+    async function search() {
       setIsLoading(true);
       setErrorMessage("");
 
-      const projectFilter = getSearchFilter(normalizedQuery, [
-        "project_name",
-        "project_code",
-        "client_name",
-        "assembly_vendor",
-        "salesperson",
-        "site_address",
-      ]);
-      const taskFilter = getSearchFilter(normalizedQuery, [
-        "task_name",
-        "task_type",
-        "assignee",
-      ]);
-      const employeeFilter = getSearchFilter(normalizedQuery, [
-        "name",
-        "email",
-        "role",
-        "department",
-        "position",
-      ]);
-
-      const [projectResult, taskResult, employeeResult] = await Promise.all([
-        supabase
-          .from("projects")
-          .select(
-            "id, project_code, project_name, client_name, assembly_vendor, salesperson, site_address, status"
-          )
-          .or(projectFilter)
-          .limit(5),
-        supabase
-          .from("tasks")
-          .select("id, project_id, task_name, task_type, assignee, status")
-          .or(taskFilter)
-          .limit(8),
-        supabase
-          .from("employees")
-          .select("id, name, email, role, department, position")
-          .or(employeeFilter)
-          .limit(5),
-      ]);
-
-      if (projectResult.error || taskResult.error || employeeResult.error) {
-        setProjects([]);
-        setTasks([]);
-        setEmployees([]);
-        setNotices([]);
-        setProjectNames({});
-        setErrorMessage(
-          projectResult.error?.message ||
-            taskResult.error?.message ||
-            employeeResult.error?.message ||
-            "검색 중 오류가 발생했습니다."
+      try {
+        const response = await fetch(
+          `/api/search?q=${encodeURIComponent(normalizedQuery)}`,
+          { cache: "no-store", signal: controller.signal }
         );
-        setIsLoading(false);
-        return;
-      }
+        const data = (await response.json()) as
+          | GlobalSearchResponse
+          | { error?: string };
 
-      const taskRows = (taskResult.data || []) as TaskSearchRow[];
-      const projectIds = Array.from(
-        new Set(taskRows.map((task) => task.project_id))
-      );
-
-      let nextProjectNames: Record<number, string> = {};
-
-      if (projectIds.length > 0) {
-        const { data, error } = await supabase
-          .from("projects")
-          .select("id, project_name")
-          .in("id", projectIds);
-
-        if (error) {
-          setErrorMessage(error.message);
-        } else {
-          nextProjectNames = ((data || []) as ProjectNameRow[]).reduce<
-            Record<number, string>
-          >((acc, project) => {
-            acc[project.id] = project.project_name;
-            return acc;
-          }, {});
+        if (!response.ok || !("projects" in data)) {
+          throw new Error("검색 요청 실패");
         }
-      }
 
-      setProjects((projectResult.data || []) as ProjectSearchRow[]);
-      setTasks(taskRows);
-      setEmployees((employeeResult.data || []) as EmployeeSearchRow[]);
-      setNotices(
-        noticeRows
-          .filter((notice) => {
-            const keyword = normalizedQuery.toLowerCase();
-            return (
-              notice.title.toLowerCase().includes(keyword) ||
-              notice.description.toLowerCase().includes(keyword) ||
-              notice.date.toLowerCase().includes(keyword)
-            );
-          })
-          .slice(0, 5)
-      );
-      setProjectNames(nextProjectNames);
-      setSelectedIndex(0);
-      setIsLoading(false);
+        setResults(data);
+        setSelectedIndex(0);
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        console.error("global search request failed", {
+          path: "/api/search",
+          query: normalizedQuery,
+          error,
+        });
+        setResults(EMPTY_RESULTS);
+        setErrorMessage("검색 중 오류가 발생했습니다.");
+      } finally {
+        if (!controller.signal.aborted) setIsLoading(false);
+      }
     }
 
     void search();
-  }, [isOpen, normalizedQuery]);
-
-  const helperText = useMemo(() => {
-    if (!hasQuery) return "프로젝트명, 코드, 발주처, 조립처, 업무명으로 검색하세요.";
-    if (isLoading) return "검색 중...";
-    return `"${normalizedQuery}" 검색 결과`;
-  }, [hasQuery, isLoading, normalizedQuery]);
+    return () => controller.abort();
+  }, [canSearch, isOpen, normalizedQuery]);
 
   function getResultClass(key: string) {
     const selectedItem = searchItems[selectedIndex];
-    const isSelected = selectedItem?.key === key;
-
-    return `block rounded-2xl px-3 py-3 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-100 ${
-      isSelected ? "bg-blue-50 ring-1 ring-blue-100" : "hover:bg-slate-50"
+    return `block rounded-xl px-3 py-2.5 transition-colors focus:outline-none ${
+      selectedItem?.key === key
+        ? "bg-blue-50 ring-1 ring-blue-100"
+        : "hover:bg-slate-50"
     }`;
   }
 
   function getResultIndex(key: string) {
     return searchItems.findIndex((item) => item.key === key);
+  }
+
+  function resultProps(key: string, href: string) {
+    return {
+      ref: (node: HTMLAnchorElement | null) => {
+        itemRefs.current[key] = node;
+      },
+      href,
+      className: getResultClass(key),
+      onMouseEnter: () => setSelectedIndex(getResultIndex(key)),
+      onClick: (event: React.MouseEvent<HTMLAnchorElement>) => {
+        event.preventDefault();
+        openResult({ key, href });
+      },
+    };
   }
 
   if (!isOpen) return null;
@@ -404,264 +341,286 @@ export default function GlobalSearch({ isOpen, onClose }: GlobalSearchProps) {
       onMouseDown={closeSearch}
     >
       <div
-        className="w-full max-w-2xl overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xl"
+        className="w-full max-w-[640px] overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xl"
         onMouseDown={(event) => event.stopPropagation()}
       >
-        <div className="flex items-center gap-3 border-b border-slate-200 px-5 py-4">
+        <div className="flex items-center gap-3 border-b border-slate-200 px-5 py-3">
           <Search size={18} className="shrink-0 text-slate-400" />
           <input
             ref={inputRef}
             value={query}
+            maxLength={GLOBAL_SEARCH_MAX_LENGTH}
             onChange={(event) => {
               setQuery(event.target.value);
               setSelectedIndex(0);
             }}
-            placeholder="프로젝트 또는 업무 검색"
+            placeholder="프로젝트, 업무, 출고 또는 직원 검색"
             className="h-10 min-w-0 flex-1 bg-transparent text-base font-medium text-slate-900 outline-none placeholder:text-slate-400"
           />
+          <span className="hidden text-xs text-slate-400 sm:inline">ESC</span>
           <button
             type="button"
             onClick={closeSearch}
-            className="rounded-full p-2 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-100"
+            className="rounded-full p-2 text-slate-400 hover:bg-slate-100"
             aria-label="검색 닫기"
           >
             <X size={18} />
           </button>
         </div>
 
-        <div className="px-5 py-3 text-sm text-slate-500">{helperText}</div>
-
-        <div className="max-h-[60vh] overflow-y-auto px-3 pb-4">
-          {errorMessage && (
-            <EmptyState
-              message={errorMessage}
-              className="rounded-2xl bg-red-50 p-6 text-center text-sm text-red-600"
-            />
-          )}
-
-          {!errorMessage && !hasQuery && (
-            <EmptyState
-              message="검색어를 입력하면 프로젝트와 업무가 표시됩니다."
-              className="rounded-2xl bg-slate-50 p-8 text-center text-sm text-slate-500"
-            />
-          )}
-
-          {!errorMessage && hasQuery && isLoading && (
-            <div className="rounded-2xl bg-slate-50 p-8 text-center text-sm text-slate-500">
-              검색 중...
+        <div className="max-h-[65vh] overflow-y-auto p-3">
+          {!query.trim() && (
+            <div className="space-y-4">
+              {recentSearches.length > 0 && (
+                <section>
+                  <h3 className="px-2 pb-2 text-xs font-semibold text-slate-400">
+                    최근 검색어
+                  </h3>
+                  <div className="flex flex-wrap gap-2 px-2">
+                    {recentSearches.map((recent) => (
+                      <button
+                        key={recent}
+                        type="button"
+                        onClick={() => setQuery(recent)}
+                        className="flex items-center gap-1.5 rounded-full bg-slate-100 px-3 py-1.5 text-xs text-slate-600 hover:bg-slate-200"
+                      >
+                        <History size={13} />
+                        {recent}
+                      </button>
+                    ))}
+                  </div>
+                </section>
+              )}
+              <section>
+                <h3 className="px-2 pb-2 text-xs font-semibold text-slate-400">
+                  빠른 이동
+                </h3>
+                <div className="grid grid-cols-3 gap-2">
+                  {quickLinks.map((item) => (
+                    <Link
+                      key={item.href}
+                      href={item.href}
+                      onClick={closeSearch}
+                      className="rounded-xl bg-slate-50 px-3 py-3 text-center text-sm font-medium text-slate-700 hover:bg-blue-50 hover:text-blue-700"
+                    >
+                      {item.label}
+                    </Link>
+                  ))}
+                </div>
+              </section>
             </div>
           )}
 
-          {!errorMessage && hasQuery && !isLoading && !hasResults && (
-            <EmptyState
-              message="검색 결과가 없습니다."
-              className="rounded-2xl bg-slate-50 p-8 text-center text-sm text-slate-500"
-            />
+          {query.trim().length > 0 &&
+            query.trim().length < GLOBAL_SEARCH_MIN_LENGTH && (
+              <p className="p-8 text-center text-sm text-slate-500">
+                검색어를 2글자 이상 입력해주세요.
+              </p>
+            )}
+
+          {errorMessage && (
+            <p className="rounded-xl bg-red-50 p-6 text-center text-sm text-red-600">
+              {errorMessage}
+            </p>
           )}
 
-          {!errorMessage && hasQuery && !isLoading && hasResults && (
-            <div className="space-y-5">
-              {projects.length > 0 && (
-                <section>
-                  <h3 className="px-2 pb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
-                    프로젝트
-                  </h3>
-                  <div className="space-y-1">
-                    {projects.map((project) => (
-                      <Link
-                        key={project.id}
-                        ref={(node) => {
-                          itemRefs.current[`project-${project.id}`] = node;
-                        }}
-                        href={`/projects/${project.id}`}
-                        onClick={closeSearch}
-                        onMouseEnter={() =>
-                          setSelectedIndex(getResultIndex(`project-${project.id}`))
-                        }
-                        className={getResultClass(`project-${project.id}`)}
-                      >
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="flex min-w-0 gap-3">
-                            <FolderKanban
-                              size={18}
-                              className="mt-0.5 shrink-0 text-blue-500"
-                            />
-                            <div className="min-w-0">
-                              <div className="flex min-w-0 items-center gap-1.5 text-sm font-semibold text-slate-950">
-                                {favoriteProjectIds.has(project.id) && (
-                                  <Star
-                                    size={13}
-                                    className="shrink-0 fill-amber-400 text-amber-400"
-                                  />
-                                )}
-                                <span className="truncate">
-                                  {project.project_name}
-                                </span>
-                              </div>
-                              <div className="mt-1 truncate text-xs text-slate-500">
-                                {project.project_code || "코드 없음"} ·{" "}
-                                {project.assembly_vendor
-                                  ? `${project.client_name || "발주처 없음"} · ${
-                                      project.assembly_vendor
-                                    }`
-                                  : project.client_name ||
-                                  project.salesperson ||
-                                  "담당 정보 없음"}
-                              </div>
-                            </div>
-                          </div>
-                          <Badge
-                            variant={getProjectVariant(project.status)}
-                            className="shrink-0"
-                          >
-                            {getProjectStatusLabel(project.status)}
-                          </Badge>
-                        </div>
-                      </Link>
-                    ))}
-                  </div>
-                </section>
-              )}
+          {canSearch && isLoading && (
+            <p className="p-8 text-center text-sm text-slate-500">검색 중...</p>
+          )}
 
-              {tasks.length > 0 && (
-                <section>
-                  <h3 className="px-2 pb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
-                    업무
-                  </h3>
-                  <div className="space-y-1">
-                    {tasks.map((task) => (
-                      <Link
-                        key={task.id}
-                        ref={(node) => {
-                          itemRefs.current[`task-${task.id}`] = node;
-                        }}
-                        href={`/projects/${task.project_id}`}
-                        onClick={closeSearch}
-                        onMouseEnter={() =>
-                          setSelectedIndex(getResultIndex(`task-${task.id}`))
-                        }
-                        className={getResultClass(`task-${task.id}`)}
-                      >
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="flex min-w-0 gap-3">
-                            <BriefcaseBusiness
-                              size={18}
-                              className="mt-0.5 shrink-0 text-slate-500"
-                            />
-                            <div className="min-w-0">
-                              <div className="truncate text-sm font-semibold text-slate-950">
-                                {task.task_name || "업무명 없음"}
-                              </div>
-                              <div className="mt-1 truncate text-xs text-slate-500">
-                                {projectNames[task.project_id] ||
-                                  `프로젝트 #${task.project_id}`}{" "}
-                                · {task.task_type || "업무유형 없음"} ·{" "}
-                                {task.assignee || "미배정"}
-                              </div>
-                            </div>
-                          </div>
-                          <Badge
-                            variant={getTaskVariant(task.status)}
-                            className="shrink-0"
-                          >
-                            {getTaskStatusLabel(task.status)}
-                          </Badge>
-                        </div>
-                      </Link>
-                    ))}
-                  </div>
-                </section>
-              )}
+          {canSearch && !isLoading && !errorMessage && !hasResults && (
+            <div className="flex flex-col items-center p-8 text-center">
+              <SearchX size={28} className="text-slate-300" />
+              <p className="mt-3 text-sm font-semibold text-slate-700">
+                검색 결과가 없습니다.
+              </p>
+              <p className="mt-1 text-xs text-slate-500">
+                프로젝트명, 코드, 업무명 또는 담당자명을 확인해주세요.
+              </p>
+            </div>
+          )}
 
-              {employees.length > 0 && (
-                <section>
-                  <h3 className="px-2 pb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
-                    직원
-                  </h3>
-                  <div className="space-y-1">
-                    {employees.map((employee) => (
-                      <Link
-                        key={employee.id}
-                        ref={(node) => {
-                          itemRefs.current[`employee-${employee.id}`] = node;
-                        }}
-                        href="/employees"
-                        onClick={closeSearch}
-                        onMouseEnter={() =>
-                          setSelectedIndex(
-                            getResultIndex(`employee-${employee.id}`)
-                          )
-                        }
-                        className={getResultClass(`employee-${employee.id}`)}
-                      >
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="flex min-w-0 gap-3">
-                            <User
-                              size={18}
-                              className="mt-0.5 shrink-0 text-emerald-500"
-                            />
-                            <div className="min-w-0">
-                              <div className="truncate text-sm font-semibold text-slate-950">
-                                {employee.name}
-                              </div>
-                              <div className="mt-1 truncate text-xs text-slate-500">
-                                {employee.department || "부서 없음"} ·{" "}
-                                {employee.position || employee.email}
-                              </div>
-                            </div>
-                          </div>
-                          <Badge variant="default" className="shrink-0">
-                            {employee.role || "직원"}
-                          </Badge>
-                        </div>
-                      </Link>
-                    ))}
-                  </div>
-                </section>
-              )}
-
-              {notices.length > 0 && (
-                <section>
-                  <h3 className="px-2 pb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
-                    공지
-                  </h3>
-                  <div className="space-y-1">
-                    {notices.map((notice) => (
-                      <Link
-                        key={notice.id}
-                        ref={(node) => {
-                          itemRefs.current[`notice-${notice.id}`] = node;
-                        }}
-                        href="/notices"
-                        onClick={closeSearch}
-                        onMouseEnter={() =>
-                          setSelectedIndex(getResultIndex(`notice-${notice.id}`))
-                        }
-                        className={getResultClass(`notice-${notice.id}`)}
-                      >
-                        <div className="flex items-start gap-3">
-                          <FileText
-                            size={18}
-                            className="mt-0.5 shrink-0 text-amber-500"
-                          />
-                          <div className="min-w-0">
-                            <div className="truncate text-sm font-semibold text-slate-950">
-                              {notice.title}
-                            </div>
-                            <div className="mt-1 truncate text-xs text-slate-500">
-                              {notice.date} · {notice.description}
-                            </div>
-                          </div>
-                        </div>
-                      </Link>
-                    ))}
-                  </div>
-                </section>
-              )}
+          {canSearch && !isLoading && !errorMessage && hasResults && (
+            <div className="space-y-4">
+              <ResultGroup title="프로젝트" count={results.projects.length}>
+                {sortedProjects.map((project) => (
+                  <ProjectResult
+                    key={project.id}
+                    project={project}
+                    linkProps={resultProps(
+                      `project-${project.id}`,
+                      `/projects/${project.id}`
+                    )}
+                  />
+                ))}
+              </ResultGroup>
+              <ResultGroup title="업무" count={results.tasks.length}>
+                {results.tasks.map((task) => (
+                  <TaskResult
+                    key={task.id}
+                    task={task}
+                    linkProps={resultProps(
+                      `task-${task.id}`,
+                      `/projects/${task.projectId}?task=${task.id}`
+                    )}
+                  />
+                ))}
+              </ResultGroup>
+              <ResultGroup title="출고" count={results.shipments.length}>
+                {results.shipments.map((shipment) => {
+                  const href = shipment.projectId
+                    ? `/projects/${shipment.projectId}`
+                    : "/shipments";
+                  return (
+                    <ShipmentResult
+                      key={shipment.id}
+                      shipment={shipment}
+                      linkProps={resultProps(`shipment-${shipment.id}`, href)}
+                    />
+                  );
+                })}
+              </ResultGroup>
+              <ResultGroup title="직원" count={results.employees.length}>
+                {results.employees.map((employee) => (
+                  <EmployeeResult
+                    key={employee.id}
+                    employee={employee}
+                    linkProps={resultProps(`employee-${employee.id}`, "/employees")}
+                  />
+                ))}
+              </ResultGroup>
             </div>
           )}
         </div>
       </div>
     </div>
+  );
+}
+
+type LinkProps = {
+  href: string;
+  className: string;
+  ref: (node: HTMLAnchorElement | null) => void;
+  onMouseEnter: () => void;
+  onClick: (event: React.MouseEvent<HTMLAnchorElement>) => void;
+};
+
+function ResultGroup({
+  title,
+  count,
+  children,
+}: {
+  title: string;
+  count: number;
+  children: React.ReactNode;
+}) {
+  if (count === 0) return null;
+  return (
+    <section>
+      <h3 className="px-2 pb-1.5 text-xs font-semibold text-slate-400">
+        {title} {count}건
+      </h3>
+      <div>{children}</div>
+    </section>
+  );
+}
+
+function ProjectResult({
+  project,
+  linkProps,
+}: {
+  project: ProjectSearchResult;
+  linkProps: LinkProps;
+}) {
+  return (
+    <Link {...linkProps}>
+      <div className="flex items-start gap-3">
+        <FolderKanban size={17} className="mt-0.5 shrink-0 text-blue-600" />
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-sm font-semibold text-slate-900">
+            {project.projectName}
+          </p>
+          <p className="mt-0.5 truncate text-xs text-slate-500">
+            {project.projectCode || "코드 없음"} · {project.processType} ·{" "}
+            {project.taskManager || "담당자 없음"}
+          </p>
+        </div>
+        <Badge variant="default">{project.status || "상태 없음"}</Badge>
+      </div>
+    </Link>
+  );
+}
+
+function TaskResult({ task, linkProps }: { task: TaskSearchResult; linkProps: LinkProps }) {
+  return (
+    <Link {...linkProps}>
+      <div className="flex items-start gap-3">
+        <ListTodo size={17} className="mt-0.5 shrink-0 text-emerald-600" />
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-sm font-semibold text-slate-900">
+            {task.taskName || "업무명 없음"}
+          </p>
+          <p className="mt-0.5 truncate text-xs text-slate-500">
+            {task.projectName} · {task.assignee || "미배정"} ·{" "}
+            {task.dueDate || "마감일 없음"}
+          </p>
+        </div>
+        <Badge variant="default">{task.status || "상태 없음"}</Badge>
+      </div>
+    </Link>
+  );
+}
+
+function ShipmentResult({
+  shipment,
+  linkProps,
+}: {
+  shipment: ShipmentSearchResult;
+  linkProps: LinkProps;
+}) {
+  return (
+    <Link {...linkProps}>
+      <div className="flex items-start gap-3">
+        <Truck size={17} className="mt-0.5 shrink-0 text-amber-600" />
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-sm font-semibold text-slate-900">
+            {shipment.title}
+          </p>
+          <p className="mt-0.5 truncate text-xs text-slate-500">
+            {shipment.projectName || "프로젝트 없음"} ·{" "}
+            {shipment.shipmentDate || "예정일 없음"} ·{" "}
+            {shipment.assignee || "담당자 없음"}
+          </p>
+        </div>
+        <Badge variant="default">{shipment.status || "상태 없음"}</Badge>
+      </div>
+    </Link>
+  );
+}
+
+function EmployeeResult({
+  employee,
+  linkProps,
+}: {
+  employee: EmployeeSearchResult;
+  linkProps: LinkProps;
+}) {
+  return (
+    <Link {...linkProps}>
+      <div className="flex items-start gap-3">
+        <User size={17} className="mt-0.5 shrink-0 text-sky-600" />
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-sm font-semibold text-slate-900">
+            {employee.name}
+          </p>
+          <p className="mt-0.5 truncate text-xs text-slate-500">
+            {employee.position || "직책 없음"} · {employee.role || "권한 없음"}
+          </p>
+        </div>
+        <Badge variant={employee.active === false ? "default" : "success"}>
+          {employee.active === false ? "비활성" : "활성"}
+        </Badge>
+      </div>
+    </Link>
   );
 }

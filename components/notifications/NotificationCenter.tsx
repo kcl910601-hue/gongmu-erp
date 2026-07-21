@@ -1,17 +1,21 @@
 "use client";
 
 import Link from "next/link";
+import { createPortal } from "react-dom";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
   Bell,
   Calendar,
   Clock,
-  FileText,
-  Megaphone,
+  FolderKanban,
   RefreshCw,
+  Truck,
+  User,
   X,
 } from "lucide-react";
+import { ErrorState } from "@/components/ui/ErrorState";
+import { TableSkeleton } from "@/components/ui/Skeleton";
 import { Badge, type BadgeVariant } from "@/components/ui/Badge";
 import { EmptyState } from "@/components/ui/EmptyState";
 import {
@@ -20,14 +24,16 @@ import {
   type NotificationItem,
   type NotificationSummary,
 } from "@/lib/notifications";
+import { formatActivityTime } from "@/lib/activity";
 
 type NotificationFilter = "all" | NotificationCategory;
 
 const filters: { value: NotificationFilter; label: string }[] = [
   { value: "all", label: "전체" },
   { value: "task", label: "업무" },
-  { value: "file", label: "파일" },
-  { value: "notice", label: "공지" },
+  { value: "shipment", label: "출고" },
+  { value: "project", label: "프로젝트" },
+  { value: "employee", label: "직원" },
 ];
 
 function getBadgeLabel(count: number) {
@@ -48,10 +54,10 @@ function formatDisplayDate(date: string | null) {
 
 function getEmptyMessage(filter: NotificationFilter) {
   if (filter === "task") return "업무 알림이 없습니다.";
-  if (filter === "file") return "최근 등록된 파일이 없습니다.";
-  if (filter === "notice") return "최근 공지가 없습니다.";
-
-  return "확인할 알림이 없습니다.";
+  if (filter === "shipment") return "확인할 출고 알림이 없습니다.";
+  if (filter === "project") return "최근 프로젝트 알림이 없습니다.";
+  if (filter === "employee") return "승인 대기 직원이 없습니다.";
+  return "현재 확인해야 할 알림이 없습니다.";
 }
 
 function NotificationIcon({ item }: { item: NotificationItem }) {
@@ -63,18 +69,26 @@ function NotificationIcon({ item }: { item: NotificationItem }) {
         : "bg-blue-50 text-blue-600"
   }`;
 
-  if (item.category === "file") {
+  if (item.category === "shipment") {
     return (
       <div className={className}>
-        <FileText size={17} />
+        <Truck size={17} />
       </div>
     );
   }
 
-  if (item.category === "notice") {
+  if (item.category === "project") {
     return (
       <div className={className}>
-        <Megaphone size={17} />
+        <FolderKanban size={17} />
+      </div>
+    );
+  }
+
+  if (item.category === "employee") {
+    return (
+      <div className={className}>
+        <User size={17} />
       </div>
     );
   }
@@ -92,59 +106,49 @@ function NotificationIcon({ item }: { item: NotificationItem }) {
   );
 }
 
-function NotificationRow({
+export function NotificationRow({
   item,
   onSelect,
+  isRead,
 }: {
   item: NotificationItem;
   onSelect: () => void;
+  isRead: boolean;
 }) {
-  const subDescription =
-    item.category === "task"
-      ? item.taskType
-        ? `${item.description} · ${item.taskType}`
-        : item.description
-      : item.category === "file"
-        ? `${item.description} · ${item.fileTypeLabel || "-"}`
-        : item.description;
-  const actorLabel =
-    item.category === "file" || item.category === "notice"
-      ? item.actor || "-"
-      : item.assignee || "미배정";
-  const dateLabel =
-    item.category === "task"
-      ? `마감 ${item.dueDate || "-"}`
-      : `등록 ${formatDisplayDate(item.date)}`;
-
   return (
     <Link
       href={item.href}
       onClick={onSelect}
-      className="block rounded-2xl border border-slate-200 bg-white p-4 text-left transition-colors hover:border-blue-200 hover:bg-blue-50 focus:outline-none focus:ring-2 focus:ring-blue-100"
+      className={`block rounded-2xl border p-3.5 text-left transition-colors hover:border-blue-200 hover:bg-blue-50 focus:outline-none focus:ring-2 focus:ring-blue-100 ${
+        isRead ? "border-slate-200 bg-slate-50" : "border-blue-100 bg-white"
+      }`}
     >
       <div className="flex items-start gap-3">
         <NotificationIcon item={item} />
 
         <div className="min-w-0 flex-1">
-          <div className="mb-2 flex items-center gap-2">
+          <div className="mb-1.5 flex items-center gap-2">
             <Badge
               variant={getSeverityVariant(item.severity)}
               className="shrink-0 px-2.5 py-0.5 font-semibold"
             >
               {item.title}
             </Badge>
-            <span className="truncate text-xs text-slate-400">
-              {actorLabel}
-            </span>
+            {!isRead && <span className="h-2 w-2 rounded-full bg-blue-600" />}
           </div>
           <p className="truncate text-sm font-semibold text-slate-900">
-            {item.projectName}
+            {item.description}
           </p>
           <p className="mt-1 truncate text-sm text-slate-700">
-            {subDescription}
+            {item.projectName}
           </p>
           <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">
-            <span>{dateLabel}</span>
+            <span>{item.actor || "담당자 없음"}</span>
+            <span>
+              {item.date?.includes("T")
+                ? formatActivityTime(item.date)
+                : formatDisplayDate(item.date)}
+            </span>
             {item.statusLabel ? <span>{item.statusLabel}</span> : null}
           </div>
         </div>
@@ -159,6 +163,7 @@ export default function NotificationCenter() {
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
   const [activeFilter, setActiveFilter] = useState<NotificationFilter>("all");
+  const [readIds, setReadIds] = useState<Set<string>>(() => new Set());
 
   const loadNotifications = useCallback(async () => {
     setIsLoading(true);
@@ -186,6 +191,14 @@ export default function NotificationCenter() {
   }, [loadNotifications]);
 
   useEffect(() => {
+    const interval = window.setInterval(() => {
+      void loadNotifications();
+    }, 5 * 60 * 1000);
+
+    return () => window.clearInterval(interval);
+  }, [loadNotifications]);
+
+  useEffect(() => {
     if (!isOpen) return;
 
     function handleKeyDown(event: KeyboardEvent) {
@@ -205,7 +218,8 @@ export default function NotificationCenter() {
     return summary.items.filter((item) => item.category === activeFilter);
   }, [activeFilter, summary]);
 
-  const unreadCount = summary?.unreadCount || 0;
+  const unreadCount =
+    summary?.items.filter((item) => !readIds.has(item.id)).length || 0;
   const badgeLabel = getBadgeLabel(unreadCount);
 
   return (
@@ -213,7 +227,10 @@ export default function NotificationCenter() {
       <button
         type="button"
         aria-label="알림 열기"
-        onClick={() => setIsOpen(true)}
+        onClick={() => {
+          setIsOpen(true);
+          void loadNotifications();
+        }}
         className="relative flex h-10 w-10 items-center justify-center rounded-2xl border border-slate-200 bg-slate-50 text-slate-600 transition-colors hover:bg-white focus:outline-none focus:ring-2 focus:ring-blue-100"
       >
         <Bell size={17} />
@@ -224,8 +241,9 @@ export default function NotificationCenter() {
         ) : null}
       </button>
 
-      {isOpen ? (
-        <div className="fixed inset-0 z-50">
+      {isOpen
+        ? createPortal(
+            <div className="fixed inset-0 z-[100]">
           <button
             type="button"
             aria-label="알림 닫기"
@@ -233,7 +251,7 @@ export default function NotificationCenter() {
             className="absolute inset-0 h-full w-full bg-slate-950/20"
           />
 
-          <aside className="absolute right-0 top-0 flex h-full w-full max-w-md flex-col border-l border-slate-200 bg-slate-50 shadow-xl sm:right-4 sm:top-4 sm:h-[calc(100vh-2rem)] sm:rounded-2xl sm:border">
+          <aside className="absolute right-0 top-0 flex h-full w-full max-w-md flex-col border-l border-slate-200 bg-slate-50 shadow-xl sm:right-4 sm:top-20 sm:h-[560px] sm:w-[400px] sm:max-w-[calc(100vw-2rem)] sm:rounded-2xl sm:border">
             <div className="border-b border-slate-200 bg-white px-5 py-4 sm:rounded-t-2xl">
               <div className="flex items-center justify-between gap-3">
                 <div className="min-w-0">
@@ -267,7 +285,7 @@ export default function NotificationCenter() {
                 </div>
               </div>
 
-              <div className="mt-4 grid grid-cols-4 gap-1 rounded-2xl bg-slate-100 p-1">
+              <div className="mt-4 grid grid-cols-5 gap-1 rounded-2xl bg-slate-100 p-1">
                 {filters.map((filter) => (
                   <button
                     key={filter.value}
@@ -287,28 +305,27 @@ export default function NotificationCenter() {
 
             <div className="flex-1 overflow-y-auto p-4">
               {isLoading ? (
-                <div className="rounded-2xl border border-slate-200 bg-white p-5 text-center text-sm text-slate-500">
-                  알림을 불러오는 중입니다.
-                </div>
+                <TableSkeleton rows={6} columns={1} />
               ) : errorMessage ? (
-                <div className="rounded-2xl border border-red-100 bg-white p-5 text-sm text-red-600">
-                  <p className="font-semibold">알림을 불러오지 못했습니다.</p>
-                  <p className="mt-1 text-red-500">{errorMessage}</p>
-                  <button
-                    type="button"
-                    onClick={() => void loadNotifications()}
-                    className="mt-4 rounded-2xl border border-red-100 bg-red-50 px-3 py-2 text-sm font-semibold text-red-700 transition-colors hover:bg-white"
-                  >
-                    다시 시도
-                  </button>
-                </div>
+                <ErrorState
+                  message={errorMessage}
+                  onRetry={() => void loadNotifications()}
+                />
               ) : filteredItems.length > 0 ? (
                 <div className="space-y-3">
                   {filteredItems.map((item) => (
                     <NotificationRow
                       key={item.id}
                       item={item}
-                      onSelect={() => setIsOpen(false)}
+                      isRead={readIds.has(item.id)}
+                      onSelect={() => {
+                        setReadIds((current) => {
+                          const next = new Set(current);
+                          next.add(item.id);
+                          return next;
+                        });
+                        setIsOpen(false);
+                      }}
                     />
                   ))}
                   {activeFilter === "all" && summary && summary.hiddenCount > 0 ? (
@@ -324,9 +341,20 @@ export default function NotificationCenter() {
                 />
               )}
             </div>
+            <div className="border-t border-slate-200 bg-white p-3 text-center sm:rounded-b-2xl">
+              <Link
+                href="/notifications"
+                onClick={() => setIsOpen(false)}
+                className="text-sm font-semibold text-blue-600 hover:text-blue-700"
+              >
+                모든 알림 보기
+              </Link>
+            </div>
           </aside>
-        </div>
-      ) : null}
+            </div>,
+            document.body
+          )
+        : null}
     </>
   );
 }

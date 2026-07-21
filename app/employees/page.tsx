@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
+import SignupRequests from "@/components/employees/SignupRequests";
 
 type Employee = {
   id: string;
@@ -229,6 +230,8 @@ export default function EmployeesPage() {
           + 신규 직원
         </button>
       </div>
+
+      <SignupRequests />
 
       <section className="rounded-2xl bg-white p-6 shadow-sm">
         <h2 className="mb-4 text-lg font-semibold">

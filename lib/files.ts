@@ -1,4 +1,5 @@
 import { supabase } from "@/lib/supabase";
+import { logActivity } from "@/lib/activity";
 
 export const PROJECT_FILE_BUCKET = "project-files";
 
@@ -12,6 +13,17 @@ export const PROJECT_FILE_TYPES = [
 ] as const;
 
 export type ProjectFileType = (typeof PROJECT_FILE_TYPES)[number]["value"];
+
+export const ALLOWED_PROJECT_FILE_EXTENSIONS = [
+  "pdf",
+  "xlsx",
+  "docx",
+  "dwg",
+  "jpg",
+  "jpeg",
+  "png",
+  "zip",
+] as const;
 
 export type ProjectFile = {
   id: number | string;
@@ -55,6 +67,36 @@ export function getFileExtension(fileName: string) {
   const extension = fileName.split(".").pop();
 
   return extension && extension !== fileName ? extension.toUpperCase() : "-";
+}
+
+export function isAllowedProjectFile(fileName: string) {
+  const extension = getFileExtension(fileName).toLowerCase();
+  return ALLOWED_PROJECT_FILE_EXTENSIONS.some(
+    (allowedExtension) => allowedExtension === extension
+  );
+}
+
+export function inferProjectFileType(fileName: string): ProjectFileType {
+  const extension = getFileExtension(fileName).toLowerCase();
+
+  if (extension === "dwg") return "drawing";
+  if (["jpg", "jpeg", "png"].includes(extension)) return "site_photo";
+  if (["pdf", "xlsx", "docx"].includes(extension)) return "completion_document";
+  return "other";
+}
+
+export function getProjectFileCategory(file: ProjectFile) {
+  const extension = getFileExtension(file.file_name).toLowerCase();
+
+  if (extension === "dwg") return { icon: "📐", label: "도면" };
+  if (["jpg", "jpeg", "png"].includes(extension)) {
+    return { icon: "🖼", label: "사진" };
+  }
+  if (extension === "zip") return { icon: "📦", label: "압축파일" };
+  if (["pdf", "xlsx", "docx"].includes(extension)) {
+    return { icon: "📄", label: "문서" };
+  }
+  return { icon: "📁", label: "기타" };
 }
 
 export function isPreviewableFile(file: ProjectFile) {
@@ -130,6 +172,15 @@ export async function uploadProjectFile({
     throw new Error(insertError.message);
   }
 
+  await logActivity({
+    type: "file_upload",
+    title: "파일 업로드",
+    description: `${uploaderName || "사용자"}님이 ${file.name}을(를) 업로드했습니다.`,
+    projectId: Number(projectId),
+    targetType: "file",
+    metadata: { fileName: file.name, fileType },
+  });
+
   return data as ProjectFile;
 }
 
@@ -164,6 +215,15 @@ export async function deleteProjectFile(file: ProjectFile) {
   if (deleteError) {
     throw new Error(deleteError.message);
   }
+
+  await logActivity({
+    type: "file_delete",
+    title: "파일 삭제",
+    description: `${file.file_name} 파일을 삭제했습니다.`,
+    projectId: Number(file.project_id),
+    targetType: "file",
+    metadata: { fileName: file.file_name },
+  });
 }
 
 function buildProjectFilePath(projectId: string | number, fileName: string) {

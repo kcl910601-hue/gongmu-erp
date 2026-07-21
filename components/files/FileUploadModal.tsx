@@ -1,11 +1,11 @@
 "use client";
 
-import { useState } from "react";
-import { X } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { FileUp, X } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import {
-  PROJECT_FILE_TYPES,
-  type ProjectFileType,
+  inferProjectFileType,
+  isAllowedProjectFile,
   uploadProjectFile,
 } from "@/lib/files";
 
@@ -17,18 +17,7 @@ type FileUploadModalProps = {
   onUploaded: () => void;
 };
 
-const acceptedFileTypes = [
-  "application/pdf",
-  "image/*",
-  ".xls",
-  ".xlsx",
-  ".doc",
-  ".docx",
-  ".hwp",
-  ".hwpx",
-  ".dwg",
-  ".dxf",
-].join(",");
+const acceptedFileTypes = ".pdf,.xlsx,.docx,.dwg,.jpg,.jpeg,.png,.zip";
 
 export function FileUploadModal({
   projectId,
@@ -37,11 +26,35 @@ export function FileUploadModal({
   onClose,
   onUploaded,
 }: FileUploadModalProps) {
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [fileType, setFileType] = useState<ProjectFileType>("drawing");
   const [description, setDescription] = useState("");
+  const [isDragging, setIsDragging] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
+
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape" && !isUploading) onClose();
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isUploading, onClose]);
+
+  function selectFile(file: File | null) {
+    setErrorMessage("");
+
+    if (file && !isAllowedProjectFile(file.name)) {
+      setSelectedFile(null);
+      setErrorMessage(
+        "PDF, XLSX, DOCX, DWG, JPG, PNG, ZIP 파일만 업로드할 수 있습니다."
+      );
+      return;
+    }
+
+    setSelectedFile(file);
+  }
 
   async function handleUpload() {
     if (!selectedFile || isUploading) return;
@@ -53,7 +66,7 @@ export function FileUploadModal({
       await uploadProjectFile({
         projectId,
         file: selectedFile,
-        fileType,
+        fileType: inferProjectFileType(selectedFile.name),
         description,
         uploaderName,
         uploaderEmail,
@@ -62,11 +75,11 @@ export function FileUploadModal({
       onUploaded();
       onClose();
     } catch (error) {
-      const message =
+      setErrorMessage(
         error instanceof Error
           ? error.message
-          : "파일 업로드 중 오류가 발생했습니다.";
-      setErrorMessage(message);
+          : "파일 업로드 중 오류가 발생했습니다."
+      );
     } finally {
       setIsUploading(false);
     }
@@ -74,8 +87,10 @@ export function FileUploadModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
-      onClick={onClose}
+      className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 p-4"
+      onClick={() => {
+        if (!isUploading) onClose();
+      }}
     >
       <div
         className="w-full max-w-[520px] rounded-2xl border border-slate-200 bg-white p-6 shadow-lg"
@@ -87,72 +102,76 @@ export function FileUploadModal({
               파일 업로드
             </h2>
             <p className="mt-1 text-sm text-slate-500">
-              현재 프로젝트에 연결할 파일을 등록합니다.
+              파일 형식에 따라 문서, 도면, 사진, 압축파일로 자동 분류됩니다.
             </p>
           </div>
           <button
             type="button"
             onClick={onClose}
-            className="rounded-xl p-2 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-200"
+            disabled={isUploading}
+            className="rounded-xl p-2 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700 disabled:opacity-50"
             aria-label="닫기"
           >
             <X size={18} />
           </button>
         </div>
 
-        <div className="space-y-4">
-          <label className="block">
-            <span className="mb-2 block text-sm font-semibold text-slate-700">
-              파일 선택
-            </span>
-            <input
-              type="file"
-              accept={acceptedFileTypes}
-              onChange={(event) =>
-                setSelectedFile(event.target.files?.[0] ?? null)
-              }
-              className="block w-full rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm text-slate-700 file:mr-4 file:rounded-xl file:border-0 file:bg-slate-100 file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-slate-700 hover:file:bg-slate-200 focus:border-blue-300 focus:outline-none focus:ring-2 focus:ring-blue-100"
-            />
-          </label>
+        <button
+          type="button"
+          onClick={() => fileInputRef.current?.click()}
+          onDragEnter={(event) => {
+            event.preventDefault();
+            setIsDragging(true);
+          }}
+          onDragOver={(event) => event.preventDefault()}
+          onDragLeave={(event) => {
+            if (event.currentTarget === event.target) setIsDragging(false);
+          }}
+          onDrop={(event) => {
+            event.preventDefault();
+            setIsDragging(false);
+            selectFile(event.dataTransfer.files[0] ?? null);
+          }}
+          className={`flex w-full flex-col items-center justify-center rounded-2xl border-2 border-dashed px-6 py-10 text-center transition-colors ${
+            isDragging
+              ? "border-blue-400 bg-blue-50"
+              : "border-slate-200 bg-slate-50 hover:border-blue-300 hover:bg-blue-50/50"
+          }`}
+        >
+          <FileUp size={28} className="text-blue-600" />
+          <span className="mt-3 text-sm font-semibold text-slate-800">
+            {selectedFile?.name || "파일을 선택하거나 여기에 끌어 놓으세요"}
+          </span>
+          <span className="mt-1 text-xs text-slate-500">
+            PDF · XLSX · DOCX · DWG · JPG · PNG · ZIP
+          </span>
+        </button>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept={acceptedFileTypes}
+          onChange={(event) => selectFile(event.target.files?.[0] ?? null)}
+          className="sr-only"
+        />
 
-          <label className="block">
-            <span className="mb-2 block text-sm font-semibold text-slate-700">
-              파일 분류
-            </span>
-            <select
-              value={fileType}
-              onChange={(event) =>
-                setFileType(event.target.value as ProjectFileType)
-              }
-              className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm text-slate-700 focus:border-blue-300 focus:outline-none focus:ring-2 focus:ring-blue-100"
-            >
-              {PROJECT_FILE_TYPES.map((type) => (
-                <option key={type.value} value={type.value}>
-                  {type.label}
-                </option>
-              ))}
-            </select>
-          </label>
+        <label className="mt-4 block">
+          <span className="mb-2 block text-sm font-semibold text-slate-700">
+            설명 또는 메모
+          </span>
+          <textarea
+            value={description}
+            onChange={(event) => setDescription(event.target.value)}
+            rows={3}
+            className="w-full resize-none rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm text-slate-700 focus:border-blue-300 focus:outline-none focus:ring-2 focus:ring-blue-100"
+            placeholder="파일에 대한 간단한 메모를 입력하세요."
+          />
+        </label>
 
-          <label className="block">
-            <span className="mb-2 block text-sm font-semibold text-slate-700">
-              설명 또는 메모
-            </span>
-            <textarea
-              value={description}
-              onChange={(event) => setDescription(event.target.value)}
-              rows={3}
-              className="w-full resize-none rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm text-slate-700 focus:border-blue-300 focus:outline-none focus:ring-2 focus:ring-blue-100"
-              placeholder="파일에 대한 간단한 메모를 입력하세요."
-            />
-          </label>
-
-          {errorMessage && (
-            <div className="rounded-2xl border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-600">
-              {errorMessage}
-            </div>
-          )}
-        </div>
+        {errorMessage && (
+          <div className="mt-4 rounded-2xl border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-600">
+            {errorMessage}
+          </div>
+        )}
 
         <div className="mt-6 flex justify-end gap-3">
           <Button

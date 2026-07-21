@@ -6,6 +6,10 @@ import { supabase } from "@/lib/supabase";
 import Header from "./Header";
 import Sidebar from "./Sidebar";
 import GlobalSearch from "@/components/search/GlobalSearch";
+import QuickActionsFab from "@/components/quick-actions/QuickActionsFab";
+import { ToastViewport } from "@/components/ui/ToastViewport";
+import { FocusPanel } from "@/components/focus/FocusPanel";
+import { TaskDetailDialog } from "@/components/tasks/TaskDetailDialog";
 
 function getSidebarSnapshot() {
   if (typeof window === "undefined") return false;
@@ -23,7 +27,7 @@ function subscribeSidebarChange(onStoreChange: () => void) {
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
-  const isLoginPage = pathname === "/login";
+  const isPublicPage = pathname === "/login" || pathname === "/signup";
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const isCollapsed = useSyncExternalStore(
     subscribeSidebarChange,
@@ -32,32 +36,30 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   );
 
   useEffect(() => {
-    if (isLoginPage) return;
+    if (isPublicPage) return;
 
     async function checkAuth() {
       const {
         data: { session },
       } = await supabase.auth.getSession();
 
-      if (!session) {
-        router.push("/login");
-      }
+      if (!session) router.push("/login");
     }
 
     void checkAuth();
-  }, [isLoginPage, router]);
+  }, [isPublicPage, router]);
 
   const openSearch = useCallback(() => {
-    if (isLoginPage) return;
+    if (isPublicPage) return;
     setIsSearchOpen(true);
-  }, [isLoginPage]);
+  }, [isPublicPage]);
 
   const closeSearch = useCallback(() => {
     setIsSearchOpen(false);
   }, []);
 
   useEffect(() => {
-    if (isLoginPage) return;
+    if (isPublicPage) return;
 
     function handleKeyDown(event: KeyboardEvent) {
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
@@ -68,9 +70,9 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isLoginPage]);
+  }, [isPublicPage]);
 
-  if (isLoginPage) {
+  if (isPublicPage) {
     return <>{children}</>;
   }
 
@@ -86,6 +88,10 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         {children}
       </main>
       <GlobalSearch isOpen={isSearchOpen} onClose={closeSearch} />
+      <QuickActionsFab />
+      <ToastViewport />
+      <FocusPanel />
+      <TaskDetailDialog />
     </div>
   );
 }

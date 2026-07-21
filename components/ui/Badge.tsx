@@ -23,7 +23,7 @@ export function Badge({
 }: BadgeProps) {
   return (
     <span
-      className={`rounded-full border px-3 py-1 text-xs ${variantClass[variant]} ${className}`}
+      className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium ${variantClass[variant]} ${className}`}
     >
       {children}
     </span>

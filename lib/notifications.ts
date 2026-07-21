@@ -1,26 +1,28 @@
 import type { PostgrestError } from "@supabase/supabase-js";
 import { getCurrentEmployee, type CurrentEmployee } from "@/lib/auth";
-import { getProjectFileTypeLabel } from "@/lib/files";
 import { supabase } from "@/lib/supabase";
-import { getTaskStatusLabel, isTaskCompleted } from "@/lib/status";
+import { isTaskCompleted } from "@/lib/status";
 
 export type NotificationSeverity = "danger" | "warning" | "info";
-export type NotificationCategory = "task" | "file" | "notice";
+export type NotificationCategory = "task" | "shipment" | "project" | "employee";
 export type NotificationType =
   | "task_delayed"
   | "task_today"
-  | "task_this_week"
-  | "task_assigned"
-  | "project_file"
-  | "notice";
+  | "task_started"
+  | "shipment_scheduled"
+  | "shipment_delayed"
+  | "project_created"
+  | "employee_approval";
 
-export type NotificationTask = {
+type NotificationTask = {
   id: number;
   project_id: number;
+  project_section_id?: number | null;
   task_name: string | null;
   task_type: string | null;
   assignee: string | null;
   status: string | null;
+  start_date: string | null;
   due_date: string | null;
 };
 
@@ -29,23 +31,31 @@ type NotificationProject = {
   project_name: string;
 };
 
-type NotificationProjectFile = {
-  id: string | number;
-  project_id: string | number;
-  file_name: string;
-  file_type: string | null;
-  uploaded_by: string | null;
-  uploaded_by_email: string | null;
+type NotificationShipment = {
+  id: number;
+  project_id: number | null;
+  item_name: string | null;
+  site_name: string | null;
+  status: string | null;
+  shipment_date: string | null;
+  driver_name: string | null;
+};
+
+type ApprovalEmployee = {
+  id: number;
+  name: string;
   created_at: string | null;
 };
 
-type NotificationNotice = {
+type ActivityRow = {
   id: number;
+  activity_type: string;
   title: string;
-  description: string;
-  date: string;
-  author: string | null;
-  href: string;
+  description: string | null;
+  project_id: number | null;
+  employee_name: string | null;
+  employee_email: string | null;
+  created_at: string | null;
 };
 
 export type NotificationItem = {
@@ -59,13 +69,8 @@ export type NotificationItem = {
   priority: number;
   severity: NotificationSeverity;
   projectName: string;
-  assignee?: string | null;
-  taskType?: string | null;
-  dueDate?: string | null;
-  statusLabel?: string;
-  daysDelayed?: number | null;
-  fileTypeLabel?: string;
   actor?: string | null;
+  statusLabel?: string | null;
 };
 
 export type NotificationSummary = {
@@ -74,7 +79,6 @@ export type NotificationSummary = {
   unreadCount: number;
   totalCount: number;
   hiddenCount: number;
-  excludedSources: string[];
 };
 
 type LoadNotificationSummaryResult = {
@@ -82,24 +86,12 @@ type LoadNotificationSummaryResult = {
   error: PostgrestError | Error | null;
 };
 
-const MAX_NOTIFICATION_ITEMS = 20;
-const RECENT_DAYS = 7;
-const STATIC_NOTICE_ROWS: NotificationNotice[] = [
-  {
-    id: 1,
-    title: "공지사항 기능 준비 중",
-    description: "공무팀 공지와 전달사항을 이곳에서 관리할 예정입니다.",
-    date: "2026-07-06",
-    author: null,
-    href: "/notices",
-  },
-];
+const DEFAULT_LIMIT = 30;
 
 function formatDateInput(date: Date) {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, "0");
   const day = String(date.getDate()).padStart(2, "0");
-
   return `${year}-${month}-${day}`;
 }
 
@@ -107,276 +99,298 @@ function getToday() {
   return formatDateInput(new Date());
 }
 
-function getRecentCutoffDate() {
-  const cutoff = new Date();
-  cutoff.setDate(cutoff.getDate() - RECENT_DAYS);
-  cutoff.setHours(0, 0, 0, 0);
-
-  return formatDateInput(cutoff);
+function getWeekEnd(today: string) {
+  const date = new Date(`${today}T00:00:00`);
+  date.setDate(date.getDate() + 7);
+  return formatDateInput(date);
 }
 
 function getRecentCutoffIso() {
-  const cutoff = new Date();
-  cutoff.setDate(cutoff.getDate() - RECENT_DAYS);
-  cutoff.setHours(0, 0, 0, 0);
-
-  return cutoff.toISOString();
-}
-
-function getThisWeekEnd(date: string) {
-  const baseDate = new Date(`${date}T00:00:00`);
-  const dayOfWeek = baseDate.getDay();
-  const mondayOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
-  const startDate = new Date(baseDate);
-  const endDate = new Date(baseDate);
-
-  startDate.setDate(baseDate.getDate() + mondayOffset);
-  endDate.setDate(startDate.getDate() + 6);
-
-  return formatDateInput(endDate);
-}
-
-function getDaysDelayed(dueDate: string | null, today: string) {
-  if (!dueDate || dueDate >= today) return null;
-
-  const dueTime = new Date(`${dueDate}T00:00:00`).getTime();
-  const todayTime = new Date(`${today}T00:00:00`).getTime();
-
-  return Math.max(1, Math.ceil((todayTime - dueTime) / (1000 * 60 * 60 * 24)));
+  const date = new Date();
+  date.setDate(date.getDate() - 7);
+  return date.toISOString();
 }
 
 function getProjectName(
   projects: NotificationProject[],
-  projectId: number | string
+  projectId: number | null
 ) {
-  const projectIdText = String(projectId);
-
+  if (projectId === null) return "프로젝트 없음";
   return (
-    projects.find((project) => String(project.id) === projectIdText)
-      ?.project_name || `프로젝트 #${projectIdText}`
+    projects.find((project) => project.id === projectId)?.project_name ??
+    `프로젝트 #${projectId}`
   );
 }
 
-function toTaskNotificationItem(
-  task: NotificationTask,
-  projects: NotificationProject[],
-  type: Extract<
-    NotificationType,
-    "task_delayed" | "task_today" | "task_this_week"
-  >,
-  today: string
-): NotificationItem {
-  const daysDelayed = getDaysDelayed(task.due_date, today);
-  const title =
-    type === "task_delayed"
-      ? `지연 ${daysDelayed || 1}일`
-      : type === "task_today"
-        ? "오늘 마감"
-        : "이번 주 마감";
-  const severity =
-    type === "task_delayed"
-      ? "danger"
-      : type === "task_today"
-        ? "warning"
-        : "info";
-
-  return {
-    id: `task-${type}-${task.id}`,
-    type,
-    category: "task",
-    title,
-    description: task.task_name || "-",
-    date: task.due_date,
-    href: `/projects/${task.project_id}`,
-    priority: type === "task_delayed" ? 1 : type === "task_today" ? 2 : 6,
-    severity,
-    projectName: getProjectName(projects, task.project_id),
-    assignee: task.assignee,
-    taskType: task.task_type,
-    dueDate: task.due_date,
-    statusLabel: getTaskStatusLabel(task.status),
-    daysDelayed,
-  };
-}
-
-function toFileNotificationItem(
-  file: NotificationProjectFile,
-  projects: NotificationProject[]
-): NotificationItem {
-  return {
-    id: `project-file-${file.id}`,
-    type: "project_file",
-    category: "file",
-    title: "새 프로젝트 파일",
-    description: file.file_name,
-    date: file.created_at,
-    href: `/projects/${file.project_id}`,
-    priority: 5,
-    severity: "info",
-    projectName: getProjectName(projects, file.project_id),
-    fileTypeLabel: getProjectFileTypeLabel(file.file_type),
-    actor: file.uploaded_by || file.uploaded_by_email,
-  };
-}
-
-function toNoticeNotificationItem(notice: NotificationNotice): NotificationItem {
-  return {
-    id: `notice-${notice.id}`,
-    type: "notice",
-    category: "notice",
-    title: "새 공지",
-    description: notice.title,
-    date: notice.date,
-    href: notice.href,
-    priority: 4,
-    severity: "info",
-    projectName: notice.description,
-    actor: notice.author,
-  };
-}
-
-function sortByDueDate(a: NotificationTask, b: NotificationTask) {
-  return (a.due_date || "").localeCompare(b.due_date || "");
-}
-
-function getDateTime(date: string | null) {
-  if (!date) return 0;
-
-  const time = new Date(date).getTime();
-  return Number.isNaN(time) ? 0 : time;
+function getDaysDelayed(date: string, today: string) {
+  const dueTime = new Date(`${date}T00:00:00`).getTime();
+  const todayTime = new Date(`${today}T00:00:00`).getTime();
+  return Math.max(1, Math.ceil((todayTime - dueTime) / 86_400_000));
 }
 
 function compareNotifications(a: NotificationItem, b: NotificationItem) {
-  if (a.priority !== b.priority) {
-    return a.priority - b.priority;
-  }
-
-  if (a.type === "task_delayed" || a.type === "task_this_week") {
-    return (a.date || "").localeCompare(b.date || "");
-  }
-
-  const dateDiff = getDateTime(b.date) - getDateTime(a.date);
-  if (dateDiff !== 0) return dateDiff;
-
-  return a.id.localeCompare(b.id);
+  if (a.priority !== b.priority) return a.priority - b.priority;
+  return (b.date ?? "").localeCompare(a.date ?? "");
 }
 
-export function calculateNotificationSummary(
-  tasks: NotificationTask[],
-  projects: NotificationProject[],
-  currentEmployee: CurrentEmployee | null,
-  projectFiles: NotificationProjectFile[] = [],
-  notices: NotificationNotice[] = []
-): NotificationSummary {
+export function calculateNotificationSummary({
+  tasks,
+  projects,
+  shipments,
+  approvals,
+  activities,
+  currentEmployee,
+  limit = DEFAULT_LIMIT,
+}: {
+  tasks: NotificationTask[];
+  projects: NotificationProject[];
+  shipments: NotificationShipment[];
+  approvals: ApprovalEmployee[];
+  activities: ActivityRow[];
+  currentEmployee: CurrentEmployee | null;
+  limit?: number;
+}): NotificationSummary {
   const today = getToday();
-  const endOfWeek = getThisWeekEnd(today);
-  const recentCutoffDate = getRecentCutoffDate();
-  const assignedTasks = currentEmployee
-    ? tasks.filter((task) => task.assignee === currentEmployee.name)
+  const weekEnd = getWeekEnd(today);
+  const isAdmin = currentEmployee?.role === "admin";
+  const visibleTasks = isAdmin
+    ? tasks
+    : tasks.filter((task) => task.assignee === currentEmployee?.name);
+  const allowedProjectIds = new Set(
+    visibleTasks.map((task) => task.project_id)
+  );
+  const visibleShipments = isAdmin
+    ? shipments
+    : shipments.filter(
+        (shipment) =>
+          shipment.project_id !== null &&
+          allowedProjectIds.has(shipment.project_id)
+      );
+  const visibleActivities = isAdmin
+    ? activities
+    : activities.filter(
+        (activity) =>
+          (activity.project_id !== null &&
+            allowedProjectIds.has(activity.project_id)) ||
+          activity.employee_email === currentEmployee?.email
+      );
+
+  const taskItems = visibleTasks.flatMap<NotificationItem>((task) => {
+    if (isTaskCompleted(task.status)) return [];
+    const projectName = getProjectName(projects, task.project_id);
+
+    if (task.due_date && task.due_date < today) {
+      const days = getDaysDelayed(task.due_date, today);
+      return [{
+        id: `task-delayed-${task.id}`,
+        type: "task_delayed",
+        category: "task",
+        title: "지연 업무",
+        description: `${task.task_name || "업무"} · ${days}일 지연`,
+        date: task.due_date,
+        href: `/projects/${task.project_id}?task=${task.id}`,
+        priority: 1,
+        severity: "danger",
+        projectName,
+        actor: task.assignee,
+        statusLabel: task.status,
+      }];
+    }
+
+    if (task.due_date === today) {
+      return [{
+        id: `task-today-${task.id}`,
+        type: "task_today",
+        category: "task",
+        title: "오늘 마감",
+        description: task.task_name || "업무",
+        date: task.due_date,
+        href: `/projects/${task.project_id}?task=${task.id}`,
+        priority: 2,
+        severity: "danger",
+        projectName,
+        actor: task.assignee,
+        statusLabel: task.status,
+      }];
+    }
+
+    if (task.start_date === today) {
+      return [{
+        id: `task-started-${task.id}`,
+        type: "task_started",
+        category: "task",
+        title: "오늘 시작 업무",
+        description: task.task_name || "업무",
+        date: task.start_date,
+        href: `/projects/${task.project_id}?task=${task.id}`,
+        priority: 4,
+        severity: "warning",
+        projectName,
+        actor: task.assignee,
+        statusLabel: task.status,
+      }];
+    }
+
+    return [];
+  });
+
+  const shipmentItems = visibleShipments.flatMap<NotificationItem>(
+    (shipment) => {
+      if (!shipment.shipment_date || shipment.status === "출고완료") return [];
+      const isDelayed = shipment.shipment_date < today;
+      if (!isDelayed && shipment.shipment_date > weekEnd) return [];
+
+      return [{
+        id: `shipment-${isDelayed ? "delayed" : "scheduled"}-${shipment.id}`,
+        type: isDelayed ? "shipment_delayed" : "shipment_scheduled",
+        category: "shipment",
+        title: isDelayed ? "출고 지연" : "출고 예정",
+        description: shipment.item_name || shipment.site_name || "출고",
+        date: shipment.shipment_date,
+        href: shipment.project_id
+          ? `/projects/${shipment.project_id}`
+          : "/shipments",
+        priority: isDelayed ? 1 : 5,
+        severity: isDelayed ? "danger" : "warning",
+        projectName: getProjectName(projects, shipment.project_id),
+        actor: shipment.driver_name,
+        statusLabel: shipment.status,
+      }];
+    }
+  );
+
+  const approvalItems: NotificationItem[] = isAdmin
+    ? approvals.map((employee) => ({
+        id: `employee-approval-${employee.id}`,
+        type: "employee_approval",
+        category: "employee",
+        title: "직원 승인 요청",
+        description: employee.name,
+        date: employee.created_at,
+        href: "/employees",
+        priority: 1,
+        severity: "danger",
+        projectName: "가입 승인 대기",
+      }))
     : [];
 
-  const delayedTasks = assignedTasks
-    .filter(
-      (task) =>
-        !isTaskCompleted(task.status) &&
-        task.due_date !== null &&
-        task.due_date < today
-    )
-    .sort(sortByDueDate);
-
-  const todayDueTasks = assignedTasks.filter(
-    (task) => !isTaskCompleted(task.status) && task.due_date === today
-  );
-
-  const thisWeekDueTasks = assignedTasks
-    .filter(
-      (task) =>
-        !isTaskCompleted(task.status) &&
-        task.due_date !== null &&
-        task.due_date > today &&
-        task.due_date <= endOfWeek
-    )
-    .sort(sortByDueDate);
-
-  const recentNotices = notices.filter(
-    (notice) => notice.date >= recentCutoffDate && notice.date <= today
-  );
+  const projectItems: NotificationItem[] = visibleActivities
+    .filter((activity) => activity.activity_type === "project_create")
+    .map((activity) => ({
+      id: `activity-project-${activity.id}`,
+      type: "project_created",
+      category: "project",
+      title: "신규 프로젝트",
+      description: activity.description || activity.title,
+      date: activity.created_at,
+      href: activity.project_id ? `/projects/${activity.project_id}` : "/projects",
+      priority: 6,
+      severity: "info",
+      projectName: getProjectName(projects, activity.project_id),
+      actor: activity.employee_name,
+    }));
 
   const allItems = [
-    ...delayedTasks.map((task) =>
-      toTaskNotificationItem(task, projects, "task_delayed", today)
-    ),
-    ...todayDueTasks.map((task) =>
-      toTaskNotificationItem(task, projects, "task_today", today)
-    ),
-    ...recentNotices.map(toNoticeNotificationItem),
-    ...projectFiles.map((file) => toFileNotificationItem(file, projects)),
-    ...thisWeekDueTasks.map((task) =>
-      toTaskNotificationItem(task, projects, "task_this_week", today)
-    ),
+    ...taskItems,
+    ...shipmentItems,
+    ...approvalItems,
+    ...projectItems,
   ].sort(compareNotifications);
-
-  const excludedSources = [
-    "최근 배정 업무: tasks.created_at은 업무 생성 시각이며 담당자 변경 시각을 보장하지 않아 제외",
-  ];
-
-  if (recentNotices.length === 0) {
-    excludedSources.push(
-      "최근 공지: notices 테이블이 없고 최근 7일 이내 정적 공지가 없어 제외"
-    );
-  }
 
   return {
     currentEmployee,
-    items: allItems.slice(0, MAX_NOTIFICATION_ITEMS),
-    unreadCount: delayedTasks.length + todayDueTasks.length,
+    items: allItems.slice(0, limit),
+    unreadCount: allItems.length,
     totalCount: allItems.length,
-    hiddenCount: Math.max(0, allItems.length - MAX_NOTIFICATION_ITEMS),
-    excludedSources,
+    hiddenCount: Math.max(0, allItems.length - limit),
   };
 }
 
-export async function loadNotificationSummary(): Promise<LoadNotificationSummaryResult> {
+export async function loadNotificationSummary(
+  limit = DEFAULT_LIMIT
+): Promise<LoadNotificationSummaryResult> {
   const currentEmployee = await getCurrentEmployee();
+  if (!currentEmployee) {
+    return { data: null, error: new Error("직원 정보를 확인할 수 없습니다.") };
+  }
+
+  const isAdmin = currentEmployee.role === "admin";
   const recentCutoff = getRecentCutoffIso();
-
-  const { data: taskData, error: taskError } = await supabase
+  let taskQuery = supabase
     .from("tasks")
-    .select("id, project_id, task_name, task_type, assignee, status, due_date");
-
-  if (taskError) {
-    return { data: null, error: taskError };
-  }
-
-  const { data: projectData, error: projectError } = await supabase
-    .from("projects")
-    .select("id, project_name");
-
-  if (projectError) {
-    return { data: null, error: projectError };
-  }
-
-  const { data: fileData, error: fileError } = await supabase
-    .from("project_files")
     .select(
-      "id, project_id, file_name, file_type, uploaded_by, uploaded_by_email, created_at"
+      "id, project_id, task_name, task_type, assignee, status, start_date, due_date"
+    );
+
+  if (!isAdmin) {
+    taskQuery = taskQuery.eq("assignee", currentEmployee.name);
+  }
+
+  const taskResult = await taskQuery;
+  if (taskResult.error) return { data: null, error: taskResult.error };
+
+  const allowedProjectIds = Array.from(
+    new Set((taskResult.data ?? []).map((task) => task.project_id))
+  );
+  let projectQuery = supabase.from("projects").select("id, project_name");
+  let shipmentQuery = supabase
+    .from("shipments")
+    .select(
+      "id, project_id, item_name, site_name, status, shipment_date, driver_name"
+    );
+  let activityQuery = supabase
+    .from("activity_logs")
+    .select(
+      "id, activity_type, title, description, project_id, employee_name, employee_email, created_at"
     )
     .gte("created_at", recentCutoff)
     .order("created_at", { ascending: false })
-    .limit(MAX_NOTIFICATION_ITEMS);
+    .limit(50);
 
-  if (fileError) {
-    return { data: null, error: fileError };
+  if (!isAdmin && allowedProjectIds.length > 0) {
+    projectQuery = projectQuery.in("id", allowedProjectIds);
+    shipmentQuery = shipmentQuery.in("project_id", allowedProjectIds);
+    activityQuery = activityQuery.in("project_id", allowedProjectIds);
   }
 
+  const [projectResult, shipmentResult, approvalResult, activityResult] =
+    await Promise.all([
+      !isAdmin && allowedProjectIds.length === 0
+        ? Promise.resolve({ data: [], error: null })
+        : projectQuery,
+      !isAdmin && allowedProjectIds.length === 0
+        ? Promise.resolve({ data: [], error: null })
+        : shipmentQuery,
+      isAdmin
+        ? supabase
+            .from("employees")
+            .select("id, name, created_at")
+            .eq("approval_status", "pending")
+            .order("created_at", { ascending: false })
+        : Promise.resolve({ data: [], error: null }),
+      !isAdmin && allowedProjectIds.length === 0
+        ? Promise.resolve({ data: [], error: null })
+        : activityQuery,
+    ]);
+
+  const error =
+    projectResult.error ||
+    shipmentResult.error ||
+    approvalResult.error ||
+    activityResult.error;
+
+  if (error) return { data: null, error };
+
   return {
-    data: calculateNotificationSummary(
-      (taskData || []) as NotificationTask[],
-      (projectData || []) as NotificationProject[],
+    data: calculateNotificationSummary({
+      tasks: (taskResult.data ?? []) as NotificationTask[],
+      projects: (projectResult.data ?? []) as NotificationProject[],
+      shipments: (shipmentResult.data ?? []) as NotificationShipment[],
+      approvals: (approvalResult.data ?? []) as ApprovalEmployee[],
+      activities: (activityResult.data ?? []) as ActivityRow[],
       currentEmployee,
-      (fileData || []) as NotificationProjectFile[],
-      STATIC_NOTICE_ROWS
-    ),
+      limit,
+    }),
     error: null,
   };
 }

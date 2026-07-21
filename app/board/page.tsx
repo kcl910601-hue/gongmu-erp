@@ -28,6 +28,7 @@ type Project = {
 type Task = {
   id: number;
   project_id: number;
+  project_section_id?: number | null;
   status: string | null;
   due_date: string | null;
 };

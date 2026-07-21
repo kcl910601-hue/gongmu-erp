@@ -1,7 +1,20 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useMemo, useRef, useState } from "react";
+import {
+  ChevronDown,
+  ChevronRight,
+  Crosshair,
+  LocateFixed,
+  Minus,
+  Monitor,
+  Pin,
+  Plus,
+  Search,
+  SlidersHorizontal,
+  X,
+} from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Badge, type BadgeVariant } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -22,11 +35,15 @@ export type IntegratedProject = {
   salesperson: string | null;
   task_manager: string | null;
   status: string | null;
+  start_date: string | null;
+  end_date: string | null;
+  completion_due_date?: string | null;
 };
 
 export type IntegratedTask = {
   id: number;
   project_id: number;
+  project_section_id?: number | null;
   task_order: number | null;
   task_name: string | null;
   task_type: string | null;
@@ -62,6 +79,7 @@ type IntegratedProjectGanttProps = {
   visibleTaskIds: Set<number>;
   currentMonth: string;
   today: string;
+  onCurrentMonthChange?: (month: string) => void;
   onTaskUpdated: (task: IntegratedTask) => void;
 };
 
@@ -95,7 +113,23 @@ type GanttSortKey =
   | "delayed"
   | "progress";
 
-const dayWidth = 36;
+type PresentationPreferences = {
+  scrollLeft: number;
+  scrollTop: number;
+  zoom: number;
+  collapsedMonths: string[];
+  rangeOption: "today" | "all";
+  meetingFocus: boolean;
+  timeline: string;
+  searchQuery: string;
+  statusFilter: GanttStatusFilter;
+  assigneeFilter: string;
+  taskTypeFilter: string;
+  assemblyVendorFilter: string;
+};
+
+const baseDayWidth = 36;
+const PRESENTATION_KEY = "erp-gantt-presentation";
 const baseRowHeight = 58;
 const laneHeight = 22;
 const maxLanes = 3;
@@ -107,8 +141,8 @@ const monthFormatter = new Intl.DateTimeFormat("ko-KR", {
 });
 const defaultTaskTypeColor: TaskTypeColor = {
   label: "기타",
-  className: "bg-slate-100 text-slate-600 ring-slate-200",
-  swatchClassName: "bg-slate-300 ring-slate-200",
+  className: "bg-[#E2E8F0] text-slate-800 ring-slate-300",
+  swatchClassName: "bg-[#E2E8F0] ring-slate-300",
 };
 
 const taskTypeColorRules: Array<{
@@ -116,51 +150,91 @@ const taskTypeColorRules: Array<{
   color: TaskTypeColor;
 }> = [
   {
-    keywords: ["설계"],
+    keywords: ["기획", "설계"],
     color: {
-      label: "설계",
-      className: "bg-blue-100 text-blue-700 ring-blue-200",
-      swatchClassName: "bg-blue-300 ring-blue-200",
+      label: "기획/설계",
+      className: "bg-[#A8D8EA] text-slate-800 ring-[#86BFD7]",
+      swatchClassName: "bg-[#A8D8EA] ring-[#86BFD7]",
+    },
+  },
+  {
+    keywords: ["실측"],
+    color: {
+      label: "실측",
+      className: "bg-[#F8C8DC] text-slate-800 ring-[#DFA9C0]",
+      swatchClassName: "bg-[#F8C8DC] ring-[#DFA9C0]",
     },
   },
   {
     keywords: ["발주"],
     color: {
       label: "발주",
-      className: "bg-violet-100 text-violet-700 ring-violet-200",
-      swatchClassName: "bg-violet-300 ring-violet-200",
+      className: "bg-[#FFE5B4] text-slate-800 ring-[#E8C98F]",
+      swatchClassName: "bg-[#FFE5B4] ring-[#E8C98F]",
     },
   },
   {
-    keywords: ["제작", "입고"],
+    keywords: ["생산", "제작", "입고"],
     color: {
-      label: "제작/입고",
-      className: "bg-cyan-100 text-cyan-700 ring-cyan-200",
-      swatchClassName: "bg-cyan-300 ring-cyan-200",
+      label: "생산/제작",
+      className: "bg-[#B5EAD7] text-slate-800 ring-[#8FCDB6]",
+      swatchClassName: "bg-[#B5EAD7] ring-[#8FCDB6]",
     },
   },
   {
     keywords: ["시공", "현장"],
     color: {
       label: "시공/현장",
-      className: "bg-orange-100 text-orange-700 ring-orange-200",
-      swatchClassName: "bg-orange-300 ring-orange-200",
+      className: "bg-[#FFD3B6] text-slate-800 ring-[#E9B590]",
+      swatchClassName: "bg-[#FFD3B6] ring-[#E9B590]",
     },
   },
   {
     keywords: ["검수"],
     color: {
       label: "검수",
-      className: "bg-emerald-100 text-emerald-700 ring-emerald-200",
-      swatchClassName: "bg-emerald-300 ring-emerald-200",
+      className: "bg-[#D4F0F0] text-slate-800 ring-[#A9D4D4]",
+      swatchClassName: "bg-[#D4F0F0] ring-[#A9D4D4]",
     },
   },
   {
     keywords: ["출고"],
     color: {
       label: "출고",
-      className: "bg-amber-100 text-amber-700 ring-amber-200",
-      swatchClassName: "bg-amber-300 ring-amber-200",
+      className: "bg-[#C7CEEA] text-slate-800 ring-[#A5AED2]",
+      swatchClassName: "bg-[#C7CEEA] ring-[#A5AED2]",
+    },
+  },
+  {
+    keywords: ["AS", "A/S"],
+    color: {
+      label: "AS",
+      className: "bg-[#D4F0F0] text-slate-800 ring-[#A9D4D4]",
+      swatchClassName: "bg-[#D4F0F0] ring-[#A9D4D4]",
+    },
+  },
+  {
+    keywords: ["완료"],
+    color: {
+      label: "완료",
+      className: "bg-[#D9EAD3] text-slate-800 ring-[#B7D0AE]",
+      swatchClassName: "bg-[#D9EAD3] ring-[#B7D0AE]",
+    },
+  },
+  {
+    keywords: ["지연"],
+    color: {
+      label: "지연",
+      className: "bg-[#F4CCCC] text-slate-800 ring-[#DCAAAA]",
+      swatchClassName: "bg-[#F4CCCC] ring-[#DCAAAA]",
+    },
+  },
+  {
+    keywords: ["보류"],
+    color: {
+      label: "보류",
+      className: "bg-[#EAD1DC] text-slate-800 ring-[#CEB2BF]",
+      swatchClassName: "bg-[#EAD1DC] ring-[#CEB2BF]",
     },
   },
   {
@@ -339,9 +413,21 @@ export function IntegratedProjectGantt({
   visibleTaskIds,
   currentMonth,
   today,
+  onCurrentMonthChange,
   onTaskUpdated,
 }: IntegratedProjectGanttProps) {
+  const presentationRef = useRef<HTMLDivElement | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const timelineContentRef = useRef<HTMLDivElement | null>(null);
+  const hasInitialTodayScrollRef = useRef(false);
+  const columnFocusRef = useRef<HTMLDivElement | null>(null);
+  const cellFocusRef = useRef<HTMLDivElement | null>(null);
+  const laserRef = useRef<HTMLDivElement | null>(null);
+  const spotlightRef = useRef<HTMLDivElement | null>(null);
+  const focusedRowElementsRef = useRef<HTMLElement[]>([]);
+  const focusLockedRef = useRef(false);
+  const pointerFrozenRef = useRef(false);
+  const projectRowRefs = useRef<Map<number, HTMLDivElement>>(new Map());
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<GanttStatusFilter>("all");
   const [assigneeFilter, setAssigneeFilter] = useState("전체");
@@ -349,9 +435,235 @@ export function IntegratedProjectGantt({
   const [assemblyVendorFilter, setAssemblyVendorFilter] = useState("전체");
   const [sortKey, setSortKey] = useState<GanttSortKey>("project_name");
   const [selectedTask, setSelectedTask] = useState<GanttTaskDetail | null>(null);
-  const { start, end } = useMemo(() => getMonthRange(currentMonth), [currentMonth]);
+  const [isPresentation, setIsPresentation] = useState(false);
+  const [isPresentationFilterOpen, setIsPresentationFilterOpen] =
+    useState(false);
+  const [zoom, setZoom] = useState(100);
+  const [collapsedMonths, setCollapsedMonths] = useState<Set<string>>(
+    () => new Set()
+  );
+  const [meetingFocus, setMeetingFocus] = useState(false);
+  const [laserEnabled, setLaserEnabled] = useState(false);
+  const [spotlightEnabled, setSpotlightEnabled] = useState(false);
+  const [pointerFrozen, setPointerFrozen] = useState(false);
+  const [focusLocked, setFocusLocked] = useState(false);
+  const [highlightedProjectId, setHighlightedProjectId] = useState<
+    number | null
+  >(null);
+  const { start, end } = useMemo(() => {
+    const fallback = getMonthRange(currentMonth);
+    const visibleTasks = tasks.filter((task) => visibleTaskIds.has(task.id));
+    const visibleProjectIds = new Set(
+      visibleTasks.map((task) => task.project_id)
+    );
+    const startDates = [
+      ...visibleTasks.flatMap((task) =>
+        [task.start_date, task.due_date].filter(
+          (date): date is string => Boolean(date)
+        )
+      ),
+      ...projects
+        .filter((project) => visibleProjectIds.has(project.id))
+        .flatMap((project) =>
+          [project.start_date].filter(
+            (date): date is string => Boolean(date)
+          )
+        ),
+    ].sort();
+    const endDates = [
+      ...visibleTasks.flatMap((task) =>
+        [task.due_date, task.completed_date, task.start_date].filter(
+          (date): date is string => Boolean(date)
+        )
+      ),
+      ...projects
+        .filter((project) => visibleProjectIds.has(project.id))
+        .flatMap((project) =>
+          [
+            project.end_date,
+            project.completion_due_date,
+            project.start_date,
+          ].filter((date): date is string => Boolean(date))
+        ),
+    ].sort();
+
+    return {
+      start: startDates[0] || fallback.start,
+      end: endDates[endDates.length - 1] || fallback.end,
+    };
+  }, [currentMonth, projects, tasks, visibleTaskIds]);
   const dateDays = useMemo(() => getDateRange(start, end), [end, start]);
+  const visibleDateDays = dateDays;
+  const monthGroups = useMemo(() => {
+    const groups: Array<{ key: string; count: number }> = [];
+    dateDays.forEach((date) => {
+      const key = date.slice(0, 7);
+      const last = groups[groups.length - 1];
+      if (last?.key === key) last.count += 1;
+      else groups.push({ key, count: 1 });
+    });
+    return groups;
+  }, [dateDays]);
+  const dayWidth = baseDayWidth * (zoom / 100);
   const weekRange = useMemo(() => getWeekRange(today), [today]);
+
+  const savePresentationState = useCallback(
+    (patch: Partial<PresentationPreferences> = {}) => {
+      const scroll = scrollRef.current;
+      const preferences: PresentationPreferences = {
+        scrollLeft: scroll?.scrollLeft ?? 0,
+        scrollTop: scroll?.scrollTop ?? 0,
+        zoom,
+        collapsedMonths: Array.from(collapsedMonths),
+        rangeOption: "today",
+        meetingFocus,
+        timeline: currentMonth,
+        searchQuery,
+        statusFilter,
+        assigneeFilter,
+        taskTypeFilter,
+        assemblyVendorFilter,
+        ...patch,
+      };
+      window.localStorage.setItem(
+        PRESENTATION_KEY,
+        JSON.stringify(preferences)
+      );
+    },
+    [
+      assemblyVendorFilter,
+      assigneeFilter,
+      collapsedMonths,
+      currentMonth,
+      meetingFocus,
+      searchQuery,
+      statusFilter,
+      taskTypeFilter,
+      zoom,
+    ]
+  );
+
+  useEffect(() => {
+    function handleFullscreenChange() {
+      const active = document.fullscreenElement === presentationRef.current;
+      setIsPresentation(active);
+      if (!active) {
+        savePresentationState();
+        focusLockedRef.current = false;
+        pointerFrozenRef.current = false;
+        setFocusLocked(false);
+        setPointerFrozen(false);
+        clearMeetingFocus(true);
+        return;
+      }
+      window.setTimeout(() => {
+        try {
+          const stored = JSON.parse(
+            window.localStorage.getItem(PRESENTATION_KEY) || "{}"
+          ) as Partial<PresentationPreferences>;
+          scrollRef.current?.scrollTo(
+            typeof stored.scrollLeft === "number" ? stored.scrollLeft : 0,
+            typeof stored.scrollTop === "number" ? stored.scrollTop : 0
+          );
+        } catch {
+          window.localStorage.removeItem(PRESENTATION_KEY);
+        }
+      }, 0);
+    }
+    document.addEventListener("fullscreenchange", handleFullscreenChange);
+    return () =>
+      document.removeEventListener("fullscreenchange", handleFullscreenChange);
+  }, [savePresentationState]);
+
+  useEffect(() => {
+    if (!isPresentation) return;
+    function handlePresenterShortcut(event: KeyboardEvent) {
+      const target = event.target;
+      if (
+        target instanceof HTMLInputElement ||
+        target instanceof HTMLSelectElement ||
+        target instanceof HTMLTextAreaElement ||
+        (target instanceof HTMLElement && target.isContentEditable)
+      ) {
+        return;
+      }
+      if (event.key.toLowerCase() === "l") {
+        event.preventDefault();
+        setLaserEnabled((current) => !current);
+      }
+      if (event.code === "Space") {
+        event.preventDefault();
+        const next = !pointerFrozenRef.current;
+        pointerFrozenRef.current = next;
+        setPointerFrozen(next);
+      }
+    }
+    window.addEventListener("keydown", handlePresenterShortcut);
+    return () =>
+      window.removeEventListener("keydown", handlePresenterShortcut);
+  }, [isPresentation]);
+
+  async function enterPresentation() {
+    try {
+      const stored = JSON.parse(
+        window.localStorage.getItem(PRESENTATION_KEY) || "{}"
+      ) as Partial<PresentationPreferences>;
+      if (
+        typeof stored.zoom === "number" &&
+        [75, 100, 125, 150, 200].includes(stored.zoom)
+      ) {
+        setZoom(stored.zoom);
+      }
+      if (Array.isArray(stored.collapsedMonths)) {
+        setCollapsedMonths(
+          new Set(
+            stored.collapsedMonths.filter(
+              (month): month is string => typeof month === "string"
+            )
+          )
+        );
+      }
+      if (typeof stored.meetingFocus === "boolean") {
+        setMeetingFocus(stored.meetingFocus);
+      }
+      if (typeof stored.timeline === "string") {
+        onCurrentMonthChange?.(stored.timeline);
+      }
+      if (typeof stored.searchQuery === "string") {
+        setSearchQuery(stored.searchQuery);
+      }
+      if (
+        stored.statusFilter &&
+        statusFilterOptions.some(
+          (option) => option.value === stored.statusFilter
+        )
+      ) {
+        setStatusFilter(stored.statusFilter);
+      }
+      if (typeof stored.assigneeFilter === "string") {
+        setAssigneeFilter(stored.assigneeFilter);
+      }
+      if (typeof stored.taskTypeFilter === "string") {
+        setTaskTypeFilter(stored.taskTypeFilter);
+      }
+      if (typeof stored.assemblyVendorFilter === "string") {
+        setAssemblyVendorFilter(stored.assemblyVendorFilter);
+      }
+    } catch {
+      window.localStorage.removeItem(PRESENTATION_KEY);
+    }
+    await presentationRef.current?.requestFullscreen();
+  }
+
+  async function exitPresentation() {
+    focusLockedRef.current = false;
+    pointerFrozenRef.current = false;
+    setFocusLocked(false);
+    setPointerFrozen(false);
+    clearMeetingFocus(true);
+    savePresentationState();
+    if (document.fullscreenElement) await document.exitFullscreen();
+  }
 
   const availableTasks = useMemo(
     () =>
@@ -590,19 +902,284 @@ export function IntegratedProjectGantt({
   }, [rows]);
 
   const scrollToToday = useCallback(() => {
-    if (!scrollRef.current || dateDays.length === 0) return;
+    if (!scrollRef.current || visibleDateDays.length === 0) return;
 
-    const todayIndex = dateDays.findIndex((date) => date >= today);
+    const todayIndex = visibleDateDays.findIndex((date) => date >= today);
     const targetIndex =
-      todayIndex === -1 ? dateDays.length - 1 : Math.max(todayIndex, 0);
+      todayIndex === -1
+        ? visibleDateDays.length - 1
+        : Math.max(todayIndex, 0);
     const targetLeft =
       targetIndex * dayWidth - scrollRef.current.clientWidth / 2 + dayWidth;
 
     scrollRef.current.scrollLeft = Math.max(targetLeft, 0);
-  }, [dateDays, today]);
+  }, [dayWidth, today, visibleDateDays]);
+
+  useEffect(() => {
+    if (
+      hasInitialTodayScrollRef.current ||
+      visibleDateDays.length === 0 ||
+      rows.length === 0
+    ) {
+      return;
+    }
+    hasInitialTodayScrollRef.current = true;
+    const frame = window.requestAnimationFrame(scrollToToday);
+    return () => window.cancelAnimationFrame(frame);
+  }, [rows.length, scrollToToday, visibleDateDays.length]);
+
+  function clearMeetingFocus(force = false) {
+    if (focusLockedRef.current && !force) return;
+    focusedRowElementsRef.current.forEach((element) => {
+      element.classList.remove("bg-blue-50", "ring-1", "ring-inset", "ring-blue-200");
+      element.style.backgroundColor = "";
+    });
+    focusedRowElementsRef.current = [];
+    if (columnFocusRef.current) columnFocusRef.current.style.opacity = "0";
+    if (cellFocusRef.current) cellFocusRef.current.style.opacity = "0";
+  }
+
+  function updateMeetingFocus(
+    clientX: number,
+    target: EventTarget | null
+  ) {
+    if (
+      !isPresentation ||
+      !meetingFocus ||
+      focusLockedRef.current ||
+      !(target instanceof Element)
+    ) {
+      return;
+    }
+
+    if (!target.closest("[data-gantt-focus-surface]")) {
+      clearMeetingFocus(true);
+      return;
+    }
+    const rowElement = target.closest<HTMLElement>("[data-gantt-row-id]");
+    const rowId = rowElement?.dataset.ganttRowId;
+    clearMeetingFocus(true);
+
+    if (rowId && presentationRef.current) {
+      const rowElements = Array.from(
+        presentationRef.current.querySelectorAll<HTMLElement>(
+          `[data-gantt-row-id="${rowId}"]`
+        )
+      );
+      rowElements.forEach((element) => {
+        element.style.backgroundColor = "rgb(239 246 255)";
+        element.classList.add(
+          "bg-blue-50",
+          "ring-1",
+          "ring-inset",
+          "ring-blue-200"
+        );
+      });
+      focusedRowElementsRef.current = rowElements;
+    }
+
+    const content = timelineContentRef.current;
+    if (!content || clientX < content.getBoundingClientRect().left) return;
+    const contentRect = content.getBoundingClientRect();
+    const index = Math.floor((clientX - contentRect.left) / dayWidth);
+    if (index < 0 || index >= visibleDateDays.length) return;
+    const left = index * dayWidth;
+
+    if (columnFocusRef.current) {
+      columnFocusRef.current.style.width = `${dayWidth}px`;
+      columnFocusRef.current.style.transform = `translateX(${left}px)`;
+      columnFocusRef.current.style.opacity = "1";
+    }
+    if (cellFocusRef.current && rowElement) {
+      const rowRect = rowElement.getBoundingClientRect();
+      cellFocusRef.current.style.width = `${dayWidth}px`;
+      cellFocusRef.current.style.height = `${rowRect.height}px`;
+      cellFocusRef.current.style.transform = `translate(${left}px, ${
+        rowRect.top - contentRect.top
+      }px)`;
+      cellFocusRef.current.style.opacity = "1";
+    }
+  }
 
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+    <div
+      ref={presentationRef}
+      onPointerMove={(event) => {
+        if (!isPresentation || pointerFrozenRef.current) return;
+        const bounds = event.currentTarget.getBoundingClientRect();
+        if (laserEnabled && laserRef.current) {
+          laserRef.current.style.transform = `translate(${
+            event.clientX - bounds.left - 9
+          }px, ${event.clientY - bounds.top - 9}px)`;
+        }
+        if (spotlightEnabled && spotlightRef.current) {
+          spotlightRef.current.style.background = `radial-gradient(circle 120px at ${
+            event.clientX - bounds.left
+          }px ${event.clientY - bounds.top}px, transparent 0, transparent 55%, rgba(15, 23, 42, 0.26) 100%)`;
+        }
+        updateMeetingFocus(event.clientX, event.target);
+      }}
+      onPointerDown={(event) => {
+        if (!isPresentation || !meetingFocus || event.pointerType !== "touch") {
+          return;
+        }
+        focusLockedRef.current = false;
+        updateMeetingFocus(event.clientX, event.target);
+        focusLockedRef.current = true;
+        setFocusLocked(true);
+      }}
+      onPointerLeave={() => clearMeetingFocus()}
+      className={
+        isPresentation
+          ? "relative h-screen overflow-hidden bg-white text-slate-900"
+          : "rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5"
+      }
+    >
+      {isPresentation && spotlightEnabled && (
+        <div
+          ref={spotlightRef}
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-0 z-[90] bg-slate-950/25"
+        />
+      )}
+      {isPresentation && laserEnabled && (
+        <div
+          ref={laserRef}
+          aria-hidden="true"
+          className="pointer-events-none absolute left-0 top-0 z-[100] h-[18px] w-[18px] rounded-full bg-red-500/80 shadow-[0_0_22px_rgba(239,68,68,0.95)]"
+        />
+      )}
+      {isPresentation && (
+        <div className="relative z-50 flex h-14 items-center gap-2 border-b border-slate-200 bg-white px-3 shadow-sm">
+          <Button type="button" size="sm" variant="secondary" onClick={scrollToToday}>
+            <LocateFixed size={15} /> 오늘
+          </Button>
+          <div className="relative min-w-56 flex-1 max-w-sm">
+            <Search className="absolute left-3 top-2.5 text-slate-400" size={15} />
+            <input
+              value={searchQuery}
+              onChange={(event) => {
+                const value = event.target.value;
+                setSearchQuery(value);
+                const normalized = value.trim().toLocaleLowerCase("ko-KR");
+                if (!normalized) return;
+                const matchedRow = rows.find((row) =>
+                  row.project.project_name
+                    .toLocaleLowerCase("ko-KR")
+                    .includes(normalized)
+                );
+                if (!matchedRow) return;
+                setHighlightedProjectId(matchedRow.project.id);
+                window.setTimeout(
+                  () => setHighlightedProjectId(null),
+                  1600
+                );
+                window.setTimeout(
+                  () =>
+                    projectRowRefs.current
+                      .get(matchedRow.project.id)
+                      ?.scrollIntoView({ behavior: "smooth", block: "center" }),
+                  0
+                );
+              }}
+              placeholder="프로젝트 검색"
+              className="h-9 w-full rounded-lg border border-slate-200 pl-9 pr-3 text-sm outline-none focus:border-blue-400"
+            />
+          </div>
+          <Button type="button" size="sm" variant="secondary" onClick={() => setIsPresentationFilterOpen((current) => !current)}>
+            <SlidersHorizontal size={15} /> 필터
+          </Button>
+          <Button type="button" size="sm" variant={meetingFocus ? "primary" : "secondary"} onClick={() => {
+            const next = !meetingFocus;
+            setMeetingFocus(next);
+            savePresentationState({ meetingFocus: next });
+            if (!next) {
+              focusLockedRef.current = false;
+              setFocusLocked(false);
+              clearMeetingFocus(true);
+            }
+          }}>
+            <Crosshair size={15} /> Meeting Focus
+          </Button>
+          {meetingFocus && (
+            <Button
+              type="button"
+              size="sm"
+              variant={focusLocked ? "primary" : "secondary"}
+              onClick={() => {
+                const next = !focusLockedRef.current;
+                focusLockedRef.current = next;
+                setFocusLocked(next);
+                if (!next) clearMeetingFocus(true);
+              }}
+            >
+              <Pin size={15} /> Focus Lock
+            </Button>
+          )}
+          <Button
+            type="button"
+            size="sm"
+            variant="secondary"
+            onClick={() => {
+              setZoom(75);
+              setCollapsedMonths(new Set());
+              scrollRef.current?.scrollTo({ left: 0, top: 0, behavior: "smooth" });
+              savePresentationState({
+                zoom: 75,
+                collapsedMonths: [],
+                rangeOption: "all",
+              });
+            }}
+          >
+            전체보기
+          </Button>
+          <Button type="button" size="sm" variant={laserEnabled ? "danger" : "secondary"} onClick={() => setLaserEnabled((current) => !current)}>
+            <span className="h-2.5 w-2.5 rounded-full bg-red-500" /> Laser
+          </Button>
+          <Button type="button" size="sm" variant={spotlightEnabled ? "primary" : "secondary"} onClick={() => setSpotlightEnabled((current) => !current)}>
+            💡 Spotlight
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant={pointerFrozen ? "primary" : "secondary"}
+            onClick={() => {
+              const next = !pointerFrozenRef.current;
+              pointerFrozenRef.current = next;
+              setPointerFrozen(next);
+            }}
+          >
+            <Pin size={15} /> Freeze
+          </Button>
+          <Button type="button" size="sm" variant="secondary" aria-label="축소" onClick={() => {
+            const values = [75, 100, 125, 150, 200];
+            const next = values[Math.max(0, values.indexOf(zoom) - 1)];
+            setZoom(next);
+            savePresentationState({ zoom: next });
+          }}><Minus size={15} /></Button>
+          <Button type="button" size="sm" variant="secondary" onClick={() => {
+            setZoom(100);
+            savePresentationState({ zoom: 100 });
+          }}>{zoom}%</Button>
+          <Button type="button" size="sm" variant="secondary" aria-label="확대" onClick={() => {
+            const values = [75, 100, 125, 150, 200];
+            const next = values[Math.min(values.length - 1, values.indexOf(zoom) + 1)];
+            setZoom(next);
+            savePresentationState({ zoom: next });
+          }}><Plus size={15} /></Button>
+          <Button type="button" size="sm" variant="danger" onClick={() => void exitPresentation()}>
+            <X size={15} /> 종료
+          </Button>
+          {isPresentationFilterOpen && (
+            <div className="absolute right-40 top-12 flex gap-2 rounded-xl border border-slate-200 bg-white p-3 shadow-xl">
+              <select value={assigneeFilter} onChange={(event) => setAssigneeFilter(event.target.value)} className="h-9 rounded-lg border px-2 text-sm">{assigneeOptions.map((value) => <option key={value}>{value}</option>)}</select>
+              <select value={taskTypeFilter} onChange={(event) => setTaskTypeFilter(event.target.value)} className="h-9 rounded-lg border px-2 text-sm">{taskTypeOptions.map((value) => <option key={value}>{value}</option>)}</select>
+              <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as GanttStatusFilter)} className="h-9 rounded-lg border px-2 text-sm">{statusFilterOptions.map((value) => <option key={value.value} value={value.value}>{value.label}</option>)}</select>
+            </div>
+          )}
+        </div>
+      )}
+      {!isPresentation && (
       <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <h2 className="text-lg font-bold tracking-tight text-slate-950">
@@ -612,17 +1189,14 @@ export function IntegratedProjectGantt({
             현장별 업무 일정을 선택 월 기준으로 확인합니다.
           </p>
         </div>
-        <Button
-          type="button"
-          variant="secondary"
-          size="sm"
-          onClick={scrollToToday}
-          className="h-9 rounded-2xl px-3.5 text-sm font-medium"
-        >
-          오늘로 이동
-        </Button>
+        <div className="flex gap-2">
+          <Button type="button" variant="secondary" size="sm" onClick={scrollToToday} className="h-9 rounded-2xl px-3.5 text-sm font-medium">오늘로 이동</Button>
+          <Button type="button" variant="primary" size="sm" onClick={() => void enterPresentation()} className="h-9 rounded-2xl px-3.5 text-sm font-medium"><Monitor size={15} /> Presentation</Button>
+        </div>
       </div>
+      )}
 
+      {!isPresentation && (
       <div className="mb-5 rounded-2xl border border-slate-200 bg-slate-50 p-3">
         <div className="flex flex-col gap-3">
           <div className="flex flex-wrap items-end gap-3">
@@ -737,11 +1311,16 @@ export function IntegratedProjectGantt({
           </div>
         </div>
       </div>
+      )}
 
-      {taskTypeLegendItems.length > 0 && (
+      {!isPresentation && taskTypeLegendItems.length > 0 && (
         <div className="mb-5 rounded-2xl border border-slate-200 bg-slate-50 p-3">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
             <div className="flex flex-wrap items-center gap-2 text-xs font-medium text-slate-500">
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-white px-2.5 py-1">
+                <span className="h-3 w-7 rounded bg-[#A8D8EA] ring-1 ring-[#86BFD7]" />
+                Task 일정
+              </span>
               <span className="mr-1 font-semibold text-slate-700">
                 색상: 업무유형
               </span>
@@ -782,7 +1361,7 @@ export function IntegratedProjectGantt({
           className="rounded-2xl bg-slate-50 p-10 text-center text-sm text-slate-500"
         />
       ) : (
-        <div className="overflow-hidden rounded-2xl border border-slate-200">
+        <div data-gantt-focus-surface className={`overflow-y-auto border border-slate-200 ${isPresentation ? "h-[calc(100vh-56px)] rounded-none border-x-0 border-b-0" : "rounded-2xl"}`}>
           <div className="flex min-w-[1080px]">
             <div className="sticky left-0 z-30 w-[340px] shrink-0 border-r border-slate-200 bg-white">
               <div className="sticky top-0 z-20 grid h-[74px] grid-cols-[minmax(0,1fr)_70px] items-end gap-3 border-b border-slate-200 bg-slate-50 px-4 pb-3 text-xs font-semibold text-slate-500">
@@ -793,7 +1372,16 @@ export function IntegratedProjectGantt({
               {rows.map((row) => (
                 <div
                   key={row.project.id}
-                  className="grid grid-cols-[minmax(0,1fr)_70px] items-center gap-3 border-b border-slate-100 px-4 last:border-b-0"
+                  data-gantt-row-id={row.project.id}
+                  ref={(node) => {
+                    if (node) projectRowRefs.current.set(row.project.id, node);
+                    else projectRowRefs.current.delete(row.project.id);
+                  }}
+                  className={`grid grid-cols-[minmax(0,1fr)_70px] items-center gap-3 border-b border-slate-100 px-4 transition-colors last:border-b-0 ${
+                    highlightedProjectId === row.project.id
+                      ? "bg-amber-100"
+                      : "bg-white"
+                  }`}
                   style={{ height: row.rowHeight }}
                 >
                   <div className="min-w-0">
@@ -804,6 +1392,7 @@ export function IntegratedProjectGantt({
                     >
                       {row.project.project_name}
                     </Link>
+                    {!(isPresentation && meetingFocus) && (
                     <div className="mt-1 flex flex-wrap items-center gap-1.5">
                       <span className="truncate text-xs font-medium text-slate-400">
                         {row.project.project_code || "코드 없음"}
@@ -820,10 +1409,12 @@ export function IntegratedProjectGantt({
                         {getProjectStatusLabel(row.project.status)}
                       </Badge>
                     </div>
+                    )}
                     <div className="mt-1 truncate text-xs text-slate-500">
                       담당 {row.project.task_manager || row.project.salesperson || "미지정"}
                     </div>
-                    {row.delayedCount > 0 && (
+                    {row.delayedCount > 0 &&
+                      !(isPresentation && meetingFocus) && (
                       <div className="mt-1 text-[11px] font-semibold text-red-600">
                         지연 {row.delayedCount}건
                       </div>
@@ -850,44 +1441,88 @@ export function IntegratedProjectGantt({
 
             <div
               ref={scrollRef}
+              onScroll={(event) => {
+                if (!isPresentation) return;
+                savePresentationState({
+                  scrollLeft: event.currentTarget.scrollLeft,
+                  scrollTop: event.currentTarget.scrollTop,
+                });
+              }}
               className="min-w-0 flex-1 overflow-x-auto scroll-smooth [scrollbar-width:thin]"
             >
-              <div style={{ width: dateDays.length * dayWidth }}>
+              <div
+                ref={timelineContentRef}
+                className="relative"
+                style={{ width: visibleDateDays.length * dayWidth }}
+              >
+                <div
+                  ref={columnFocusRef}
+                  aria-hidden="true"
+                  className="pointer-events-none absolute bottom-0 left-0 top-0 z-[25] border-x border-blue-300 bg-blue-200/25 opacity-0 transition-opacity duration-150"
+                />
+                <div
+                  ref={cellFocusRef}
+                  aria-hidden="true"
+                  className="pointer-events-none absolute left-0 top-0 z-30 border-2 border-blue-500 bg-blue-300/20 opacity-0 transition-opacity duration-150"
+                />
                 <div className="sticky top-0 z-20 flex h-9 border-b border-slate-200 bg-slate-50">
-                  <div className="flex items-center px-2 text-xs font-semibold text-slate-500">
-                    {monthFormatter.format(parseDate(start))}
-                  </div>
+                  {monthGroups.map((month) => (
+                    <button
+                      key={month.key}
+                      type="button"
+                      onClick={() => {
+                        setCollapsedMonths((current) => {
+                          const next = new Set(current);
+                          if (next.has(month.key)) next.delete(month.key);
+                          else next.add(month.key);
+                          savePresentationState({
+                            collapsedMonths: Array.from(next),
+                          });
+                          return next;
+                        });
+                      }}
+                      style={{ width: month.count * dayWidth }}
+                      className="flex shrink-0 items-center justify-center gap-1 border-r border-slate-200 px-2 text-xs font-semibold text-slate-500 hover:text-slate-800"
+                    >
+                      {collapsedMonths.has(month.key) ? (
+                        <ChevronRight size={13} />
+                      ) : (
+                        <ChevronDown size={13} />
+                      )}
+                      {monthFormatter.format(parseDate(`${month.key}-01`))}
+                    </button>
+                  ))}
                 </div>
 
                 <div className="sticky top-9 z-20 flex h-[37px] border-b border-slate-200 bg-white">
-                  {dateDays.map((date) => (
+                  {visibleDateDays.map((date) => (
                     <div
                       key={date}
                       className={`flex shrink-0 flex-col items-center justify-center border-r border-slate-100 text-[11px] ${
                         date === today
-                          ? "bg-blue-50 text-blue-700"
+                          ? "bg-slate-200 font-bold text-slate-900 ring-1 ring-inset ring-slate-300"
                           : isWeekend(date)
                             ? "bg-slate-50 text-slate-400"
                             : "text-slate-500"
                       }`}
                       style={{ width: dayWidth }}
                     >
-                      <span className="font-bold">
-                        {dayFormatter.format(parseDate(date))}
-                      </span>
-                      <span>{weekdayFormatter.format(parseDate(date))}</span>
+                      {!collapsedMonths.has(date.slice(0, 7)) && (
+                        <>
+                          <span className="font-bold">{dayFormatter.format(parseDate(date))}</span>
+                          <span>{weekdayFormatter.format(parseDate(date))}</span>
+                        </>
+                      )}
                     </div>
                   ))}
                 </div>
 
                 <div className="relative">
-                  {dateDays.map((date, index) => (
+                  {visibleDateDays.map((date, index) => (
                     <div
                       key={date}
                       className={`absolute top-0 h-full border-r ${
-                        date === today
-                          ? "z-10 border-blue-400"
-                          : isWeekend(date)
+                        isWeekend(date)
                             ? "border-slate-100 bg-slate-50/70"
                             : "border-slate-100"
                       }`}
@@ -901,7 +1536,8 @@ export function IntegratedProjectGantt({
                   {rows.map((row) => (
                     <div
                       key={row.project.id}
-                      className="relative border-b border-slate-100 last:border-b-0"
+                      data-gantt-row-id={row.project.id}
+                      className="relative border-b border-slate-100 transition-colors duration-150 last:border-b-0"
                       style={{ height: row.rowHeight }}
                     >
                       {row.segments.map(({ task, startDate, dueDate, lane }) => {
@@ -916,10 +1552,12 @@ export function IntegratedProjectGantt({
                           1
                         );
                         const left = startIndex * dayWidth + 4;
-                        const width = Math.max(duration * dayWidth - 8, 28);
+                        const width = Math.max(
+                          duration * dayWidth - 8,
+                          28
+                        );
                         const delayedDays = getDelayedDays(task, today);
                         const taskTypeColor = getTaskTypeColor(task.task_type);
-                        const shouldShowLabel = width >= 92;
                         const tooltipParts = [
                           `프로젝트: ${row.project.project_name}`,
                           `업무명: ${task.task_name || "업무명 없음"}`,
@@ -953,7 +1591,7 @@ export function IntegratedProjectGantt({
                                 taskTypeClassName: taskTypeColor.className,
                               })
                             }
-                            className={`absolute z-20 h-5 truncate rounded-full px-2 text-[11px] font-semibold leading-5 shadow-sm ring-1 transition duration-150 hover:brightness-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-100 ${taskTypeColor.className} ${getScheduleMarkerClass(
+                            className={`absolute z-20 h-5 overflow-visible whitespace-nowrap rounded-full px-2 text-left text-[11px] font-semibold leading-5 shadow-sm ring-1 transition duration-150 hover:brightness-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-100 ${taskTypeColor.className} ${getScheduleMarkerClass(
                               task,
                               today
                             )}`}
@@ -963,11 +1601,8 @@ export function IntegratedProjectGantt({
                               width,
                             }}
                           >
-                            {shouldShowLabel
-                              ? `${task.task_type || "업무"} · ${
-                                  task.task_name || "업무명 없음"
-                                }`
-                              : ""}
+                            {task.task_type || "업무"} ·{" "}
+                            {task.task_name || "업무명 없음"}
                           </button>
                         );
                       })}

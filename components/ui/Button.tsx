@@ -1,6 +1,11 @@
 import type { ButtonHTMLAttributes, ReactNode } from "react";
 
-export type ButtonVariant = "primary" | "secondary" | "danger" | "ghost";
+export type ButtonVariant =
+  | "primary"
+  | "secondary"
+  | "danger"
+  | "outline"
+  | "ghost";
 export type ButtonSize = "sm" | "md";
 
 type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
@@ -10,15 +15,16 @@ type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
 };
 
 const variantClass: Record<ButtonVariant, string> = {
-  primary: "bg-blue-600 text-white disabled:bg-gray-400",
-  secondary: "border border-slate-300 bg-white text-slate-700 disabled:opacity-50",
-  danger: "border border-slate-300 bg-white text-red-600 disabled:text-gray-400",
-  ghost: "bg-transparent text-slate-700 hover:bg-slate-100 disabled:opacity-50",
+  primary: "border border-blue-600 bg-blue-600 text-white hover:bg-blue-700 disabled:border-slate-400 disabled:bg-slate-400",
+  secondary: "border border-slate-200 bg-slate-100 text-slate-700 hover:bg-slate-200 disabled:opacity-50",
+  danger: "border border-red-600 bg-red-600 text-white hover:bg-red-700 disabled:opacity-50",
+  outline: "border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 disabled:opacity-50",
+  ghost: "border border-transparent bg-transparent text-slate-700 hover:bg-slate-100 disabled:opacity-50",
 };
 
 const sizeClass: Record<ButtonSize, string> = {
-  sm: "px-2 py-0.5 text-sm",
-  md: "px-4 py-2",
+  sm: "h-8 px-3 text-xs",
+  md: "h-10 px-4 text-sm",
 };
 
 export function Button({
@@ -32,7 +38,7 @@ export function Button({
   return (
     <button
       type={type}
-      className={`rounded ${variantClass[variant]} ${sizeClass[size]} ${className}`}
+      className={`inline-flex items-center justify-center rounded-xl font-medium transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-blue-200 disabled:cursor-not-allowed ${variantClass[variant]} ${sizeClass[size]} ${className}`}
       {...props}
     >
       {children}

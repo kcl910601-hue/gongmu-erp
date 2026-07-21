@@ -40,6 +40,7 @@ type Shipment = {
 type Task = {
   id: number;
   project_id: number;
+  project_section_id?: number | null;
   task_name: string | null;
   task_type: string | null;
   assignee: string | null;
@@ -120,8 +121,15 @@ export default function CalendarPage() {
   const [isSavingDate, setIsSavingDate] = useState(false);
 
   useEffect(() => {
+    const timer = window.setTimeout(() => {
+      const requestedView = new URLSearchParams(window.location.search).get(
+        "view"
+      );
+      if (requestedView === "gantt") setViewMode("간트 보기");
+    }, 0);
     void loadCalendar();
     void loadCurrentAssignee();
+    return () => window.clearTimeout(timer);
   }, []);
 
   async function loadCurrentAssignee() {
@@ -157,7 +165,7 @@ export default function CalendarPage() {
     const { data: projectData, error: projectError } = await supabase
       .from("projects")
       .select(
-        "id, project_code, project_name, assembly_vendor, salesperson, task_manager, completion_due_date, status"
+        "id, project_code, project_name, assembly_vendor, salesperson, task_manager, start_date, end_date, completion_due_date, status"
       );
 
     if (projectError) {
@@ -1028,6 +1036,7 @@ export default function CalendarPage() {
           visibleTaskIds={ganttTaskIds}
           currentMonth={currentMonth}
           today={today}
+          onCurrentMonthChange={selectMonth}
           onTaskUpdated={handleGanttTaskUpdated}
         />
       ) : (

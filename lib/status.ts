@@ -18,6 +18,28 @@ export function getProjectStatusLabel(status: string | null) {
   return status || "미정";
 }
 
+const PROJECT_STATUS_ORDER = {
+  pending: 0,
+  in_progress: 1,
+  hold: 2,
+  completed: 3,
+} as const;
+
+export function getProjectStatusOrder(status: string | null) {
+  const normalizedStatus = normalizeProjectStatus(status);
+
+  if (
+    normalizedStatus === "pending" ||
+    normalizedStatus === "in_progress" ||
+    normalizedStatus === "hold" ||
+    normalizedStatus === "completed"
+  ) {
+    return PROJECT_STATUS_ORDER[normalizedStatus];
+  }
+
+  return null;
+}
+
 export function isProjectCompleted(status: string | null) {
   return normalizeProjectStatus(status) === "completed";
 }

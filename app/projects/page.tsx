@@ -2,67 +2,261 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
-import { Plus, Search } from "lucide-react";
+import {
+  ArrowDown,
+  ArrowUp,
+  ArrowUpDown,
+  FolderOpen,
+  Plus,
+  Search,
+  Star,
+} from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { addActivity } from "@/lib/activity";
+import { toast } from "@/lib/toast";
 import {
   getProjects,
-  normalizeAssemblyVendor,
   type ProjectListItem,
 } from "@/lib/projects";
+import { ProjectCreateForm } from "@/components/projects/ProjectCreateForm";
 import { Badge, type BadgeVariant } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { TableViewControls } from "@/components/ui/TableViewControls";
+import { ErrorState } from "@/components/ui/ErrorState";
+import { TableSkeleton } from "@/components/ui/Skeleton";
+import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
+import { usePersistentState } from "@/hooks/usePersistentState";
+import {
+  paginateRows,
+  type SortDirection,
+} from "@/lib/table-view";
+import {
+  addFavoriteProject,
+  getRecentUserScope,
+  hydrateFavoriteProjectsFromDatabase,
+  readFavoriteProjects,
+  removeFavoriteProject,
+} from "@/lib/recent";
 import {
   getProjectStatusLabel,
+  getProjectStatusOrder,
   isProjectCompleted,
   isProjectInProgress,
   normalizeProjectStatus,
 } from "@/lib/status";
 
-type TaskTemplate = {
-  id: number;
-  process_type: string;
-  task_order: number;
-  task_name: string;
-  task_type: string;
+type ProjectSortKey =
+  | "created_at"
+  | "project_code"
+  | "project_name"
+  | "client_name"
+  | "assembly_vendor"
+  | "salesperson"
+  | "process_type"
+  | "task_manager"
+  | "status"
+  | "start_date"
+  | "end_date";
+
+const DEFAULT_SORT_KEY: ProjectSortKey = "created_at";
+const DEFAULT_SORT_DIRECTION: SortDirection = "desc";
+const koreanNaturalCollator = new Intl.Collator("ko-KR", {
+  numeric: true,
+  sensitivity: "base",
+});
+
+function compareNullable<T>(
+  left: T | null | undefined,
+  right: T | null | undefined,
+  direction: SortDirection,
+  compare: (leftValue: T, rightValue: T) => number
+) {
+  const leftEmpty = left === null || left === undefined || left === "";
+  const rightEmpty = right === null || right === undefined || right === "";
+
+  if (leftEmpty && rightEmpty) return 0;
+  if (leftEmpty) return 1;
+  if (rightEmpty) return -1;
+
+  const result = compare(left as T, right as T);
+  return direction === "asc" ? result : -result;
+}
+
+function getProjectSortValue(project: ProjectListItem, key: ProjectSortKey) {
+  if (key === "end_date") {
+    return project.end_date || project.completion_due_date;
+  }
+
+  return project[key];
+}
+
+function sortProjects(
+  projects: ProjectListItem[],
+  key: ProjectSortKey,
+  direction: SortDirection
+) {
+  return [...projects].sort((left, right) => {
+    if (key === "status") {
+      return compareNullable(
+        getProjectStatusOrder(left.status),
+        getProjectStatusOrder(right.status),
+        direction,
+        (leftValue, rightValue) => leftValue - rightValue
+      );
+    }
+
+    const leftValue = getProjectSortValue(left, key);
+    const rightValue = getProjectSortValue(right, key);
+
+    if (key === "start_date" || key === "end_date" || key === "created_at") {
+      const leftTimestamp = leftValue ? Date.parse(String(leftValue)) : null;
+      const rightTimestamp = rightValue ? Date.parse(String(rightValue)) : null;
+
+      return compareNullable(
+        leftTimestamp,
+        rightTimestamp,
+        direction,
+        (leftDate, rightDate) => leftDate - rightDate
+      );
+    }
+
+    return compareNullable(
+      leftValue,
+      rightValue,
+      direction,
+      (leftText, rightText) =>
+        koreanNaturalCollator.compare(String(leftText), String(rightText))
+    );
+  });
+}
+
+type SortableProjectHeaderProps = {
+  label: string;
+  sortKey: ProjectSortKey;
+  activeSortKey: ProjectSortKey;
+  direction: SortDirection;
+  onSort: (key: ProjectSortKey) => void;
 };
+
+function SortableProjectHeader({
+  label,
+  sortKey,
+  activeSortKey,
+  direction,
+  onSort,
+}: SortableProjectHeaderProps) {
+  const isActive = activeSortKey === sortKey && sortKey !== DEFAULT_SORT_KEY;
+  const ariaSort = isActive
+    ? direction === "asc"
+      ? "ascending"
+      : "descending"
+    : "none";
+
+  return (
+    <th className="px-3 py-3 text-left" aria-sort={ariaSort}>
+      <button
+        type="button"
+        onClick={() => onSort(sortKey)}
+        className="flex w-full cursor-pointer items-center gap-1.5 rounded-md text-left transition-colors hover:text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+      >
+        <span>{label}</span>
+        {isActive ? (
+          direction === "asc" ? (
+            <ArrowUp size={13} aria-hidden="true" />
+          ) : (
+            <ArrowDown size={13} aria-hidden="true" />
+          )
+        ) : (
+          <ArrowUpDown
+            size={13}
+            className="text-slate-300"
+            aria-hidden="true"
+          />
+        )}
+      </button>
+    </th>
+  );
+}
+
+function getProjectStatusFromQuery() {
+  const status = new URLSearchParams(window.location.search).get("status");
+
+  if (!status) return null;
+  if (status === "in_progress") return "진행중";
+  if (status === "completed") return "완료";
+  if (status === "delayed") return "지연";
+  return "전체";
+}
+
+function isProjectDelayed(project: ProjectListItem) {
+  if (isProjectCompleted(project.status)) return false;
+
+  const endDate = project.end_date || project.completion_due_date;
+  if (!endDate) return false;
+
+  const now = new Date();
+  const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(
+    2,
+    "0"
+  )}-${String(now.getDate()).padStart(2, "0")}`;
+  return endDate < today;
+}
 
 export default function ProjectsPage() {
   const [showModal, setShowModal] = useState(false);
-  const [isSaving, setIsSaving] = useState(false);
   const [projects, setProjects] = useState<ProjectListItem[]>([]);
-  const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState("전체");
-  const [processFilter, setProcessFilter] = useState("전체");
+  const [isLoading, setIsLoading] = useState(true);
+  const [errorMessage, setErrorMessage] = useState("");
+  const [projectPendingDelete, setProjectPendingDelete] =
+    useState<ProjectListItem | null>(null);
+  const [search, setSearch] = usePersistentState("erp:table:projects:search", "");
+  const [statusFilter, setStatusFilter] = usePersistentState(
+    "erp:table:projects:status",
+    "전체"
+  );
+  const [processFilter, setProcessFilter] = usePersistentState(
+    "erp:table:projects:process",
+    "전체"
+  );
+  const [sortKey, setSortKey] = usePersistentState<ProjectSortKey>(
+    "erp:table:projects:sort-key",
+    DEFAULT_SORT_KEY
+  );
+  const [sortDirection, setSortDirection] =
+    usePersistentState<SortDirection>(
+      "erp:table:projects:sort-direction",
+      DEFAULT_SORT_DIRECTION
+    );
+  const [pageSize, setPageSize] = usePersistentState(
+    "erp:table:projects:page-size",
+    20
+  );
+  const [currentPage, setCurrentPage] = usePersistentState(
+    "erp:table:projects:page",
+    1
+  );
   const [isAdmin, setIsAdmin] = useState(false);
+  const [favoriteUserScope, setFavoriteUserScope] = useState<string | null>(null);
+  const [favoriteProjectIds, setFavoriteProjectIds] = useState<Set<number>>(
+    () => new Set()
+  );
 
-  const [form, setForm] = useState({
-    project_code: "",
-    project_name: "",
-    client_name: "",
-    assembly_vendor: "",
-    process_type: "MH",
-    salesperson: "이승재",
-    site_address: "",
-    task_manager: "김초롱",
-    start_date: "",
-    end_date: "",
-  });
-
-  const salesList = ["이승재", "안성현", "고민구", "홍석봉"];
-  const managerList = ["김초롱", "류창석", "이재성", "김한솔"];
   const processList = ["MH", "SH", "AS", "본납-문틀", "본납-도어"];
 
   const fetchProjects = useCallback(async function fetchProjects() {
+    setIsLoading(true);
+    setErrorMessage("");
     const { data, error } = await getProjects();
 
     if (error) {
-      alert(error.message);
+      setErrorMessage(error.message);
+      setIsLoading(false);
       return;
     }
 
     setProjects(data);
+    setIsLoading(false);
   }, []);
 
 const loadRole = useCallback(async function loadRole() {
@@ -89,137 +283,77 @@ const loadRole = useCallback(async function loadRole() {
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
+      const queryStatus = getProjectStatusFromQuery();
+      if (queryStatus) setStatusFilter(queryStatus);
       void fetchProjects();
       void loadRole();
     }, 0);
 
     return () => window.clearTimeout(timer);
-  }, [fetchProjects, loadRole]);
+  }, [fetchProjects, loadRole, setStatusFilter]);
 
-  async function addProject() {
-    if (isSaving) return;
+  useEffect(() => {
+    let isMounted = true;
 
-    if (!form.project_code.trim() || !form.project_name.trim()) {
-      alert("프로젝트코드와 프로젝트명을 입력하세요.");
-      return;
+    async function loadFavorites() {
+      const scope = await getRecentUserScope();
+      if (!isMounted) return;
+
+      setFavoriteUserScope(scope);
+      const favorites = await hydrateFavoriteProjectsFromDatabase(scope);
+      if (!isMounted) return;
+      setFavoriteProjectIds(
+        new Set(favorites.map((project) => project.project_id))
+      );
     }
 
-    setIsSaving(true);
-
-    try {
-      const { data: existingProject, error: existingError } = await supabase
-        .from("projects")
-        .select("id")
-        .eq("project_code", form.project_code.trim())
-        .maybeSingle();
-
-      if (existingError) {
-        alert(existingError.message);
-        return;
-      }
-
-      if (existingProject) {
-        alert("이미 같은 프로젝트코드가 있습니다.");
-        return;
-      }
-
-      const { data: templates, error: templateError } = await supabase
-        .from("task_templates")
-        .select("*")
-        .eq("process_type", form.process_type)
-        .order("task_order", { ascending: true });
-
-      if (templateError) {
-        alert(templateError.message);
-        return;
-      }
-
-      if (!templates || templates.length === 0) {
-        alert("선택한 공정의 업무 템플릿이 없습니다.");
-        return;
-      }
-
-      const { data: projectData, error: projectError } = await supabase
-        .from("projects")
-        .insert([
-          {
-            project_code: form.project_code.trim(),
-            project_name: form.project_name.trim(),
-            client_name: form.client_name.trim() || null,
-            assembly_vendor: normalizeAssemblyVendor(form.assembly_vendor),
-            process_type: form.process_type,
-            salesperson: form.salesperson,
-            site_address: form.site_address.trim() || null,
-            task_manager: form.task_manager,
-            status: "in_progress",
-            start_date: form.start_date || null,
-            end_date: form.end_date || null,
-          },
-        ])
-        .select()
-        .single();
-
-      if (projectError) {
-        alert(projectError.message);
-        return;
-      }
-
-      const taskRows = (templates as TaskTemplate[]).map((template) => ({
-        project_id: projectData.id,
-        task_order: template.task_order,
-        task_name: template.task_name,
-        task_type: template.task_type,
-        assignee: form.task_manager,
-        status: "대기",
-        due_date: null,
-        completed_date: null,
-        start_date: null,
-      }));
-
-      const { error: taskError } = await supabase.from("tasks").insert(taskRows);
-
-      if (taskError) {
-        alert(taskError.message);
-        return;
-      }
-
-      setForm({
-        project_code: "",
-        project_name: "",
-        client_name: "",
-        assembly_vendor: "",
-        process_type: "MH",
-        salesperson: "이승재",
-        site_address: "",
-        task_manager: "김초롱",
-        start_date: "",
-        end_date: "",
-      });
-
-      setShowModal(false);
-      await fetchProjects();
-
-      await addActivity({
-        actionType: "project_create",
-        targetType: "project",
-        targetId: projectData.id,
-        projectId: projectData.id,
-        title: "프로젝트 생성",
-        description: `${projectData.project_code || "-"} - ${projectData.project_name}`,
-      });
-
-      alert("프로젝트와 업무가 자동 생성되었습니다.");
-    } finally {
-      setIsSaving(false);
+    function handleFavoritesUpdated() {
+      setFavoriteProjectIds(
+        new Set(
+          readFavoriteProjects(favoriteUserScope).map(
+            (project) => project.project_id
+          )
+        )
+      );
     }
+
+    void loadFavorites();
+    window.addEventListener("gongmu-recent-updated", handleFavoritesUpdated);
+    return () => {
+      isMounted = false;
+      window.removeEventListener(
+        "gongmu-recent-updated",
+        handleFavoritesUpdated
+      );
+    };
+  }, [favoriteUserScope]);
+
+  function toggleFavorite(project: ProjectListItem) {
+    if (!favoriteUserScope) return;
+
+    if (favoriteProjectIds.has(project.id)) {
+      removeFavoriteProject(favoriteUserScope, project.id);
+    } else {
+      addFavoriteProject(favoriteUserScope, {
+        project_id: project.id,
+        project_name: project.project_name,
+        project_code: project.project_code,
+        assembly_vendor: project.assembly_vendor,
+        status: project.status,
+      });
+    }
+
+    setFavoriteProjectIds(
+      new Set(
+        readFavoriteProjects(favoriteUserScope).map(
+          (favorite) => favorite.project_id
+        )
+      )
+    );
   }
 
   async function deleteProject(projectId: number) {
-    const confirmed = window.confirm(
-      "프로젝트를 삭제하시겠습니까?\n관련 업무 및 출고정보도 함께 삭제됩니다."
-    );
-
-    if (!confirmed) return;
+    const targetProject = projects.find((project) => project.id === projectId);
 
     const { error: shipmentError } = await supabase
       .from("shipments")
@@ -227,7 +361,7 @@ const loadRole = useCallback(async function loadRole() {
       .eq("project_id", projectId);
 
     if (shipmentError) {
-      alert(shipmentError.message);
+      toast.error(shipmentError.message);
       return;
     }
 
@@ -237,7 +371,17 @@ const loadRole = useCallback(async function loadRole() {
       .eq("project_id", projectId);
 
     if (taskError) {
-      alert(taskError.message);
+      toast.error(taskError.message);
+      return;
+    }
+
+    const { error: sectionError } = await supabase
+      .from("project_sections")
+      .delete()
+      .eq("project_id", projectId);
+
+    if (sectionError) {
+      toast.error(sectionError.message);
       return;
     }
 
@@ -247,12 +391,28 @@ const loadRole = useCallback(async function loadRole() {
       .eq("id", projectId);
 
     if (projectError) {
-      alert(projectError.message);
+      toast.error(projectError.message);
       return;
     }
 
-    fetchProjects();
-    alert("프로젝트가 삭제되었습니다.");
+    await addActivity({
+      type: "project_delete",
+      title: "프로젝트 삭제",
+      description: `${targetProject?.project_name || "프로젝트"}을(를) 삭제했습니다.`,
+      projectId: null,
+      targetType: "project",
+      targetId: projectId,
+      metadata: {
+        projectId,
+        deletedProjectName: targetProject?.project_name ?? null,
+        deletedProjectCode: targetProject?.project_code ?? null,
+        deletedProjectStatus: targetProject?.status ?? null,
+      },
+    });
+
+    void fetchProjects();
+    setProjectPendingDelete(null);
+    toast.success("프로젝트가 삭제되었습니다.");
   }
 
   function getStatusBadgeVariant(status: string | null): BadgeVariant {
@@ -302,6 +462,7 @@ const loadRole = useCallback(async function loadRole() {
       keyword === "" ||
       project.project_name.toLowerCase().includes(keyword) ||
       (project.project_code || "").toLowerCase().includes(keyword) ||
+      (project.client_name || "").toLowerCase().includes(keyword) ||
       (project.assembly_vendor || "").toLowerCase().includes(keyword) ||
       project.process_type.toLowerCase().includes(keyword) ||
       (project.salesperson || "").toLowerCase().includes(keyword) ||
@@ -309,13 +470,36 @@ const loadRole = useCallback(async function loadRole() {
 
     const statusMatched =
       statusFilter === "전체" ||
-      normalizeProjectStatus(project.status) === normalizeProjectStatus(statusFilter);
+      (statusFilter === "지연"
+        ? isProjectDelayed(project)
+        : normalizeProjectStatus(project.status) ===
+          normalizeProjectStatus(statusFilter));
 
     const processMatched =
       processFilter === "전체" || project.process_type === processFilter;
 
     return searchMatched && statusMatched && processMatched;
   });
+  const sortedProjects = sortProjects(
+    filteredProjects,
+    sortKey,
+    sortDirection
+  );
+  const projectPage = paginateRows(sortedProjects, currentPage, pageSize);
+
+  function handleHeaderSort(nextSortKey: ProjectSortKey) {
+    if (sortKey !== nextSortKey || sortKey === DEFAULT_SORT_KEY) {
+      setSortKey(nextSortKey);
+      setSortDirection("asc");
+    } else if (sortDirection === "asc") {
+      setSortDirection("desc");
+    } else {
+      setSortKey(DEFAULT_SORT_KEY);
+      setSortDirection(DEFAULT_SORT_DIRECTION);
+    }
+
+    setCurrentPage(1);
+  }
 
   return (
     <div className="min-h-screen bg-slate-50 px-6 py-7 text-slate-900 lg:px-8">
@@ -427,54 +611,199 @@ const loadRole = useCallback(async function loadRole() {
             {filteredProjects.length}건
           </span>
         </div>
+        {errorMessage ? (
+          <ErrorState
+            message={errorMessage}
+            onRetry={() => void fetchProjects()}
+          />
+        ) : isLoading ? (
+          <TableSkeleton rows={7} columns={11} />
+        ) : (
+        <>
+        <TableViewControls
+          sortKey={sortKey}
+          sortDirection={sortDirection}
+          sortOptions={[
+            { value: "created_at", label: "등록일" },
+            { value: "project_code", label: "프로젝트 코드" },
+            { value: "project_name", label: "프로젝트명" },
+            { value: "client_name", label: "발주처" },
+            { value: "assembly_vendor", label: "조립처" },
+            { value: "salesperson", label: "영업자" },
+            { value: "process_type", label: "공정유형" },
+            { value: "task_manager", label: "업무담당자" },
+            { value: "status", label: "상태" },
+            { value: "start_date", label: "시작일" },
+            { value: "end_date", label: "종료일" },
+          ]}
+          pageSize={pageSize}
+          page={projectPage.page}
+          totalPages={projectPage.totalPages}
+          totalItems={filteredProjects.length}
+          onSortKeyChange={(value) => {
+            setSortKey(value as ProjectSortKey);
+            setSortDirection(
+              value === DEFAULT_SORT_KEY ? DEFAULT_SORT_DIRECTION : "asc"
+            );
+            setCurrentPage(1);
+          }}
+          onSortDirectionChange={(value) => {
+            setSortDirection(value);
+            setCurrentPage(1);
+          }}
+          onPageSizeChange={(value) => {
+            setPageSize(value);
+            setCurrentPage(1);
+          }}
+          onPageChange={setCurrentPage}
+        />
 
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[1180px]">
+          <table className="w-full min-w-[1480px]">
             <colgroup>
-              <col className="w-[24%]" />
-              <col className="w-[14%]" />
-              <col className="w-[12%]" />
-              <col className="w-[12%]" />
-              <col className="w-[10%]" />
-              <col className="w-[10%]" />
-              <col className="w-[10%]" />
+              <col className="w-[11%]" />
+              <col className="w-[18%]" />
+              <col className="w-[11%]" />
+              <col className="w-[11%]" />
               <col className="w-[9%]" />
-              <col className="w-[5%]" />
+              <col className="w-[8%]" />
+              <col className="w-[10%]" />
+              <col className="w-[8%]" />
+              <col className="w-[8%]" />
+              <col className="w-[8%]" />
+              <col className="w-[8%]" />
             </colgroup>
             <thead>
               <tr className="border-y border-slate-200 bg-slate-50 text-xs font-semibold text-slate-500">
-                <th className="px-3 py-3 text-left">프로젝트명</th>
-                <th className="px-3 py-3 text-left">발주처</th>
-                <th className="px-3 py-3 text-left">조립처</th>
-                <th className="px-3 py-3 text-left">담당자</th>
-                <th className="px-3 py-3 text-left">진행상태</th>
-                <th className="px-3 py-3 text-left">시작일</th>
-                <th className="px-3 py-3 text-left">종료일</th>
-                <th className="px-3 py-3 text-left">등록일</th>
+                <SortableProjectHeader
+                  label="프로젝트 코드"
+                  sortKey="project_code"
+                  activeSortKey={sortKey}
+                  direction={sortDirection}
+                  onSort={handleHeaderSort}
+                />
+                <SortableProjectHeader
+                  label="프로젝트명"
+                  sortKey="project_name"
+                  activeSortKey={sortKey}
+                  direction={sortDirection}
+                  onSort={handleHeaderSort}
+                />
+                <SortableProjectHeader
+                  label="발주처"
+                  sortKey="client_name"
+                  activeSortKey={sortKey}
+                  direction={sortDirection}
+                  onSort={handleHeaderSort}
+                />
+                <SortableProjectHeader
+                  label="조립처"
+                  sortKey="assembly_vendor"
+                  activeSortKey={sortKey}
+                  direction={sortDirection}
+                  onSort={handleHeaderSort}
+                />
+                <SortableProjectHeader
+                  label="영업자"
+                  sortKey="salesperson"
+                  activeSortKey={sortKey}
+                  direction={sortDirection}
+                  onSort={handleHeaderSort}
+                />
+                <SortableProjectHeader
+                  label="공정유형"
+                  sortKey="process_type"
+                  activeSortKey={sortKey}
+                  direction={sortDirection}
+                  onSort={handleHeaderSort}
+                />
+                <SortableProjectHeader
+                  label="업무담당자"
+                  sortKey="task_manager"
+                  activeSortKey={sortKey}
+                  direction={sortDirection}
+                  onSort={handleHeaderSort}
+                />
+                <SortableProjectHeader
+                  label="상태"
+                  sortKey="status"
+                  activeSortKey={sortKey}
+                  direction={sortDirection}
+                  onSort={handleHeaderSort}
+                />
+                <SortableProjectHeader
+                  label="시작일"
+                  sortKey="start_date"
+                  activeSortKey={sortKey}
+                  direction={sortDirection}
+                  onSort={handleHeaderSort}
+                />
+                <SortableProjectHeader
+                  label="종료일"
+                  sortKey="end_date"
+                  activeSortKey={sortKey}
+                  direction={sortDirection}
+                  onSort={handleHeaderSort}
+                />
                 <th className="px-3 py-3 text-left">관리</th>
               </tr>
             </thead>
 
             <tbody>
-              {filteredProjects.map((project) => (
+              {projectPage.rows.map((project) => (
                 <tr
                   key={project.id}
-                  className="border-b border-slate-100 text-sm text-slate-700 transition-colors hover:bg-slate-50"
+                  className="group border-b border-slate-100 text-sm text-slate-700 transition-colors hover:bg-slate-50"
                 >
                   <td className="px-3 py-3.5">
                     <Link
                       href={`/projects/${project.id}`}
-                      className="font-semibold text-slate-950 hover:text-blue-600 hover:underline"
+                      className="block truncate font-semibold text-slate-700 hover:text-blue-600 hover:underline"
                     >
-                      {project.project_name}
+                      {project.project_code || "-"}
                     </Link>
-                    <div className="mt-1 text-xs text-slate-400">
-                      {project.project_code || "코드 없음"}
+                  </td>
+                  <td className="px-3 py-3.5">
+                    <div className="flex min-w-0 items-start gap-2">
+                      <button
+                        type="button"
+                        onClick={() => toggleFavorite(project)}
+                        disabled={!favoriteUserScope}
+                        aria-label={
+                          favoriteProjectIds.has(project.id)
+                            ? `${project.project_name} 즐겨찾기 해제`
+                            : `${project.project_name} 즐겨찾기 추가`
+                        }
+                        className={`mt-0.5 shrink-0 rounded-lg p-1 transition-all hover:bg-amber-50 ${
+                          favoriteProjectIds.has(project.id)
+                            ? "text-amber-500 opacity-100"
+                            : "text-slate-300 opacity-0 group-hover:opacity-100 focus:opacity-100"
+                        }`}
+                      >
+                        <Star
+                          size={15}
+                          className={
+                            favoriteProjectIds.has(project.id)
+                              ? "fill-current"
+                              : ""
+                          }
+                        />
+                      </button>
+                      <div className="min-w-0">
+                        <Link
+                          href={`/projects/${project.id}`}
+                          className="block truncate font-semibold text-slate-950 hover:text-blue-600 hover:underline"
+                        >
+                          {project.project_name}
+                        </Link>
+                      </div>
                     </div>
                   </td>
 
                   <td className="px-3 py-3.5">{project.client_name || "-"}</td>
                   <td className="px-3 py-3.5">{project.assembly_vendor || "-"}</td>
+                  <td className="px-3 py-3.5">{project.salesperson || "-"}</td>
+                  <td className="px-3 py-3.5">{project.process_type || "-"}</td>
                   <td className="px-3 py-3.5">{project.task_manager || "-"}</td>
                   <td className="px-3 py-3.5">
                     <Badge
@@ -490,10 +819,6 @@ const loadRole = useCallback(async function loadRole() {
                   <td className="px-3 py-3.5 text-slate-500">
                     {formatDate(project.end_date || project.completion_due_date)}
                   </td>
-                  <td className="px-3 py-3.5 text-slate-500">
-                    {formatDate(project.created_at)}
-                  </td>
-
                   <td className="px-3 py-3.5">
                     <div className="flex gap-2">
                       <Link
@@ -505,7 +830,7 @@ const loadRole = useCallback(async function loadRole() {
 
                       {isAdmin && (
                         <button
-                          onClick={() => deleteProject(project.id)}
+                          onClick={() => setProjectPendingDelete(project)}
                           className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-red-600 transition-colors hover:border-red-200 hover:bg-red-50"
                         >
                           삭제
@@ -518,9 +843,20 @@ const loadRole = useCallback(async function loadRole() {
 
               {filteredProjects.length === 0 && (
                 <tr>
-                  <td colSpan={9} className="p-0">
+                  <td colSpan={11} className="p-0">
                     <EmptyState
-                      message="조회된 프로젝트가 없습니다."
+                      title="조건에 맞는 프로젝트가 없습니다."
+                      message="검색어나 필터를 변경하거나 새 프로젝트를 만들어보세요."
+                      icon={<FolderOpen size={26} />}
+                      action={
+                        <Button
+                          variant="primary"
+                          size="sm"
+                          onClick={() => setShowModal(true)}
+                        >
+                          새 프로젝트 만들기
+                        </Button>
+                      }
                       className="rounded-2xl bg-slate-50 p-8 text-center text-sm text-slate-500"
                     />
                   </td>
@@ -529,143 +865,36 @@ const loadRole = useCallback(async function loadRole() {
             </tbody>
           </table>
         </div>
+        </>
+        )}
       </div>
 
       {showModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-          <div className="w-[520px] rounded-2xl bg-white p-6 shadow-lg">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="max-h-[92vh] w-full max-w-5xl overflow-y-auto rounded-2xl bg-white p-6 shadow-xl">
             <h2 className="mb-5 text-2xl font-bold">프로젝트 등록</h2>
-
-            <div className="space-y-3">
-              <input
-                className="w-full rounded-xl border p-2"
-                placeholder="프로젝트코드"
-                value={form.project_code}
-                onChange={(e) =>
-                  setForm({ ...form, project_code: e.target.value })
-                }
-              />
-
-              <input
-                className="w-full rounded-xl border p-2"
-                placeholder="프로젝트명"
-                value={form.project_name}
-                onChange={(e) =>
-                  setForm({ ...form, project_name: e.target.value })
-                }
-              />
-
-              <input
-                className="w-full rounded-xl border p-2"
-                placeholder="발주처"
-                value={form.client_name}
-                onChange={(e) =>
-                  setForm({ ...form, client_name: e.target.value })
-                }
-              />
-
-              <input
-                className="w-full rounded-xl border p-2"
-                placeholder="조립처"
-                value={form.assembly_vendor}
-                onChange={(e) =>
-                  setForm({ ...form, assembly_vendor: e.target.value })
-                }
-              />
-
-              <select
-                className="w-full rounded-xl border p-2"
-                value={form.process_type}
-                onChange={(e) =>
-                  setForm({ ...form, process_type: e.target.value })
-                }
-              >
-                {processList.map((process) => (
-                  <option key={process} value={process}>
-                    {process}
-                  </option>
-                  ))}
-              </select>
-
-              <input
-                className="w-full rounded-xl border p-2"
-                placeholder="현장주소"
-                value={form.site_address}
-                onChange={(e) =>
-                  setForm({ ...form, site_address: e.target.value })
-                }
-              />
-
-              <select
-                className="w-full rounded-xl border p-2"
-                value={form.salesperson}
-                onChange={(e) =>
-                  setForm({ ...form, salesperson: e.target.value })
-                }
-              >
-                {salesList.map((sales) => (
-                  <option key={sales} value={sales}>
-                    {sales}
-                  </option>
-                ))}
-              </select>
-
-              <select
-                className="w-full rounded-xl border p-2"
-                value={form.task_manager}
-                onChange={(e) =>
-                  setForm({ ...form, task_manager: e.target.value })
-                }
-              >
-                {managerList.map((manager) => (
-                  <option key={manager} value={manager}>
-                    {manager}
-                  </option>
-                ))}
-              </select>
-
-              <input
-                type="date"
-                className="w-full rounded-xl border p-2"
-                value={form.start_date}
-                onChange={(e) =>
-                  setForm({ ...form, start_date: e.target.value })
-                }
-              />
-
-              <input
-                type="date"
-                className="w-full rounded-xl border p-2"
-                value={form.end_date}
-                onChange={(e) =>
-                  setForm({
-                    ...form,
-                    end_date: e.target.value,
-                  })
-                }
-              />
-            </div>
-
-            <div className="mt-6 flex justify-end gap-3">
-              <button
-                onClick={() => setShowModal(false)}
-                className="rounded-xl border px-4 py-2"
-                disabled={isSaving}
-              >
-                취소
-              </button>
-
-              <button
-                onClick={addProject}
-                disabled={isSaving}
-                className="rounded-xl bg-blue-600 px-4 py-2 text-white disabled:bg-gray-400"
-              >
-                {isSaving ? "저장 중..." : "저장"}
-              </button>
-            </div>
+            <ProjectCreateForm
+              onCancel={() => setShowModal(false)}
+              onSuccess={(projectId) => {
+                window.location.href = `/projects/${projectId}`;
+              }}
+            />
           </div>
         </div>
       )}
+      <ConfirmDialog
+        open={projectPendingDelete !== null}
+        title="프로젝트 삭제"
+        description={`${projectPendingDelete?.project_name || "선택한 프로젝트"}와 관련 업무 및 출고 정보를 삭제합니다. 계속하시겠습니까?`}
+        confirmLabel="삭제"
+        danger
+        onClose={() => setProjectPendingDelete(null)}
+        onConfirm={() => {
+          if (projectPendingDelete) {
+            void deleteProject(projectPendingDelete.id);
+          }
+        }}
+      />
     </div>
   );
 }

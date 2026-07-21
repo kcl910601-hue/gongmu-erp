@@ -2,23 +2,37 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { TASKS_BULK_CHANGED_EVENT } from "@/lib/bulk-utils";
 import {
   AlertTriangle,
   CheckCircle2,
+  ChevronDown,
+  ChevronRight,
+  ChevronUp,
   Clock,
   FolderKanban,
-  RefreshCw,
   Search,
   Truck,
   User,
   UserCheck,
   Users,
 } from "lucide-react";
+import type { KeyboardEvent } from "react";
 import { supabase } from "@/lib/supabase";
 import { getCurrentEmployee } from "@/lib/auth";
 import { Badge, type BadgeVariant } from "@/components/ui/Badge";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ProgressBar } from "@/components/ui/ProgressBar";
+import ActivityTimeline from "@/components/activity/ActivityTimeline";
+import MyWorkspaceRecent from "@/components/recent/MyWorkspaceRecent";
+import { Skeleton } from "@/components/ui/Skeleton";
+import {
+  MorningBrief,
+  type MorningBriefShipment,
+} from "@/components/dashboard/MorningBrief";
+import { getLocalDateString } from "@/lib/task-priority";
+import { TASK_DETAIL_UPDATED_EVENT } from "@/lib/task-detail";
+import type { TaskDetailData } from "@/components/tasks/TaskDetailView";
 import {
   getTaskStatusLabel,
   isProjectCompleted,
@@ -27,6 +41,9 @@ import {
   isTaskInProgress,
   isTaskPending,
 } from "@/lib/status";
+
+const DASHBOARD_ACTIVITY_EXPANDED_KEY =
+  "erp-dashboard-activity-expanded";
 
 type Project = {
   id: number;
@@ -47,6 +64,7 @@ type Project = {
 type Task = {
   id: number;
   project_id: number;
+  project_section_id?: number | null;
   task_name: string | null;
   task_type: string | null;
   assignee: string | null;
@@ -54,16 +72,7 @@ type Task = {
   start_date: string | null;
   due_date: string | null;
   completed_date: string | null;
-};
-
-type ActivityLog = {
-  id: number;
   created_at: string | null;
-  employee_name: string | null;
-  action_type: string;
-  title: string;
-  description: string | null;
-  project_id: number | null;
 };
 
 type ProjectWithProgress = Project & {
@@ -104,6 +113,13 @@ type AnalyticsRange = {
   endDate: string;
 };
 
+function handleKpiKeyDown(event: KeyboardEvent<HTMLAnchorElement>) {
+  if (event.key === " ") {
+    event.preventDefault();
+    event.currentTarget.click();
+  }
+}
+
 function formatDateInput(date: Date) {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, "0");
@@ -126,6 +142,12 @@ function getThisWeekRange(date: string) {
     startOfWeek: formatDateInput(startDate),
     endOfWeek: formatDateInput(endDate),
   };
+}
+
+function getDateAfter(date: string, days: number) {
+  const nextDate = new Date(`${date}T00:00:00`);
+  nextDate.setDate(nextDate.getDate() + days);
+  return formatDateInput(nextDate);
 }
 
 function parseDateInput(date: string) {
@@ -191,12 +213,13 @@ function getProjectEndDate(project: Project) {
 export default function Home() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
-  const [activityLogs, setActivityLogs] = useState<ActivityLog[]>([]);
+  const [shipments, setShipments] = useState<MorningBriefShipment[]>([]);
   const [recentProjects, setRecentProjects] = useState<ProjectWithProgress[]>([]);
   const [searchText, setSearchText] = useState("");
   const [isLoading, setIsLoading] = useState(true);
   const [currentUserName, setCurrentUserName] = useState("");
   const [currentUserRole, setCurrentUserRole] = useState("");
+  const [showAllActivities, setShowAllActivities] = useState(false);
   const [expandedTeamAssignee, setExpandedTeamAssignee] = useState<string | null>(
     null
   );
@@ -215,12 +238,81 @@ export default function Home() {
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
+      setShowAllActivities(
+        window.localStorage.getItem(DASHBOARD_ACTIVITY_EXPANDED_KEY) === "true"
+      );
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, []);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      // eslint-disable-next-line react-hooks/immutability
       void loadCurrentUser();
+      // eslint-disable-next-line react-hooks/immutability
       void loadDashboard();
     }, 0);
 
     return () => window.clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    function refreshAfterBulkChange() {
+      void loadDashboard();
+    }
+    window.addEventListener(TASKS_BULK_CHANGED_EVENT, refreshAfterBulkChange);
+    return () =>
+      window.removeEventListener(
+        TASKS_BULK_CHANGED_EVENT,
+        refreshAfterBulkChange
+      );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    function handleTaskUpdated(event: Event) {
+      const updatedTask = (
+        event as CustomEvent<{ task: TaskDetailData }>
+      ).detail.task;
+      setTasks((current) =>
+        current.map((task) =>
+          task.id === updatedTask.id ? { ...task, ...updatedTask } : task
+        )
+      );
+    }
+    window.addEventListener(TASK_DETAIL_UPDATED_EVENT, handleTaskUpdated);
+    return () =>
+      window.removeEventListener(
+        TASK_DETAIL_UPDATED_EVENT,
+        handleTaskUpdated
+      );
+  }, []);
+
+  useEffect(() => {
+    function handleTaskCompleted(event: Event) {
+      const taskId = (
+        event as CustomEvent<{ taskId: number }>
+      ).detail.taskId;
+      setTasks((current) =>
+        current.map((task) =>
+          task.id === taskId
+            ? {
+                ...task,
+                status: "completed",
+                completed_date: getLocalDateString(),
+              }
+            : task
+        )
+      );
+    }
+
+    window.addEventListener("dashboard:task-completed", handleTaskCompleted);
+    return () =>
+      window.removeEventListener(
+        "dashboard:task-completed",
+        handleTaskCompleted
+      );
   }, []);
 
   function getToday() {
@@ -271,32 +363,6 @@ export default function Home() {
     return (task.task_type || "").includes("출고");
   }
 
-  function formatActivityTime(createdAt: string | null) {
-    if (!createdAt) return "-";
-
-    const createdDate = new Date(createdAt);
-
-    if (Number.isNaN(createdDate.getTime())) {
-      return createdAt.slice(0, 10);
-    }
-
-    const diffMs = Date.now() - createdDate.getTime();
-    const diffMinutes = Math.floor(diffMs / (1000 * 60));
-
-    if (diffMinutes < 1) return "방금 전";
-    if (diffMinutes < 60) return `${diffMinutes}분 전`;
-
-    const diffHours = Math.floor(diffMinutes / 60);
-
-    if (diffHours < 24) return `${diffHours}시간 전`;
-
-    const year = createdDate.getFullYear();
-    const month = String(createdDate.getMonth() + 1).padStart(2, "0");
-    const day = String(createdDate.getDate()).padStart(2, "0");
-
-    return `${year}-${month}-${day}`;
-  }
-
   async function loadCurrentUser() {
     const employee = await getCurrentEmployee();
 
@@ -309,10 +375,26 @@ export default function Home() {
   async function loadDashboard() {
     setIsLoading(true);
 
-    const { data: projectData, error: projectError } = await supabase
-      .from("projects")
-      .select("*")
-      .order("id", { ascending: false });
+    const [projectResult, taskResult, shipmentResult] = await Promise.all([
+      supabase
+        .from("projects")
+        .select("*")
+        .order("id", { ascending: false }),
+      supabase
+        .from("tasks")
+        .select(
+          "id, project_id, task_name, task_type, assignee, status, start_date, due_date, completed_date, created_at"
+        ),
+      supabase
+        .from("shipments")
+        .select(
+          "id, project_id, site_name, item_name, shipment_date, status"
+        ),
+    ]);
+
+    const { data: projectData, error: projectError } = projectResult;
+    const { data: taskData, error: taskError } = taskResult;
+    const { data: shipmentData } = shipmentResult;
 
     if (projectError) {
       alert(projectError.message);
@@ -320,26 +402,8 @@ export default function Home() {
       return;
     }
 
-    const { data: taskData, error: taskError } = await supabase
-      .from("tasks")
-      .select(
-        "id, project_id, task_name, task_type, assignee, status, start_date, due_date, completed_date"
-      );
-
     if (taskError) {
       alert(taskError.message);
-      setIsLoading(false);
-      return;
-    }
-
-    const { data: activityLogData, error: activityLogError } = await supabase
-      .from("activity_logs")
-      .select("id, created_at, employee_name, action_type, title, description, project_id")
-      .order("created_at", { ascending: false })
-      .limit(8);
-
-    if (activityLogError) {
-      alert(activityLogError.message);
       setIsLoading(false);
       return;
     }
@@ -349,7 +413,7 @@ export default function Home() {
 
     setProjects(loadedProjects);
     setTasks(loadedTasks);
-    setActivityLogs((activityLogData || []) as ActivityLog[]);
+    setShipments(shipmentData || []);
 
     const projectsWithProgress = loadedProjects.slice(0, 10).map((project) => {
       const projectTasks = loadedTasks.filter(
@@ -473,26 +537,76 @@ export default function Home() {
   );
   const thisWeekTaskIds = new Set(thisWeekTaskItems.map((task) => task.id));
 
-  const myTasks = todayOpenTaskItems.filter(
-    (task) => task.assignee === currentUserName
+  const tomorrow = getDateAfter(today, 1);
+  const myTasks = tasks.filter(
+    (task) =>
+      task.assignee === currentUserName && !isTaskCompleted(task.status)
   );
   const myTasksWithProject: MyWorkTask[] = myTasks.map((task) => ({
     ...task,
     projectName: getProjectName(task.project_id),
   }));
-  const myTodayDueTasks = [...myTasksWithProject].sort((a, b) =>
-    (a.task_name || "").localeCompare(b.task_name || "")
+  const sortPlannerTasks = (items: MyWorkTask[]) =>
+    [...items].sort((a, b) => {
+      const dateCompare = (a.due_date || a.start_date || "").localeCompare(
+        b.due_date || b.start_date || ""
+      );
+      return dateCompare || (a.task_name || "").localeCompare(b.task_name || "");
+    });
+  const myTodayDueTasks = sortPlannerTasks(
+    myTasksWithProject.filter(
+      (task) => task.start_date === today || task.due_date === today
+    )
+  );
+  const myTomorrowTasks = sortPlannerTasks(
+    myTasksWithProject.filter(
+      (task) => task.start_date === tomorrow || task.due_date === tomorrow
+    )
+  );
+  const myThisWeekTasks = sortPlannerTasks(
+    myTasksWithProject.filter(
+      (task) =>
+        task.start_date !== today &&
+        task.due_date !== today &&
+        task.start_date !== tomorrow &&
+        task.due_date !== tomorrow &&
+        ((task.start_date !== null &&
+          task.start_date > tomorrow &&
+          task.start_date <= endOfWeek) ||
+          (task.due_date !== null &&
+            task.due_date > tomorrow &&
+            task.due_date <= endOfWeek))
+    )
   );
   const myWorkSummary = {
     myTasks: myTasksWithProject,
     myTodayDueTasks,
+    myTomorrowTasks,
+    myThisWeekTasks,
   };
   const myWorkSections = [
     {
-      title: "오늘 마감",
+      title: "오늘",
       tasks: myWorkSummary.myTodayDueTasks,
       accentClass: "text-orange-600",
-      getDetail: (task: MyWorkTask) => `일정 ${task.due_date || "-"}`,
+      getDetail: (task: MyWorkTask) =>
+        task.start_date === today && task.due_date !== today
+          ? "오늘 시작 · 시간 미지정"
+          : "오늘 마감 · 시간 미지정",
+    },
+    {
+      title: "내일",
+      tasks: myWorkSummary.myTomorrowTasks,
+      accentClass: "text-blue-600",
+      getDetail: (task: MyWorkTask) =>
+        `${task.start_date === tomorrow ? "시작" : "마감"} ${tomorrow}`,
+    },
+    {
+      title: "이번 주",
+      tasks: myWorkSummary.myThisWeekTasks,
+      accentClass: "text-emerald-600",
+      getDetail: (task: MyWorkTask) =>
+        `일정 ${task.due_date || task.start_date || "-"}`,
     },
   ];
 
@@ -942,35 +1056,31 @@ export default function Home() {
       (project.task_manager || "").toLowerCase().includes(keyword)
     );
   });
+  const morningBriefTasks = tasks.map((task) => ({
+    ...task,
+    projectName: getProjectName(task.project_id),
+  }));
 
   return (
-    <div className="min-h-screen bg-slate-50 px-6 py-7 text-slate-900 lg:px-8">
-      <div className="mb-5 flex flex-col gap-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:flex-row sm:items-start sm:justify-between">
-        <div className="min-w-0">
-          <p className="text-sm font-medium text-slate-500">
-            {currentUserName || "사용자"}님, 안녕하세요.
-          </p>
-          <h1 className="mt-1 text-3xl font-bold tracking-tight text-slate-950">
-            대시보드
-          </h1>
-          <p className="mt-2 text-sm leading-6 text-slate-500">
-            프로젝트, 업무, 출고 현황을 차분하게 확인합니다.
-          </p>
-          <p className="mt-3 inline-flex rounded-full bg-blue-50 px-3 py-1 text-sm font-medium text-blue-700">
-            오늘 마감 업무 {todayDueTasks}건 · 권한 {currentUserRole || "-"}
-          </p>
-        </div>
+    <div className="min-h-screen bg-slate-50 px-6 py-5 text-slate-900 lg:px-8">
+      <MorningBrief
+        tasks={morningBriefTasks}
+        shipments={shipments}
+        currentUserName={currentUserName}
+        currentUserRole={currentUserRole}
+        isLoading={isLoading}
+        onTaskCompleted={(taskId) => {
+          setTasks((current) =>
+            current.map((task) =>
+              task.id === taskId
+                ? { ...task, status: "completed", completed_date: today }
+                : task
+            )
+          );
+        }}
+      />
 
-        <button
-          onClick={loadDashboard}
-          className="flex shrink-0 items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm font-medium text-slate-700 transition-colors hover:border-slate-300 hover:bg-white"
-        >
-          <RefreshCw size={16} />
-          새로고침
-        </button>
-      </div>
-
-      <div className="mb-5 rounded-2xl border border-slate-200 bg-white px-5 py-4 shadow-sm">
+      <div className="mb-4 rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
         <div className="flex items-center gap-3">
           <Search className="text-slate-400" size={20} />
           <input
@@ -983,115 +1093,220 @@ export default function Home() {
       </div>
 
       {isLoading ? (
-        <div className="rounded-2xl border border-slate-200 bg-white p-8 text-center text-sm text-slate-500 shadow-sm">
-          불러오는 중...
+        <div role="status" aria-label="대시보드를 불러오는 중" className="space-y-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <Skeleton className="h-16" />
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+            {Array.from({ length: 5 }).map((_, index) => (
+              <Skeleton key={index} className="h-24" />
+            ))}
+          </div>
+          <Skeleton className="h-72" />
         </div>
       ) : (
         <>
-          <div className="mb-4 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-5">
-            <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <MyWorkspaceRecent />
+          <div className="mb-3 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+            <Link
+              href="/projects"
+              role="button"
+              tabIndex={0}
+              title="전체 프로젝트 보기"
+              onKeyDown={handleKpiKeyDown}
+              style={{ animationDelay: "0ms" }}
+              className="group kpi-enter relative h-24 cursor-pointer rounded-2xl border border-slate-300 bg-slate-50 p-4 shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:border-blue-400 hover:shadow-md active:scale-[0.98] focus:outline-none focus:ring-2 focus:ring-blue-200"
+            >
               <div className="flex items-center justify-between">
                 <div className="min-w-0">
-                  <p className="text-sm font-medium text-slate-500">전체 프로젝트</p>
-                  <p className="mt-1 text-3xl font-bold tracking-tight text-slate-950">{totalProjects}</p>
+                  <p className="text-xs font-medium text-slate-500">전체 프로젝트</p>
+                  <p className="mt-0.5 text-3xl font-bold tracking-tight text-slate-950">{totalProjects}</p>
                 </div>
-                <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-blue-50 text-blue-600">
-                  <FolderKanban size={20} />
+                <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-blue-50 text-blue-600">
+                  <FolderKanban size={18} />
                 </div>
               </div>
-            </div>
+              <span className="absolute bottom-2 right-3 text-slate-400 opacity-40 transition-opacity group-hover:opacity-100">
+                <ChevronRight size={14} aria-hidden="true" />
+              </span>
+            </Link>
 
-            <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <Link
+              href="/projects?status=in_progress"
+              role="button"
+              tabIndex={0}
+              title="진행중 프로젝트 보기"
+              onKeyDown={handleKpiKeyDown}
+              style={{ animationDelay: "30ms" }}
+              className="group kpi-enter relative h-24 cursor-pointer rounded-2xl border border-slate-300 bg-slate-50 p-4 shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:border-blue-400 hover:shadow-md active:scale-[0.98] focus:outline-none focus:ring-2 focus:ring-blue-200"
+            >
               <div className="flex items-center justify-between">
                 <div className="min-w-0">
-                  <p className="text-sm font-medium text-slate-500">진행중 프로젝트</p>
-                  <p className="mt-1 text-3xl font-bold tracking-tight text-blue-600">
+                  <p className="text-xs font-medium text-slate-500">진행중 프로젝트</p>
+                  <p className="mt-0.5 text-3xl font-bold tracking-tight text-blue-600">
                     {activeProjects}
                   </p>
                 </div>
-                <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-indigo-50 text-indigo-600">
-                  <Clock size={20} />
+                <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-blue-50 text-blue-600">
+                  <Clock size={18} />
                 </div>
               </div>
-            </div>
+              <span className="absolute bottom-2 right-3 text-slate-400 opacity-40 transition-opacity group-hover:opacity-100">
+                <ChevronRight size={14} aria-hidden="true" />
+              </span>
+            </Link>
 
-            <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <Link
+              href="/projects?status=completed"
+              role="button"
+              tabIndex={0}
+              title="완료 프로젝트 보기"
+              onKeyDown={handleKpiKeyDown}
+              style={{ animationDelay: "60ms" }}
+              className="group kpi-enter relative h-24 cursor-pointer rounded-2xl border border-slate-300 bg-slate-50 p-4 shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:border-blue-400 hover:shadow-md active:scale-[0.98] focus:outline-none focus:ring-2 focus:ring-emerald-200"
+            >
               <div className="flex items-center justify-between">
                 <div className="min-w-0">
-                  <p className="text-sm font-medium text-slate-500">완료 프로젝트</p>
-                  <p className="mt-1 text-3xl font-bold tracking-tight text-emerald-600">
+                  <p className="text-xs font-medium text-slate-500">완료 프로젝트</p>
+                  <p className="mt-0.5 text-3xl font-bold tracking-tight text-emerald-600">
                     {completedProjects}
                   </p>
                 </div>
-                <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-600">
-                  <CheckCircle2 size={20} />
+                <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-50 text-emerald-600">
+                  <CheckCircle2 size={18} />
                 </div>
               </div>
-            </div>
+              <span className="absolute bottom-2 right-3 text-slate-400 opacity-40 transition-opacity group-hover:opacity-100">
+                <ChevronRight size={14} aria-hidden="true" />
+              </span>
+            </Link>
 
-            <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <Link
+              href="/projects?status=delayed"
+              role="button"
+              tabIndex={0}
+              title="지연 프로젝트 보기"
+              onKeyDown={handleKpiKeyDown}
+              style={{ animationDelay: "90ms" }}
+              className="group kpi-enter relative h-24 cursor-pointer rounded-2xl border border-slate-300 bg-slate-50 p-4 shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:border-blue-400 hover:shadow-md active:scale-[0.98] focus:outline-none focus:ring-2 focus:ring-red-200"
+            >
               <div className="flex items-center justify-between">
                 <div className="min-w-0">
-                  <p className="text-sm font-medium text-slate-500">지연 프로젝트</p>
-                  <p className="mt-1 text-3xl font-bold tracking-tight text-red-600">
+                  <p className="text-xs font-medium text-slate-500">지연 프로젝트</p>
+                  <p className="mt-0.5 text-3xl font-bold tracking-tight text-red-600">
                     {delayedProjects}
                   </p>
                 </div>
-                <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-red-50 text-red-600">
-                  <AlertTriangle size={20} />
+                <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-red-50 text-red-600">
+                  <AlertTriangle size={18} />
                 </div>
               </div>
-            </div>
+              <span className="absolute bottom-2 right-3 text-slate-400 opacity-40 transition-opacity group-hover:opacity-100">
+                <ChevronRight size={14} aria-hidden="true" />
+              </span>
+            </Link>
 
-            <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-              <p className="text-sm font-medium text-slate-500">전체 진행률</p>
-              <p className="mt-1 text-3xl font-bold tracking-tight text-blue-600">
+            <div className="kpi-enter h-24 rounded-2xl border border-slate-300 bg-slate-100 p-4 shadow-sm transition-all duration-150 hover:-translate-y-0.5 hover:shadow-md">
+              <p className="text-xs font-medium leading-4 text-slate-500">전체 진행률</p>
+              <p className="text-xl font-bold leading-6 tracking-tight text-blue-700">
                 {totalProgress}%
               </p>
-              <ProgressBar percent={totalProgress} className="mt-2 h-2 w-full" />
-              <p className="mt-2 text-xs leading-5 text-slate-500">
+              <ProgressBar
+                percent={totalProgress}
+                className="mt-1 h-1.5 w-full !bg-slate-300"
+                barClassName={`h-1.5 ${
+                  totalProgress <= 30
+                    ? "!bg-red-600"
+                    : totalProgress <= 70
+                      ? "!bg-amber-600"
+                      : "!bg-emerald-600"
+                }`}
+              />
+              <p className="mt-1 text-[11px] leading-3 text-slate-500">
                 완료 {completedTasks}건 / 전체 {totalTasks}건
               </p>
             </div>
           </div>
 
-          <div className="mb-5 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-5">
-            <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-              <p className="text-sm font-medium text-slate-500">오늘 마감 업무</p>
-              <p className="mt-1 text-3xl font-bold tracking-tight text-orange-600">
+          <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+            <Link
+              href="/tasks?filter=today"
+              role="button"
+              tabIndex={0}
+              title="오늘 업무 보기"
+              onKeyDown={handleKpiKeyDown}
+              style={{ animationDelay: "120ms" }}
+              className="group kpi-enter relative min-h-24 cursor-pointer rounded-2xl border border-slate-200 bg-white p-3.5 shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:border-blue-400 hover:shadow-md active:scale-[0.98] focus:outline-none focus:ring-2 focus:ring-orange-200"
+            >
+              <p className="text-xs font-medium text-slate-500">오늘 마감 업무</p>
+              <p className="mt-0.5 text-2xl font-bold tracking-tight text-orange-600">
                 {todayDueTasks}
               </p>
-            </div>
+              <span className="absolute bottom-2 right-3 text-slate-400 opacity-40 transition-opacity group-hover:opacity-100">
+                <ChevronRight size={14} aria-hidden="true" />
+              </span>
+            </Link>
 
-            <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-              <p className="text-sm font-medium text-slate-500">지연 업무</p>
-              <p className="mt-1 text-3xl font-bold tracking-tight text-red-600">
+            <Link
+              href="/tasks?status=delayed"
+              role="button"
+              tabIndex={0}
+              title="지연 업무 보기"
+              onKeyDown={handleKpiKeyDown}
+              style={{ animationDelay: "150ms" }}
+              className="group kpi-enter relative min-h-24 cursor-pointer rounded-2xl border border-slate-200 bg-white p-3.5 shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:border-blue-400 hover:shadow-md active:scale-[0.98] focus:outline-none focus:ring-2 focus:ring-red-200"
+            >
+              <p className="text-xs font-medium text-slate-500">지연 업무</p>
+              <p className="mt-0.5 text-2xl font-bold tracking-tight text-red-600">
                 {delayedTasks}
               </p>
-            </div>
+              <span className="absolute bottom-2 right-3 text-slate-400 opacity-40 transition-opacity group-hover:opacity-100">
+                <ChevronRight size={14} aria-hidden="true" />
+              </span>
+            </Link>
 
-            <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-              <p className="text-sm font-medium text-slate-500">진행중 업무</p>
-              <p className="mt-1 text-3xl font-bold tracking-tight text-blue-600">
+            <Link
+              href="/tasks?status=in_progress"
+              role="button"
+              tabIndex={0}
+              title="진행중 업무 보기"
+              onKeyDown={handleKpiKeyDown}
+              style={{ animationDelay: "180ms" }}
+              className="group kpi-enter relative min-h-24 cursor-pointer rounded-2xl border border-slate-200 bg-white p-3.5 shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:border-blue-400 hover:shadow-md active:scale-[0.98] focus:outline-none focus:ring-2 focus:ring-blue-200"
+            >
+              <p className="text-xs font-medium text-slate-500">진행중 업무</p>
+              <p className="mt-0.5 text-2xl font-bold tracking-tight text-blue-600">
                 {activeTasks}
               </p>
-            </div>
+              <span className="absolute bottom-2 right-3 text-slate-400 opacity-40 transition-opacity group-hover:opacity-100">
+                <ChevronRight size={14} aria-hidden="true" />
+              </span>
+            </Link>
 
-            <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-              <p className="text-sm font-medium text-slate-500">출고대기</p>
+            <Link
+              href="/shipments?status=pending"
+              role="button"
+              tabIndex={0}
+              title="출고 대기 보기"
+              onKeyDown={handleKpiKeyDown}
+              style={{ animationDelay: "210ms" }}
+              className="group kpi-enter relative min-h-24 cursor-pointer rounded-2xl border border-slate-200 bg-white p-3.5 shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:border-blue-400 hover:shadow-md active:scale-[0.98] focus:outline-none focus:ring-2 focus:ring-orange-200"
+            >
+              <p className="text-xs font-medium text-slate-500">출고대기</p>
               <div className="mt-1 flex items-center gap-3">
-                <Truck className="text-orange-500" size={20} />
-                <p className="text-3xl font-bold tracking-tight text-orange-600">
+                <Truck className="text-orange-500" size={16} />
+                <p className="text-2xl font-bold tracking-tight text-orange-600">
                   {waitingShipments}
                 </p>
               </div>
-            </div>
+              <span className="absolute bottom-2 right-3 text-slate-400 opacity-40 transition-opacity group-hover:opacity-100">
+                <ChevronRight size={14} aria-hidden="true" />
+              </span>
+            </Link>
 
-            <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-              <p className="text-sm font-medium text-slate-500">출고완료</p>
+            <div className="min-h-24 rounded-2xl border border-slate-200 bg-white p-3.5 shadow-sm">
+              <p className="text-xs font-medium text-slate-500">출고완료</p>
               <div className="mt-1 flex items-center gap-3">
-                <CheckCircle2 className="text-emerald-500" size={20} />
-                <p className="text-3xl font-bold tracking-tight text-emerald-600">
+                <CheckCircle2 className="text-emerald-500" size={16} />
+                <p className="text-2xl font-bold tracking-tight text-emerald-600">
                   {completedShipments}
                 </p>
               </div>
@@ -1528,9 +1743,11 @@ export default function Home() {
             <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
               <div className="mb-4 flex items-center justify-between gap-3">
                 <div className="min-w-0">
-                  <h2 className="text-lg font-bold tracking-tight text-slate-950">TO DO LIST</h2>
-                  <p className="mt-1 text-sm text-slate-500">
-                    {`${currentUserName || "-"} 담당 업무 기준`}
+                    <h2 className="text-lg font-bold tracking-tight text-slate-950">
+                      DAILY PLANNER
+                    </h2>
+                    <p className="mt-1 text-sm text-slate-500">
+                      {`${currentUserName || "-"}님의 오늘·내일·이번 주 일정`}
                   </p>
                 </div>
                 <span className="shrink-0 rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600">
@@ -1580,7 +1797,7 @@ export default function Home() {
                       </div>
                     ) : (
                       <EmptyState
-                        message="오늘 처리할 업무가 없습니다."
+                        message={`${section.title} 예정된 업무가 없습니다.`}
                         className="rounded-xl bg-white p-3 text-center text-xs text-slate-400"
                       />
                     )}
@@ -1764,7 +1981,8 @@ export default function Home() {
             </div>
           </div>
 
-          <div className="mb-5 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="mb-5 grid grid-cols-1 gap-4 xl:grid-cols-12 xl:items-start">
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm xl:col-span-8">
             <div className="mb-4 flex items-center justify-between gap-3">
               <div>
                 <h2 className="text-lg font-bold tracking-tight text-slate-950">최근 프로젝트</h2>
@@ -1780,48 +1998,56 @@ export default function Home() {
             <div className="overflow-x-auto">
               <table className="w-full min-w-[1000px]">
                 <thead>
-                  <tr className="border-y border-slate-200 bg-slate-50 text-xs font-semibold uppercase text-slate-500">
-                    <th className="px-3 py-3 text-left">프로젝트코드</th>
-                    <th className="px-3 py-3 text-left">프로젝트명</th>
-                    <th className="px-3 py-3 text-left">공정</th>
-                    <th className="px-3 py-3 text-left">담당자</th>
-                    <th className="px-3 py-3 text-left">준공예정일</th>
-                    <th className="px-3 py-3 text-left">납기상태</th>
-                    <th className="px-3 py-3 text-left">진행률</th>
+                  <tr className="border-y border-slate-200 bg-slate-50 text-xs font-medium text-slate-500">
+                    <th className="px-3 py-2.5 text-left">프로젝트코드</th>
+                    <th className="px-3 py-2.5 text-left">프로젝트명</th>
+                    <th className="px-3 py-2.5 text-left">공정</th>
+                    <th className="px-3 py-2.5 text-left">담당자</th>
+                    <th className="px-3 py-2.5 text-left">종료일</th>
+                    <th className="px-3 py-2.5 text-left">상태</th>
+                    <th className="px-3 py-2.5 text-left">진행률</th>
                   </tr>
                 </thead>
 
                 <tbody>
                   {searchedProjects.map((project) => (
                     <tr key={project.id} className="border-b border-slate-100 text-sm text-slate-700 transition-colors hover:bg-slate-50">
-                      <td className="px-3 py-3.5 text-slate-500">{project.project_code || "-"}</td>
-
-                      <td className="px-3 py-3.5">
+                      <td className="px-3 py-2.5 text-slate-500">
                         <Link
                           href={`/projects/${project.id}`}
-                          className="font-medium text-blue-600 hover:underline"
+                          className="hover:text-blue-600 hover:underline"
+                        >
+                          {project.project_code || "-"}
+                        </Link>
+                      </td>
+
+                      <td className="max-w-56 px-3 py-2.5">
+                        <Link
+                          href={`/projects/${project.id}`}
+                          className="block truncate font-medium text-blue-600 hover:underline"
+                          title={project.project_name}
                         >
                           {project.project_name}
                         </Link>
                       </td>
 
-                      <td className="px-3 py-3.5">{project.process_type}</td>
-                      <td className="px-3 py-3.5">{project.task_manager || "-"}</td>
-                      <td className="px-3 py-3.5 text-slate-500">
+                      <td className="px-3 py-2.5">{project.process_type}</td>
+                      <td className="px-3 py-2.5">{project.task_manager || "-"}</td>
+                      <td className="px-3 py-2.5 text-slate-500">
                         {getProjectEndDate(project) || "-"}
                       </td>
 
-                      <td className="px-3 py-3.5">
+                      <td className="px-3 py-2.5">
                         <Badge variant={getStatusBadgeVariant(project.dueStatus)}>
                           {project.dueStatus}
                         </Badge>
                       </td>
 
-                      <td className="px-3 py-3.5">
-                        <div className="flex items-center gap-3">
+                      <td className="px-3 py-2.5">
+                        <div className="flex items-center gap-2">
                           <ProgressBar
                             percent={project.progress}
-                            className="h-2 w-24"
+                            className="h-1.5 w-20"
                           />
                           <span className="text-sm font-medium">
                             {project.progress}%
@@ -1845,63 +2071,59 @@ export default function Home() {
               </table>
             </div>
           </div>
-          <div className="mb-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-            <div className="mb-4 flex items-center justify-between">
-              <div>
-                <h2 className="text-lg font-bold tracking-tight text-slate-950">최근 활동</h2>
-                <p className="mt-1 text-sm text-slate-500">
-                  activity_logs 기준 최신 활동 8개
-                </p>
+          <aside className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm xl:col-span-4 xl:sticky xl:top-4">
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <div className="flex min-w-0 items-center gap-2">
+                <h2 className="text-lg font-bold tracking-tight text-slate-950">
+                  최근 활동
+                </h2>
+                <span className="shrink-0 text-xs font-medium text-slate-500">
+                  최근 활동 {showAllActivities ? 20 : 2}건
+                </span>
               </div>
-              <div className="flex h-9 w-9 items-center justify-center rounded-2xl bg-slate-50 text-slate-400">
-                <Clock size={18} />
+              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-slate-50 text-slate-400">
+                <Clock size={16} />
               </div>
             </div>
 
-            {activityLogs.length > 0 ? (
-              <div className="space-y-1">
-                {activityLogs.map((log) => (
-                  <div
-                    key={log.id}
-                    className="flex items-start justify-between gap-4 rounded-xl px-2 py-3 transition-colors hover:bg-slate-50"
-                  >
-                    <div className="flex min-w-0 gap-3">
-                      <div className="mt-1 h-2 w-2 shrink-0 rounded-full bg-slate-300" />
-                      <div className="min-w-0">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <Badge
-                            variant="default"
-                            className="bg-slate-50 px-2.5 font-medium"
-                          >
-                            {log.action_type}
-                          </Badge>
-                          <h3 className="font-semibold text-slate-900">
-                            {log.title}
-                          </h3>
-                        </div>
-
-                        {log.description && (
-                          <p className="mt-1 text-sm leading-6 text-slate-600">
-                            {log.description}
-                          </p>
-                        )}
-
-                        <p className="mt-1 text-xs text-slate-400">
-                          {log.employee_name || "시스템"}
-                          {log.project_id ? ` · 프로젝트 #${log.project_id}` : ""}
-                        </p>
-                      </div>
-                    </div>
-
-                    <span className="shrink-0 pt-0.5 text-xs text-slate-400">
-                      {formatActivityTime(log.created_at)}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <EmptyState message="최근 활동이 없습니다." />
-            )}
+            <div
+              className={`overflow-hidden transition-[max-height,opacity] duration-200 motion-reduce:transition-none ${
+                showAllActivities
+                  ? "max-h-[620px] opacity-100"
+                  : "max-h-44 opacity-100"
+              }`}
+            >
+              <ActivityTimeline
+                limit={showAllActivities ? 20 : 2}
+                compact
+              />
+            </div>
+            <div className="mt-2 border-t border-slate-100 pt-2 text-center">
+              <button
+                type="button"
+                aria-expanded={showAllActivities}
+                onClick={() => {
+                  const nextValue = !showAllActivities;
+                  setShowAllActivities(nextValue);
+                  window.localStorage.setItem(
+                    DASHBOARD_ACTIVITY_EXPANDED_KEY,
+                    String(nextValue)
+                  );
+                }}
+                className="inline-flex h-8 items-center gap-1 rounded-lg px-3 text-xs font-semibold text-blue-600 transition-colors hover:bg-blue-50 focus:outline-none focus:ring-2 focus:ring-blue-100"
+              >
+                {showAllActivities ? (
+                  <>
+                    접기 <ChevronUp size={14} />
+                  </>
+                ) : (
+                  <>
+                    더 보기 <ChevronDown size={14} />
+                  </>
+                )}
+              </button>
+            </div>
+          </aside>
           </div>
         </>
       )}

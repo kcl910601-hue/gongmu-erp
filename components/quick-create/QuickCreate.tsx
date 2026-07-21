@@ -20,8 +20,8 @@ import {
   type ProjectFileType,
   uploadProjectFile,
 } from "@/lib/files";
-import { normalizeAssemblyVendor } from "@/lib/projects";
 import { supabase } from "@/lib/supabase";
+import { ProjectCreateForm } from "@/components/projects/ProjectCreateForm";
 import {
   getProjectStatusLabel,
   getTaskStatusLabel,
@@ -31,24 +31,17 @@ import {
 } from "@/lib/status";
 import { recordRecentTask } from "@/lib/recent";
 
+export type QuickCreateInitialView = "project" | "task" | "file";
+
 type QuickCreateProps = {
   isOpen: boolean;
   onClose: () => void;
+  initialView?: QuickCreateInitialView;
+  contextProjectId?: number | null;
+  stayOnPage?: boolean;
 };
 
 type ViewMode = "menu" | "project" | "task" | "employee" | "notice" | "file";
-
-type ProjectForm = {
-  project_code: string;
-  project_name: string;
-  client_name: string;
-  salesperson: string;
-  task_manager: string;
-  assembly_vendor: string;
-  process_type: string;
-  start_date: string;
-  end_date: string;
-};
 
 type TaskForm = {
   task_name: string;
@@ -72,12 +65,6 @@ type FileForm = {
   description: string;
 };
 
-type TaskTemplate = {
-  task_order: number;
-  task_name: string;
-  task_type: string;
-};
-
 type ProjectOption = {
   id: number;
   project_code: string | null;
@@ -97,18 +84,6 @@ type ExistingTask = {
   id: number;
   task_order: number | null;
   status: string | null;
-};
-
-const initialProjectForm: ProjectForm = {
-  project_code: "",
-  project_name: "",
-  client_name: "",
-  salesperson: "",
-  task_manager: "",
-  assembly_vendor: "",
-  process_type: "MH",
-  start_date: "",
-  end_date: "",
 };
 
 const initialTaskForm: TaskForm = {
@@ -133,7 +108,6 @@ const initialFileForm: FileForm = {
   description: "",
 };
 
-const processTypes = ["MH", "PL", "AS", "ETC"];
 const taskTypes = ["설계", "구매", "제작", "조립", "검수", "출고", "기타"];
 const taskStatuses = ["pending", "in_progress", "completed"];
 const employeeRoles = ["admin", "manager", "member", "viewer"];
@@ -152,20 +126,6 @@ const acceptedFileTypes = [
 
 function getSupabaseMessage(message: string) {
   return message || "저장 중 오류가 발생했습니다.";
-}
-
-function isProjectFormDirty(form: ProjectForm) {
-  return (
-    form.project_code.trim() !== "" ||
-    form.project_name.trim() !== "" ||
-    form.client_name.trim() !== "" ||
-    form.salesperson.trim() !== "" ||
-    form.task_manager.trim() !== "" ||
-    form.assembly_vendor.trim() !== "" ||
-    form.process_type !== initialProjectForm.process_type ||
-    form.start_date !== "" ||
-    form.end_date !== ""
-  );
 }
 
 function isTaskFormDirty(form: TaskForm, selectedProject: ProjectOption | null) {
@@ -217,7 +177,13 @@ function getNextProjectStatus(tasks: Array<{ status: string | null }>) {
   return "pending";
 }
 
-export default function QuickCreate({ isOpen, onClose }: QuickCreateProps) {
+export default function QuickCreate({
+  isOpen,
+  onClose,
+  initialView,
+  contextProjectId,
+  stayOnPage = false,
+}: QuickCreateProps) {
   const router = useRouter();
   const [view, setView] = useState<ViewMode>("menu");
   const [currentEmployee, setCurrentEmployee] = useState<CurrentEmployee | null>(
@@ -226,7 +192,7 @@ export default function QuickCreate({ isOpen, onClose }: QuickCreateProps) {
   const [isLoadingAuth, setIsLoadingAuth] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
-  const [projectForm, setProjectForm] = useState<ProjectForm>(initialProjectForm);
+  const [projectFormDirty, setProjectFormDirty] = useState(false);
   const [taskForm, setTaskForm] = useState<TaskForm>(initialTaskForm);
   const [employeeForm, setEmployeeForm] =
     useState<EmployeeForm>(initialEmployeeForm);
@@ -242,7 +208,7 @@ export default function QuickCreate({ isOpen, onClose }: QuickCreateProps) {
   const canCreate = Boolean(currentEmployee && currentEmployee.active !== false);
   const isDirty =
     view === "project"
-      ? isProjectFormDirty(projectForm)
+      ? projectFormDirty
       : view === "task"
         ? isTaskFormDirty(taskForm, selectedProject)
         : view === "employee"
@@ -254,7 +220,7 @@ export default function QuickCreate({ isOpen, onClose }: QuickCreateProps) {
   const resetState = useCallback(() => {
     setView("menu");
     setErrorMessage("");
-    setProjectForm(initialProjectForm);
+    setProjectFormDirty(false);
     setTaskForm(initialTaskForm);
     setEmployeeForm(initialEmployeeForm);
     setFileForm(initialFileForm);
@@ -277,7 +243,7 @@ export default function QuickCreate({ isOpen, onClose }: QuickCreateProps) {
 
   const goToMenu = useCallback(() => {
     setErrorMessage("");
-    setProjectForm(initialProjectForm);
+    setProjectFormDirty(false);
     setTaskForm(initialTaskForm);
     setEmployeeForm(initialEmployeeForm);
     setFileForm(initialFileForm);
@@ -290,7 +256,7 @@ export default function QuickCreate({ isOpen, onClose }: QuickCreateProps) {
 
   const openView = useCallback((nextView: Exclude<ViewMode, "menu">) => {
     setErrorMessage("");
-    setProjectForm(initialProjectForm);
+    setProjectFormDirty(false);
     setTaskForm(initialTaskForm);
     setEmployeeForm(initialEmployeeForm);
     setFileForm(initialFileForm);
@@ -303,6 +269,10 @@ export default function QuickCreate({ isOpen, onClose }: QuickCreateProps) {
 
   useEffect(() => {
     if (!isOpen) return;
+
+    const viewTimer = window.setTimeout(() => {
+      setView(initialView ?? "menu");
+    }, 0);
 
     let isMounted = true;
 
@@ -319,9 +289,10 @@ export default function QuickCreate({ isOpen, onClose }: QuickCreateProps) {
     void loadAuth();
 
     return () => {
+      window.clearTimeout(viewTimer);
       isMounted = false;
     };
-  }, [isOpen]);
+  }, [initialView, isOpen]);
 
   useEffect(() => {
     if (!isOpen || (view !== "task" && view !== "file")) return;
@@ -337,7 +308,9 @@ export default function QuickCreate({ isOpen, onClose }: QuickCreateProps) {
         )
         .limit(8);
 
-      if (searchText) {
+      if (contextProjectId && !searchText) {
+        query = query.eq("id", contextProjectId);
+      } else if (searchText) {
         query = query.or(
           `project_name.ilike.%${searchText}%,project_code.ilike.%${searchText}%,assembly_vendor.ilike.%${searchText}%`
         );
@@ -354,7 +327,14 @@ export default function QuickCreate({ isOpen, onClose }: QuickCreateProps) {
         return;
       }
 
-      setProjectOptions((data || []) as ProjectOption[]);
+      const loadedProjects = (data || []) as ProjectOption[];
+      setProjectOptions(loadedProjects);
+      if (contextProjectId && !searchText) {
+        setSelectedProject(
+          loadedProjects.find((project) => project.id === contextProjectId) ??
+            null
+        );
+      }
     }
 
     void loadProjects();
@@ -362,7 +342,7 @@ export default function QuickCreate({ isOpen, onClose }: QuickCreateProps) {
     return () => {
       isMounted = false;
     };
-  }, [isOpen, projectQuery, view]);
+  }, [contextProjectId, isOpen, projectQuery, view]);
 
   useEffect(() => {
     if (!isOpen || view !== "task") return;
@@ -421,119 +401,6 @@ export default function QuickCreate({ isOpen, onClose }: QuickCreateProps) {
 
     return `${selectedProject.project_name} (${selectedProject.project_code || "코드 없음"})`;
   }, [selectedProject]);
-
-  async function createProject() {
-    if (isSaving) return;
-
-    if (!projectForm.project_code.trim()) {
-      setErrorMessage("프로젝트 코드를 입력하세요.");
-      return;
-    }
-
-    if (!projectForm.project_name.trim()) {
-      setErrorMessage("프로젝트명을 입력하세요.");
-      return;
-    }
-
-    setIsSaving(true);
-    setErrorMessage("");
-
-    const { data: existingProject, error: duplicateError } = await supabase
-      .from("projects")
-      .select("id")
-      .eq("project_code", projectForm.project_code.trim())
-      .maybeSingle();
-
-    if (duplicateError) {
-      setErrorMessage(getSupabaseMessage(duplicateError.message));
-      setIsSaving(false);
-      return;
-    }
-
-    if (existingProject) {
-      setErrorMessage("이미 사용 중인 프로젝트 코드입니다.");
-      setIsSaving(false);
-      return;
-    }
-
-    const { data: templates, error: templateError } = await supabase
-      .from("task_templates")
-      .select("task_order, task_name, task_type")
-      .eq("process_type", projectForm.process_type)
-      .order("task_order", { ascending: true });
-
-    if (templateError) {
-      setErrorMessage(getSupabaseMessage(templateError.message));
-      setIsSaving(false);
-      return;
-    }
-
-    const taskTemplates = (templates || []) as TaskTemplate[];
-
-    if (taskTemplates.length === 0) {
-      setErrorMessage("선택한 공정의 업무 템플릿이 없습니다.");
-      setIsSaving(false);
-      return;
-    }
-
-    const { data: projectData, error: projectError } = await supabase
-      .from("projects")
-      .insert([
-        {
-          project_code: projectForm.project_code.trim(),
-          project_name: projectForm.project_name.trim(),
-          client_name: projectForm.client_name.trim() || null,
-          assembly_vendor: normalizeAssemblyVendor(projectForm.assembly_vendor),
-          process_type: projectForm.process_type,
-          salesperson: projectForm.salesperson.trim() || null,
-          task_manager: projectForm.task_manager.trim() || null,
-          status: "in_progress",
-          start_date: projectForm.start_date || null,
-          end_date: projectForm.end_date || null,
-        },
-      ])
-      .select()
-      .single();
-
-    if (projectError || !projectData) {
-      setErrorMessage(getSupabaseMessage(projectError?.message || ""));
-      setIsSaving(false);
-      return;
-    }
-
-    const templateTasks = taskTemplates.map((template) => ({
-      project_id: projectData.id as number,
-      task_order: template.task_order,
-      task_name: template.task_name,
-      task_type: template.task_type,
-      assignee: projectForm.task_manager.trim() || null,
-      status: "pending",
-      due_date: null,
-      completed_date: null,
-      start_date: null,
-    }));
-
-    const { error: taskError } = await supabase.from("tasks").insert(templateTasks);
-
-    if (taskError) {
-      setErrorMessage(getSupabaseMessage(taskError.message));
-      setIsSaving(false);
-      return;
-    }
-
-    await addActivity({
-      actionType: "project_create",
-      targetType: "project",
-      targetId: projectData.id as number,
-      projectId: projectData.id as number,
-      title: "프로젝트 생성",
-      description: `${projectForm.project_name.trim()} 프로젝트를 생성했습니다.`,
-    });
-
-    closeModal();
-    router.push(`/projects/${projectData.id as number}`);
-    setIsSaving(false);
-  }
 
   async function createTask() {
     if (isSaving) return;
@@ -633,8 +500,18 @@ export default function QuickCreate({ isOpen, onClose }: QuickCreateProps) {
       due_date: taskForm.due_date || null,
     });
 
+    await addActivity({
+      type: "task_create",
+      title: "업무 생성",
+      description: `${taskForm.task_name.trim()} 업무를 생성했습니다.`,
+      projectId: selectedProject.id,
+      targetType: "task",
+      targetId: (taskData as ExistingTask).id,
+    });
+
     closeModal();
-    router.push(`/projects/${selectedProject.id}`);
+    if (stayOnPage) router.refresh();
+    else router.push(`/projects/${selectedProject.id}`);
     setIsSaving(false);
   }
 
@@ -714,7 +591,8 @@ export default function QuickCreate({ isOpen, onClose }: QuickCreateProps) {
       });
 
       closeModal();
-      router.push(`/projects/${selectedProject.id}`);
+      if (stayOnPage) router.refresh();
+      else router.push(`/projects/${selectedProject.id}`);
     } catch (error) {
       const message =
         error instanceof Error
@@ -736,7 +614,9 @@ export default function QuickCreate({ isOpen, onClose }: QuickCreateProps) {
       onMouseDown={requestClose}
     >
       <div
-        className="max-h-[88vh] w-full max-w-2xl overflow-y-auto rounded-2xl border border-slate-200 bg-white p-5 shadow-xl"
+        className={`max-h-[88vh] w-full overflow-y-auto rounded-2xl border border-slate-200 bg-white p-5 shadow-xl ${
+          view === "project" ? "max-w-5xl" : "max-w-2xl"
+        }`}
         onMouseDown={(event) => event.stopPropagation()}
       >
         <div className="mb-4 flex items-start justify-between gap-3">
@@ -858,162 +738,16 @@ export default function QuickCreate({ isOpen, onClose }: QuickCreateProps) {
         )}
 
         {view === "project" && (
-          <form
-            className="space-y-4"
-            onSubmit={(event) => {
-              event.preventDefault();
-              void createProject();
+          <ProjectCreateForm
+            onCancel={goToMenu}
+            onDirtyChange={setProjectFormDirty}
+            onSuccess={(projectId) => {
+              closeModal();
+              if (stayOnPage) router.refresh();
+              else router.push(`/projects/${projectId}`);
             }}
-          >
-            <div className="grid gap-3 sm:grid-cols-2">
-              <label className="text-sm font-semibold text-slate-700">
-                프로젝트명
-                <input
-                  value={projectForm.project_name}
-                  onChange={(event) =>
-                    setProjectForm({
-                      ...projectForm,
-                      project_name: event.target.value,
-                    })
-                  }
-                  className="mt-1 w-full rounded-2xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-300"
-                  placeholder="프로젝트명을 입력하세요"
-                />
-              </label>
-              <label className="text-sm font-semibold text-slate-700">
-                프로젝트 코드
-                <input
-                  value={projectForm.project_code}
-                  onChange={(event) =>
-                    setProjectForm({
-                      ...projectForm,
-                      project_code: event.target.value,
-                    })
-                  }
-                  className="mt-1 w-full rounded-2xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-300"
-                  placeholder="예: PJ-2026-001"
-                />
-              </label>
-              <label className="text-sm font-semibold text-slate-700">
-                발주처
-                <input
-                  value={projectForm.client_name}
-                  onChange={(event) =>
-                    setProjectForm({
-                      ...projectForm,
-                      client_name: event.target.value,
-                    })
-                  }
-                  className="mt-1 w-full rounded-2xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-300"
-                />
-              </label>
-              <label className="text-sm font-semibold text-slate-700">
-                조립처
-                <input
-                  value={projectForm.assembly_vendor}
-                  onChange={(event) =>
-                    setProjectForm({
-                      ...projectForm,
-                      assembly_vendor: event.target.value,
-                    })
-                  }
-                  className="mt-1 w-full rounded-2xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-300"
-                />
-              </label>
-              <label className="text-sm font-semibold text-slate-700">
-                공정
-                <select
-                  value={projectForm.process_type}
-                  onChange={(event) =>
-                    setProjectForm({
-                      ...projectForm,
-                      process_type: event.target.value,
-                    })
-                  }
-                  className="mt-1 w-full rounded-2xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-300"
-                >
-                  {processTypes.map((processType) => (
-                    <option key={processType} value={processType}>
-                      {processType}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="text-sm font-semibold text-slate-700">
-                영업자
-                <input
-                  value={projectForm.salesperson}
-                  onChange={(event) =>
-                    setProjectForm({
-                      ...projectForm,
-                      salesperson: event.target.value,
-                    })
-                  }
-                  className="mt-1 w-full rounded-2xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-300"
-                />
-              </label>
-              <label className="text-sm font-semibold text-slate-700">
-                담당자
-                <input
-                  value={projectForm.task_manager}
-                  onChange={(event) =>
-                    setProjectForm({
-                      ...projectForm,
-                      task_manager: event.target.value,
-                    })
-                  }
-                  className="mt-1 w-full rounded-2xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-300"
-                />
-              </label>
-              <label className="text-sm font-semibold text-slate-700">
-                시작일
-                <input
-                  type="date"
-                  value={projectForm.start_date}
-                  onChange={(event) =>
-                    setProjectForm({
-                      ...projectForm,
-                      start_date: event.target.value,
-                    })
-                  }
-                  className="mt-1 w-full rounded-2xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-300"
-                />
-              </label>
-              <label className="text-sm font-semibold text-slate-700">
-                종료일
-                <input
-                  type="date"
-                  value={projectForm.end_date}
-                  onChange={(event) =>
-                    setProjectForm({
-                      ...projectForm,
-                      end_date: event.target.value,
-                    })
-                  }
-                  className="mt-1 w-full rounded-2xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-300"
-                />
-              </label>
-            </div>
-            <div className="flex justify-end gap-2 pt-2">
-              <button
-                type="button"
-                onClick={goToMenu}
-                className="rounded-2xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50"
-              >
-                취소
-              </button>
-              <button
-                type="submit"
-                disabled={!canCreate || isSaving}
-                className="flex items-center gap-2 rounded-2xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white disabled:bg-slate-300"
-              >
-                {isSaving && <Loader2 size={15} className="animate-spin" />}
-                프로젝트 생성
-              </button>
-            </div>
-          </form>
+          />
         )}
-
         {view === "task" && (
           <form
             className="space-y-4"

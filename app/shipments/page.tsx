@@ -1,7 +1,23 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { Truck } from "lucide-react";
 import { supabase } from "@/lib/supabase";
+import { logActivity } from "@/lib/activity";
+import { createAuditChanges, SHIPMENT_AUDIT_FIELDS } from "@/lib/audit";
+import { recordRecentWorkspaceItem } from "@/lib/recent";
+import { toast } from "@/lib/toast";
+import { TableViewControls } from "@/components/ui/TableViewControls";
+import { ErrorState } from "@/components/ui/ErrorState";
+import { TableSkeleton } from "@/components/ui/Skeleton";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { Button } from "@/components/ui/Button";
+import { usePersistentState } from "@/hooks/usePersistentState";
+import {
+  paginateRows,
+  sortRows,
+  type SortDirection,
+} from "@/lib/table-view";
 
 type Shipment = {
   id: number;
@@ -21,13 +37,52 @@ type Shipment = {
 };
 
 const statusList = ["출고대기", "출고완료", "취소"];
-const filterList = ["전체", "출고대기", "출고완료", "취소"];
+const filterList = ["전체", "오늘 예정", "출고대기", "출고완료", "취소"];
+
+function getShipmentStatusFromQuery() {
+  const searchParams = new URLSearchParams(window.location.search);
+  const status = searchParams.get("status");
+  const filter = searchParams.get("filter");
+
+  if (filter === "today") return "오늘 예정";
+  if (!status) return null;
+  if (status === "pending") return "출고대기";
+  if (status === "completed") return "출고완료";
+  if (status === "canceled") return "취소";
+  return "출고대기";
+}
 
 export default function ShipmentsPage() {
   const [shipments, setShipments] = useState<Shipment[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [errorMessage, setErrorMessage] = useState("");
   const [showModal, setShowModal] = useState(false);
   const [editingShipment, setEditingShipment] = useState<Shipment | null>(null);
-  const [statusFilter, setStatusFilter] = useState("출고대기");
+  const [statusFilter, setStatusFilter] = usePersistentState(
+    "erp:table:shipments:status",
+    "출고대기"
+  );
+  const [searchQuery, setSearchQuery] = usePersistentState(
+    "erp:table:shipments:search",
+    ""
+  );
+  const [sortKey, setSortKey] = usePersistentState(
+    "erp:table:shipments:sort-key",
+    "shipment_date"
+  );
+  const [sortDirection, setSortDirection] =
+    usePersistentState<SortDirection>(
+      "erp:table:shipments:sort-direction",
+      "desc"
+    );
+  const [pageSize, setPageSize] = usePersistentState(
+    "erp:table:shipments:page-size",
+    20
+  );
+  const [currentPage, setCurrentPage] = usePersistentState(
+    "erp:table:shipments:page",
+    1
+  );
   const [isSaving, setIsSaving] = useState(false);
 
   const [form, setForm] = useState({
@@ -44,25 +99,35 @@ export default function ShipmentsPage() {
   });
 
   useEffect(() => {
-    loadShipments();
-  }, []);
+    const timer = window.setTimeout(() => {
+      const queryStatus = getShipmentStatusFromQuery();
+      if (queryStatus) setStatusFilter(queryStatus);
+      void loadShipments();
+    }, 0);
+
+    return () => window.clearTimeout(timer);
+  }, [setStatusFilter]);
 
   function getToday() {
     return new Date().toISOString().slice(0, 10);
   }
 
   async function loadShipments() {
+    setIsLoading(true);
+    setErrorMessage("");
     const { data, error } = await supabase
       .from("shipments")
       .select("*")
       .order("id", { ascending: false });
 
     if (error) {
-      alert(error.message);
+      setErrorMessage(error.message);
+      setIsLoading(false);
       return;
     }
 
     setShipments(data || []);
+    setIsLoading(false);
   }
 
   function resetForm() {
@@ -87,6 +152,13 @@ export default function ShipmentsPage() {
   }
 
   function openEditModal(shipment: Shipment) {
+    void recordRecentWorkspaceItem({
+      key: `shipment-${shipment.id}`,
+      type: "shipment",
+      name: `출고 #${shipment.id} · ${shipment.item_name}`,
+      href: "/shipments",
+      project_id: shipment.project_id,
+    });
     setEditingShipment(shipment);
     setForm({
       site_name: shipment.site_name || "",
@@ -107,7 +179,7 @@ export default function ShipmentsPage() {
     if (isSaving) return;
 
     if (!form.site_name.trim() || !form.item_name.trim()) {
-      alert("현장명과 품목은 필수입니다.");
+      toast.warning("현장명과 품목은 필수입니다.");
       return;
     }
 
@@ -127,31 +199,63 @@ export default function ShipmentsPage() {
     };
 
     if (editingShipment) {
+      const changes = createAuditChanges(
+        editingShipment as unknown as Record<string, unknown>,
+        saveData,
+        SHIPMENT_AUDIT_FIELDS
+      );
+
+      if (changes.length === 0) {
+        setShowModal(false);
+        setEditingShipment(null);
+        setIsSaving(false);
+        return;
+      }
+
       const { error } = await supabase
         .from("shipments")
         .update(saveData)
         .eq("id", editingShipment.id);
 
       if (error) {
-        alert(error.message);
+        toast.error(error.message);
         setIsSaving(false);
         return;
       }
+
+      await logActivity({
+        type: "shipment_update",
+        title: `출고 수정 · ${changes.length}개 항목 변경`,
+        description: `${saveData.site_name} ${saveData.item_name} 출고 정보를 수정했습니다.`,
+        projectId: editingShipment.project_id,
+        targetType: "shipment",
+        targetId: editingShipment.id,
+        metadata: { changes },
+      });
     } else {
-      const { error } = await supabase.from("shipments").insert([
+      const { data, error } = await supabase.from("shipments").insert([
         {
           ...saveData,
           project_id: null,
           task_id: null,
           status: "출고대기",
         },
-      ]);
+      ]).select("id").single();
 
       if (error) {
-        alert(error.message);
+        toast.error(error.message);
         setIsSaving(false);
         return;
       }
+
+      await logActivity({
+        type: "shipment_create",
+        title: "출고 생성",
+        description: `${saveData.site_name} ${saveData.item_name} 출고를 생성했습니다.`,
+        projectId: null,
+        targetType: "shipment",
+        targetId: data.id,
+      });
     }
 
     setShowModal(false);
@@ -165,7 +269,7 @@ export default function ShipmentsPage() {
     const targetShipment = shipments.find((shipment) => shipment.id === id);
 
     if (!targetShipment) {
-      alert("출고 정보를 찾을 수 없습니다.");
+      toast.warning("출고 정보를 찾을 수 없습니다.");
       return;
     }
 
@@ -173,6 +277,18 @@ export default function ShipmentsPage() {
       status === "출고완료"
         ? targetShipment.shipment_date || getToday()
         : targetShipment.shipment_date;
+    const updatedShipment = {
+      ...targetShipment,
+      status,
+      shipment_date: nextShipmentDate,
+    };
+    const changes = createAuditChanges(
+      targetShipment as unknown as Record<string, unknown>,
+      updatedShipment as unknown as Record<string, unknown>,
+      SHIPMENT_AUDIT_FIELDS
+    );
+
+    if (changes.length === 0) return;
 
     const { error } = await supabase
       .from("shipments")
@@ -183,7 +299,7 @@ export default function ShipmentsPage() {
       .eq("id", id);
 
     if (error) {
-      alert(error.message);
+      toast.error(error.message);
       return;
     }
 
@@ -200,7 +316,26 @@ export default function ShipmentsPage() {
     );
 
     if (status === "출고완료") {
+      await logActivity({
+        type: "shipment_complete",
+        title: `출고 완료 · ${changes.length}개 항목 변경`,
+        description: `${targetShipment.site_name} ${targetShipment.item_name} 출고를 완료했습니다.`,
+        projectId: targetShipment.project_id,
+        targetType: "shipment",
+        targetId: targetShipment.id,
+        metadata: { changes },
+      });
       setStatusFilter("출고완료");
+    } else {
+      await logActivity({
+        type: "shipment_update",
+        title: `출고 상태 변경 · ${changes.length}개 항목 변경`,
+        description: `${targetShipment.item_name} 출고 상태를 ${status}(으)로 변경했습니다.`,
+        projectId: targetShipment.project_id,
+        targetType: "shipment",
+        targetId: targetShipment.id,
+        metadata: { changes },
+      });
     }
   }
 
@@ -229,12 +364,39 @@ export default function ShipmentsPage() {
   ).length;
 
   const filteredShipments = shipments.filter((shipment) => {
-    if (statusFilter === "전체") return true;
-    if (statusFilter === "출고대기") {
-      return shipment.status === "출고대기" || !shipment.status;
-    }
-    return shipment.status === statusFilter;
+    const normalizedQuery = searchQuery.trim().toLocaleLowerCase("ko-KR");
+    const matchesSearch =
+      !normalizedQuery ||
+      [shipment.site_name, shipment.item_name, shipment.driver_name]
+        .filter(Boolean)
+        .some((value) =>
+          String(value).toLocaleLowerCase("ko-KR").includes(normalizedQuery)
+        );
+    const matchesStatus =
+      statusFilter === "전체" ||
+      (statusFilter === "오늘 예정"
+        ? shipment.shipment_date === getToday()
+        :
+      (statusFilter === "출고대기"
+        ? shipment.status === "출고대기" || !shipment.status
+        : shipment.status === statusFilter));
+    return matchesSearch && matchesStatus;
   });
+  const sortedShipments = sortRows(
+    filteredShipments,
+    (shipment) => {
+      if (sortKey === "site_name") return shipment.site_name;
+      if (sortKey === "item_name") return shipment.item_name;
+      if (sortKey === "status") return shipment.status;
+      return shipment.shipment_date;
+    },
+    sortDirection
+  );
+  const shipmentPage = paginateRows(
+    sortedShipments,
+    currentPage,
+    pageSize
+  );
 
   return (
     <div className="p-8">
@@ -286,7 +448,7 @@ export default function ShipmentsPage() {
       </div>
 
       <div className="bg-white rounded-xl shadow p-5 mb-6">
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           <div className="font-bold">조회 상태</div>
 
           <select
@@ -300,11 +462,57 @@ export default function ShipmentsPage() {
               </option>
             ))}
           </select>
+          <input
+            value={searchQuery}
+            onChange={(event) => {
+              setSearchQuery(event.target.value);
+              setCurrentPage(1);
+            }}
+            placeholder="현장명, 품목, 기사명 검색"
+            aria-label="출고 검색"
+            className="min-w-64 flex-1 rounded-lg border border-slate-200 px-3 py-2 text-sm"
+          />
         </div>
       </div>
 
       <div className="bg-white rounded-xl shadow p-5">
         <h2 className="text-xl font-bold mb-4">{statusFilter} 출고 내역</h2>
+        {errorMessage ? (
+          <ErrorState
+            message={errorMessage}
+            onRetry={() => void loadShipments()}
+          />
+        ) : isLoading ? (
+          <TableSkeleton rows={7} columns={8} />
+        ) : (
+        <>
+        <TableViewControls
+          sortKey={sortKey}
+          sortDirection={sortDirection}
+          sortOptions={[
+            { value: "shipment_date", label: "출고일" },
+            { value: "site_name", label: "현장명" },
+            { value: "item_name", label: "품목" },
+            { value: "status", label: "상태" },
+          ]}
+          pageSize={pageSize}
+          page={shipmentPage.page}
+          totalPages={shipmentPage.totalPages}
+          totalItems={filteredShipments.length}
+          onSortKeyChange={(value) => {
+            setSortKey(value);
+            setCurrentPage(1);
+          }}
+          onSortDirectionChange={(value) => {
+            setSortDirection(value);
+            setCurrentPage(1);
+          }}
+          onPageSizeChange={(value) => {
+            setPageSize(value);
+            setCurrentPage(1);
+          }}
+          onPageChange={setCurrentPage}
+        />
 
         <table className="w-full">
           <thead>
@@ -324,7 +532,7 @@ export default function ShipmentsPage() {
           </thead>
 
           <tbody>
-            {filteredShipments.map((shipment) => (
+            {shipmentPage.rows.map((shipment) => (
               <tr key={shipment.id} className="border-b">
                 <td className="p-2">{shipment.site_name}</td>
                 <td className="p-2">{shipment.item_name}</td>
@@ -367,13 +575,24 @@ export default function ShipmentsPage() {
 
             {filteredShipments.length === 0 && (
               <tr>
-                <td colSpan={11} className="p-6 text-center text-gray-500">
-                  조회된 출고 내역이 없습니다.
+                <td colSpan={11} className="p-0">
+                  <EmptyState
+                    title="조건에 맞는 출고가 없습니다."
+                    message="필터를 변경하거나 새 출고를 등록해 보세요."
+                    icon={<Truck size={26} />}
+                    action={
+                      <Button size="sm" variant="primary" onClick={openAddModal}>
+                        출고 등록
+                      </Button>
+                    }
+                  />
                 </td>
               </tr>
             )}
           </tbody>
         </table>
+        </>
+        )}
       </div>
 
       {showModal && (
