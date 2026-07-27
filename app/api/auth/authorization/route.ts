@@ -1,4 +1,5 @@
 import { createSupabaseServerClient } from "@/lib/supabase-server";
+import { getEmployeeByAuth } from "@/lib/auth";
 
 export async function GET() {
   const supabase = await createSupabaseServerClient();
@@ -10,22 +11,12 @@ export async function GET() {
     return Response.json({ status: "unauthenticated" }, { status: 401 });
   }
 
-  const query = supabase
-    .from("employees")
-    .select("approval_status, active, role")
-    .eq("auth_user_id", user.id);
-
-  const byAuthUser = await query.maybeSingle();
-  let employee = byAuthUser.data;
-
-  if (!employee && user.email) {
-    const byEmail = await supabase
-      .from("employees")
-      .select("approval_status, active, role")
-      .eq("email", user.email)
-      .maybeSingle();
-    employee = byEmail.data;
+  const employeeResult = await getEmployeeByAuth(supabase, user);
+  if (employeeResult.error) {
+    console.error("authorization employee lookup error:", employeeResult.error);
+    return Response.json({ status: "authorization_error" }, { status: 500 });
   }
+  const employee = employeeResult.employee;
 
   if (!employee) {
     return Response.json({ status: "missing_employee" }, { status: 403 });

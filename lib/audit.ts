@@ -107,6 +107,8 @@ export const PROJECT_AUDIT_FIELDS: AuditFieldDefinition[] = [
   },
   { field: "start_date", label: "시작일", type: "date" },
   { field: "end_date", label: "종료일", type: "date" },
+  { field: "quantity", label: "프로젝트 수량", type: "number" },
+  { field: "quantity_unit", label: "수량 단위" },
 ];
 
 export const TASK_AUDIT_FIELDS: AuditFieldDefinition[] = [

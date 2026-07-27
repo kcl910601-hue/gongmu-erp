@@ -1,4 +1,4 @@
-import { supabase } from "@/lib/supabase";
+import type { SupabaseClient, User } from "@supabase/supabase-js";
 
 export type CurrentEmployee = {
   id: number;
@@ -7,28 +7,49 @@ export type CurrentEmployee = {
   position: string | null;
   role: string | null;
   active: boolean | null;
+  approval_status: string | null;
+  auth_user_id: string | null;
 };
 
-export async function getCurrentEmployee(): Promise<CurrentEmployee | null> {
-  const {
-    data: { session },
-  } = await supabase.auth.getSession();
+type EmployeeAuthClient = Pick<SupabaseClient, "from">;
 
-  if (!session?.user?.email) {
-    return null;
-  }
-
-  const { data, error } = await supabase
+export async function getEmployeeByAuth(
+  client: EmployeeAuthClient,
+  user: User
+): Promise<{ employee: CurrentEmployee | null; error: string | null }> {
+  const byAuthUser = await client
     .from("employees")
-    .select("id, name, email, position, role, active")
-    .eq("email", session.user.email)
+    .select("id, name, email, position, role, active, approval_status, auth_user_id")
+    .eq("auth_user_id", user.id)
     .maybeSingle();
 
-  if (error || !data) {
-    return null;
+  if (byAuthUser.error) {
+    return { employee: null, error: byAuthUser.error.message };
+  }
+  if (byAuthUser.data) {
+    return { employee: byAuthUser.data as CurrentEmployee, error: null };
   }
 
-  return data;
+  if (!user.email) return { employee: null, error: null };
+
+  const byEmail = await client
+    .from("employees")
+    .select("id, name, email, position, role, active, approval_status, auth_user_id")
+    .eq("email", user.email)
+    .maybeSingle();
+
+  return {
+    employee: byEmail.error ? null : (byEmail.data as CurrentEmployee | null),
+    error: byEmail.error?.message ?? null,
+  };
+}
+
+export async function getCurrentEmployee(): Promise<CurrentEmployee | null> {
+  const { supabase } = await import("@/lib/supabase");
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return null;
+  const result = await getEmployeeByAuth(supabase, user);
+  return result.employee;
 }
 
 export function isAdmin(employee: CurrentEmployee | null) {
@@ -44,5 +65,5 @@ export function isViewer(employee: CurrentEmployee | null) {
 }
 
 export function isMember(employee: CurrentEmployee | null) {
-  return employee?.role === "member";
+  return employee?.role === "staff" || employee?.role === "member";
 }

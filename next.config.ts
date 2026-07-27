@@ -6,6 +6,15 @@ const nextConfig: NextConfig = {
   turbopack: {
     root: process.cwd(),
   },
+  async redirects() {
+    return [
+      {
+        source: "/employees",
+        destination: "/settings/employees",
+        permanent: false,
+      },
+    ];
+  },
 };
 
 export default nextConfig;

@@ -133,19 +133,24 @@ export function readFavoriteProjects(userScope: string | null) {
 }
 
 export async function hydrateFavoriteProjectsFromDatabase(
-  userScope: string | null
+  userScope: string | null,
+  authUserId?: string | null
 ) {
   if (!userScope) return [];
 
-  const {
-    data: { session },
-  } = await supabase.auth.getSession();
-  if (!session?.user.id) return readFavoriteProjects(userScope);
+  let resolvedAuthUserId = authUserId;
+  if (resolvedAuthUserId === undefined) {
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+    resolvedAuthUserId = session?.user.id ?? null;
+  }
+  if (!resolvedAuthUserId) return readFavoriteProjects(userScope);
 
   const { data: favoriteRows, error: favoriteError } = await supabase
     .from("user_favorite_projects")
     .select("project_id, created_at")
-    .eq("auth_user_id", session.user.id)
+    .eq("auth_user_id", resolvedAuthUserId)
     .order("created_at", { ascending: false })
     .limit(MAX_FAVORITE_PROJECTS);
 

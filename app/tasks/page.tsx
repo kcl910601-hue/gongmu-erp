@@ -4,8 +4,14 @@ import Link from "next/link";
 import { ListTodo } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
+import { getActiveEmployeeOptionsByFunction } from "@/lib/employee-master-data";
 import { toast } from "@/lib/toast";
-import { isTaskCompleted } from "@/lib/status";
+import {
+  isTaskCompleted,
+  isTaskInProgress,
+  isTaskPending,
+  normalizeTaskStatus,
+} from "@/lib/status";
 import {
   deleteTask,
   updateTask,
@@ -191,10 +197,10 @@ export default function TasksPage() {
   function isTodayTodo(task: TaskWithProject) {
     const today = getToday();
 
-    if (task.status === "완료") return false;
+    if (isTaskCompleted(task.status)) return false;
 
     return (
-      task.status === "진행중" ||
+      isTaskInProgress(task.status) ||
       task.start_date === today ||
       task.due_date === today ||
       (task.due_date !== null && task.due_date < today) ||
@@ -205,7 +211,7 @@ export default function TasksPage() {
   function getTaskDueLabel(task: TaskWithProject) {
     const today = getToday();
 
-    if (task.status === "완료") {
+    if (isTaskCompleted(task.status)) {
       return {
         text: "완료",
         className: "text-green-600 font-bold",
@@ -233,7 +239,7 @@ export default function TasksPage() {
       };
     }
 
-    if (task.status === "진행중") {
+    if (isTaskInProgress(task.status)) {
       return {
         text: "진행중",
         className: "text-blue-600 font-bold",
@@ -285,6 +291,11 @@ export default function TasksPage() {
     });
 
     setTasks(mergedTasks);
+    const employeeResult = await getActiveEmployeeOptionsByFunction("operations");
+    if (employeeResult.error) {
+      toast.error(employeeResult.error);
+    }
+    setAvailableAssignees(employeeResult.data.map((employee) => employee.value));
     setIsLoading(false);
   }
 
@@ -314,14 +325,6 @@ export default function TasksPage() {
       setIsUpdating(false);
     }
 
-    const { data: employeeData } = await supabase
-      .from("employees")
-      .select("name")
-      .eq("active", true)
-      .order("name");
-    setAvailableAssignees(
-      (employeeData ?? []).map((employee) => employee.name)
-    );
   }
 
   function clearTaskSelection() {
@@ -545,7 +548,8 @@ export default function TasksPage() {
       assigneeFilter === "전체" || task.assignee === assigneeFilter;
 
     const statusMatched =
-      statusFilter === "전체" || task.status === statusFilter;
+      statusFilter === "전체" ||
+      normalizeTaskStatus(task.status) === normalizeTaskStatus(statusFilter);
 
     const typeMatched = typeFilter === "전체" || task.task_type === typeFilter;
 
@@ -555,18 +559,18 @@ export default function TasksPage() {
       workMatched = isTodayTodo(task);
     } else if (workFilter === "지연") {
       workMatched =
-        task.status !== "완료" &&
+        !isTaskCompleted(task.status) &&
         task.due_date !== null &&
         task.due_date < today;
     } else if (workFilter === "오늘 마감") {
-      workMatched = task.status !== "완료" && task.due_date === today;
+      workMatched = !isTaskCompleted(task.status) && task.due_date === today;
     } else if (workFilter === "오늘 완료") {
       workMatched =
         isTaskCompleted(task.status) && task.completed_date === today;
     } else if (workFilter === "진행중") {
-      workMatched = task.status === "진행중";
+      workMatched = isTaskInProgress(task.status);
     } else if (workFilter === "완료") {
-      workMatched = task.status === "완료";
+      workMatched = isTaskCompleted(task.status);
     }
 
     return (
@@ -629,22 +633,22 @@ export default function TasksPage() {
   };
 
   const waitingCount = filteredTasks.filter(
-    (task) => !task.status || task.status === "대기"
+    (task) => !task.status || isTaskPending(task.status)
   ).length;
 
   const activeCount = filteredTasks.filter(
-    (task) => task.status === "진행중"
+    (task) => isTaskInProgress(task.status)
   ).length;
 
   const completedCount = filteredTasks.filter(
-    (task) => task.status === "완료"
+    (task) => isTaskCompleted(task.status)
   ).length;
 
   const todayTodoCount = tasks.filter((task) => isTodayTodo(task)).length;
 
   const delayedCount = tasks.filter(
     (task) =>
-      task.status !== "완료" &&
+      !isTaskCompleted(task.status) &&
       task.due_date !== null &&
       task.due_date < getToday()
   ).length;

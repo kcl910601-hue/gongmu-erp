@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import {
   CalendarDays,
@@ -19,28 +18,29 @@ import {
   type IntegratedProject,
 } from "@/components/gantt/IntegratedProjectGantt";
 import { GanttTaskDetailModal } from "@/components/gantt/GanttTaskDetailModal";
+import { usePermission } from "@/hooks/usePermission";
 import {
   getTaskStatusLabel,
   isTaskCompleted,
   isTaskInProgress,
 } from "@/lib/status";
+import { PROJECT_SELECT_FIELDS } from "@/lib/projects";
+import { persistRecalculatedTaskOrders } from "@/lib/task-ordering";
 
 type Project = IntegratedProject & {
   completion_due_date: string | null;
-};
-
-type Shipment = {
-  id: number;
-  site_name: string;
-  item_name: string;
-  shipment_date: string | null;
-  status: string | null;
 };
 
 type Task = {
   id: number;
   project_id: number;
   project_section_id?: number | null;
+  project_assembly_vendor_id: number | null;
+  project_assembly_vendor?: {
+    id: number;
+    allocated_quantity: number | null;
+    organization: { name: string } | null;
+  } | null;
   task_name: string | null;
   task_type: string | null;
   assignee: string | null;
@@ -49,6 +49,7 @@ type Task = {
   due_date: string | null;
   completed_date: string | null;
   task_order: number | null;
+  created_at: string | null;
 };
 
 type EmployeeProfile = {
@@ -61,20 +62,138 @@ type QuickFilter = "전체" | "내 업무" | "지연" | "오늘" | "이번 주";
 type CalendarItem = {
   id: string;
   date: string;
-  type: "준공예정" | "출고예정" | "업무마감" | "업무완료";
+  startDate?: string;
+  endDate?: string;
+  type: "업무일정";
   title: string;
   status: string | null;
   assignee: string;
   projectName?: string;
+  assemblyVendorName?: string;
   taskType?: string | null;
   href?: string;
 };
 
+type CalendarWeekSegment = {
+  item: CalendarItem;
+  weekIndex: number;
+  startColumn: number;
+  span: number;
+  laneIndex: number;
+  isRangeStart: boolean;
+  isRangeEnd: boolean;
+};
+
+type CalendarWeekLayout = {
+  days: Array<string | null>;
+  segments: CalendarWeekSegment[];
+  laneCount: number;
+};
+
+const CALENDAR_PROJECT_NAME_MAX_LENGTH = 18;
+
+function getTaskAssemblyVendorName(task: Task) {
+  return task.project_assembly_vendor?.organization?.name?.trim() || "업체 미지정";
+}
+
+function getTaskCalendarTitle(project: Project | undefined, task: Task) {
+  const projectName = project?.project_name.trim() || "프로젝트 미지정";
+  const projectIdentifier =
+    projectName.length <= CALENDAR_PROJECT_NAME_MAX_LENGTH
+      ? projectName
+      : project?.project_code?.trim() || `${projectName.slice(0, 12)}…`;
+
+  return `${projectIdentifier} · ${getTaskAssemblyVendorName(task)} · ${task.task_name?.trim() || "업무명 없음"}`;
+}
+
+function splitMonthIntoWeeks(days: Array<string | null>) {
+  const weeks: Array<Array<string | null>> = [];
+
+  for (let index = 0; index < days.length; index += 7) {
+    weeks.push(days.slice(index, index + 7));
+  }
+
+  return weeks;
+}
+
+function getItemRange(item: CalendarItem) {
+  const start = item.startDate || item.endDate || item.date;
+  const end = item.endDate || item.startDate || item.date;
+
+  return start <= end ? { start, end } : { start: end, end: start };
+}
+
+function buildWeekSegments(
+  items: CalendarItem[],
+  weeks: Array<Array<string | null>>
+): CalendarWeekLayout[] {
+  return weeks.map((days, weekIndex) => {
+    const visibleDays = days.filter((date): date is string => date !== null);
+    const weekStart = visibleDays[0];
+    const weekEnd = visibleDays[visibleDays.length - 1];
+
+    if (!weekStart || !weekEnd) {
+      return { days, segments: [], laneCount: 0 };
+    }
+
+    const segments = items
+      .flatMap((item) => {
+        const range = getItemRange(item);
+        if (range.end < weekStart || range.start > weekEnd) return [];
+
+        const segmentStart = range.start < weekStart ? weekStart : range.start;
+        const segmentEnd = range.end > weekEnd ? weekEnd : range.end;
+        const startIndex = days.indexOf(segmentStart);
+        const endIndex = days.indexOf(segmentEnd);
+        if (startIndex < 0 || endIndex < startIndex) return [];
+
+        return [{
+          item,
+          weekIndex,
+          startColumn: startIndex + 1,
+          span: endIndex - startIndex + 1,
+          laneIndex: 0,
+          isRangeStart: segmentStart === range.start,
+          isRangeEnd: segmentEnd === range.end,
+        }];
+      })
+      .sort((a, b) =>
+        a.startColumn - b.startColumn ||
+        b.span - a.span ||
+        a.item.id.localeCompare(b.item.id)
+      );
+
+    const laneEndColumns: number[] = [];
+    const assignedSegments = segments.map((segment) => {
+      const segmentEndColumn = segment.startColumn + segment.span - 1;
+      let laneIndex = laneEndColumns.findIndex(
+        (lastEndColumn) => lastEndColumn < segment.startColumn
+      );
+
+      if (laneIndex === -1) {
+        laneIndex = laneEndColumns.length;
+        laneEndColumns.push(segmentEndColumn);
+      } else {
+        laneEndColumns[laneIndex] = segmentEndColumn;
+      }
+
+      return { ...segment, laneIndex };
+    });
+
+    return {
+      days,
+      segments: assignedSegments,
+      laneCount: laneEndColumns.length,
+    };
+  });
+}
+
 const quickFilters: QuickFilter[] = ["전체", "내 업무", "지연", "오늘", "이번 주"];
-const typeList = ["전체", "준공예정", "출고예정", "업무완료"];
+const typeList = ["전체", "업무일정"];
 const viewList = ["달력 보기", "타임라인 보기", "간트 보기"];
 
 export default function CalendarPage() {
+  const { can } = usePermission();
   function padDatePart(value: number) {
     return String(value).padStart(2, "0");
   }
@@ -102,11 +221,10 @@ export default function CalendarPage() {
   const [items, setItems] = useState<CalendarItem[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
-  const [selectedItem, setSelectedItem] = useState<CalendarItem | null>(null);
   const [selectedTask, setSelectedTask] = useState<GanttTaskDetail | null>(null);
-  const [editDate, setEditDate] = useState("");
   const [quickFilter, setQuickFilter] = useState<QuickFilter>("전체");
-  const [excludeCompleted, setExcludeCompleted] = useState(false);
+  const [showCompleted, setShowCompleted] = useState(false);
+  const [showCompletedProjects, setShowCompletedProjects] = useState(false);
   const [currentAssignee, setCurrentAssignee] = useState<string | null>(null);
   const [typeFilter, setTypeFilter] = useState("전체");
   const [assigneeFilter, setAssigneeFilter] = useState("전체");
@@ -118,7 +236,6 @@ export default function CalendarPage() {
     getLocalDateValue()
   );
   const [isLoading, setIsLoading] = useState(true);
-  const [isSavingDate, setIsSavingDate] = useState(false);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -164,9 +281,7 @@ export default function CalendarPage() {
 
     const { data: projectData, error: projectError } = await supabase
       .from("projects")
-      .select(
-        "id, project_code, project_name, assembly_vendor, salesperson, task_manager, start_date, end_date, completion_due_date, status"
-      );
+      .select(PROJECT_SELECT_FIELDS);
 
     if (projectError) {
       alert(projectError.message);
@@ -174,20 +289,10 @@ export default function CalendarPage() {
       return;
     }
 
-    const { data: shipmentData, error: shipmentError } = await supabase
-      .from("shipments")
-      .select("id, site_name, item_name, shipment_date, status");
-
-    if (shipmentError) {
-      alert(shipmentError.message);
-      setIsLoading(false);
-      return;
-    }
-
     const { data: taskData, error: taskError } = await supabase
       .from("tasks")
       .select(
-        "id, project_id, task_order, task_name, task_type, assignee, status, start_date, due_date, completed_date"
+        "id, project_id, project_section_id, project_assembly_vendor_id, task_order, task_name, task_type, assignee, status, start_date, due_date, completed_date, created_at, project_assembly_vendor:project_assembly_vendors(id, allocated_quantity, organization:organizations(name))"
       );
 
     if (taskError) {
@@ -197,91 +302,49 @@ export default function CalendarPage() {
     }
 
     const calendarProjects = (projectData || []) as Project[];
-    const calendarTasks = (taskData || []) as Task[];
+    const calendarTasks = (taskData || []) as unknown as Task[];
 
     setProjects(calendarProjects);
     setTasks(calendarTasks);
 
-    const projectItems: CalendarItem[] = calendarProjects
-      .filter((project) => project.completion_due_date)
-      .map((project) => ({
-        id: `project-${project.id}`,
-        date: project.completion_due_date as string,
-        type: "준공예정",
-        title: project.project_name,
-        status: project.status,
-        assignee: project.task_manager || "미지정",
-        href: `/projects/${project.id}`,
-      }));
-
-    const shipmentItems: CalendarItem[] = ((shipmentData || []) as Shipment[])
-      .filter((shipment) => shipment.shipment_date)
-      .map((shipment) => ({
-        id: `shipment-${shipment.id}`,
-        date: shipment.shipment_date as string,
-        type: "출고예정",
-        title: `${shipment.site_name} / ${shipment.item_name}`,
-        status: shipment.status,
-        assignee: "미지정",
-        href: "/shipments",
-      }));
-
-    const projectNameById = new Map(
-      calendarProjects.map((project) => [
-        project.id,
-        project.project_name,
-      ])
+    const projectById = new Map(
+      calendarProjects.map((project) => [project.id, project])
     );
 
-    const taskDueItems: CalendarItem[] = calendarTasks
-      .filter((task) => task.due_date)
-      .map((task) => ({
-        id: `task-due-${task.id}`,
-        date: task.due_date as string,
-        type: "업무마감",
-        title: task.task_name || "-",
+    const taskItems: CalendarItem[] = calendarTasks.flatMap((task) => {
+      const project = projectById.get(task.project_id);
+      const projectName = project?.project_name || "-";
+      const title = getTaskCalendarTitle(project, task);
+      const common = {
+        title,
         status: task.status,
         assignee: task.assignee || "미지정",
-        projectName: projectNameById.get(task.project_id) || "-",
+        projectName,
+        assemblyVendorName: getTaskAssemblyVendorName(task),
         taskType: task.task_type,
         href: `/projects/${task.project_id}`,
-      }));
+      };
+      const startDate = task.start_date || task.due_date;
+      const endDate = task.due_date || task.start_date;
+      if (!startDate || !endDate) return [];
 
-    const taskItems: CalendarItem[] = calendarTasks
-      .filter((task) => task.completed_date)
-      .map((task) => ({
+      return [{
+        ...common,
         id: `task-${task.id}`,
-        date: task.completed_date as string,
-        type: "업무완료",
-        title: `${task.task_name || "-"} / ${task.task_type || "-"}`,
-        status: "완료",
-        assignee: task.assignee || "미지정",
-        projectName: projectNameById.get(task.project_id) || "-",
-        taskType: task.task_type,
-        href: `/projects/${task.project_id}`,
-      }));
+        date: endDate,
+        startDate,
+        endDate,
+        type: "업무일정" as const,
+      }];
+    });
 
-    const mergedItems = [
-      ...projectItems,
-      ...shipmentItems,
-      ...taskDueItems,
-      ...taskItems,
-    ].sort((a, b) => a.date.localeCompare(b.date));
+    const calendarItems = taskItems.sort((a, b) => a.date.localeCompare(b.date));
 
-    setItems(mergedItems);
+    setItems(calendarItems);
     setIsLoading(false);
   }
 
-  function openItemModal(item: CalendarItem) {
-    setSelectedItem(item);
-    setEditDate(item.date);
-  }
-
   function getTaskIdFromCalendarItem(item: CalendarItem) {
-    if (item.id.startsWith("task-due-")) {
-      return Number(item.id.replace("task-due-", ""));
-    }
-
     if (item.id.startsWith("task-")) {
       return Number(item.id.replace("task-", ""));
     }
@@ -321,6 +384,7 @@ export default function CalendarPage() {
       taskId: task.id,
       projectId: task.project_id,
       projectName: project?.project_name || item.projectName || "-",
+      assemblyVendorName: getTaskAssemblyVendorName(task),
       projectCode: project?.project_code || null,
       taskName: task.task_name,
       taskType: task.task_type,
@@ -334,71 +398,8 @@ export default function CalendarPage() {
     });
   }
 
-  async function updateCalendarDate() {
-    if (!selectedItem) return;
-
-    if (!editDate) {
-      alert("변경할 날짜를 선택하세요.");
-      return;
-    }
-
-    if (selectedItem.type === "업무완료") {
-      alert("업무완료일은 업무 상태 변경으로 관리하는 값입니다.");
-      return;
-    }
-
-    setIsSavingDate(true);
-
-    let error = null;
-
-    if (selectedItem.type === "준공예정") {
-      const projectId = Number(selectedItem.id.replace("project-", ""));
-
-      const result = await supabase
-        .from("projects")
-        .update({
-          completion_due_date: editDate,
-        })
-        .eq("id", projectId);
-
-      error = result.error;
-    }
-
-    if (selectedItem.type === "출고예정") {
-      const shipmentId = Number(selectedItem.id.replace("shipment-", ""));
-
-      const result = await supabase
-        .from("shipments")
-        .update({
-          shipment_date: editDate,
-        })
-        .eq("id", shipmentId);
-
-      error = result.error;
-    }
-
-    if (error) {
-      alert(error.message);
-      setIsSavingDate(false);
-      return;
-    }
-
-    setSelectedItem(null);
-    setEditDate("");
-    setIsSavingDate(false);
-    await loadCalendar();
-  }
-
   function getTypeStyle(type: string) {
-    if (type === "준공예정") {
-      return "bg-blue-100 text-blue-700 border-blue-300";
-    }
-
-    if (type === "출고예정") {
-      return "bg-yellow-100 text-yellow-700 border-yellow-300";
-    }
-
-    if (type === "업무마감") {
+    if (type === "업무일정") {
       return "bg-slate-50 text-slate-700 border-slate-200";
     }
 
@@ -412,15 +413,15 @@ export default function CalendarPage() {
   function matchesTypeFilter(item: CalendarItem) {
     if (typeFilter === "전체") return true;
 
-    if (typeFilter === "업무완료") {
-      return item.type === "업무마감" || item.type === "업무완료";
+    if (typeFilter === "업무일정") {
+      return item.type === "업무일정";
     }
 
     return item.type === typeFilter;
   }
 
   function isCompletedFilterTarget(item: CalendarItem) {
-    return item.type === "업무완료" || isTaskCompleted(item.status);
+    return isTaskCompleted(item.status);
   }
 
   function getTaskDueVariant(item: CalendarItem): BadgeVariant {
@@ -471,7 +472,7 @@ export default function CalendarPage() {
   }
 
   function getCalendarItemPriority(item: CalendarItem) {
-    if (item.type !== "업무마감") return 2;
+    if (item.type !== "업무일정") return 3;
     if (isTaskCompleted(item.status)) return 4;
     if (item.date < today) return 1;
     if (item.date === today) return 2;
@@ -500,10 +501,8 @@ export default function CalendarPage() {
       return Boolean(currentAssignee) && item.assignee === currentAssignee;
     }
 
-    if (item.type !== "업무마감") return false;
-
     if (quickFilter === "지연") {
-      return !isTaskCompleted(item.status) && item.date < today;
+      return item.type === "업무일정" && !isTaskCompleted(item.status) && item.date < today;
     }
 
     if (quickFilter === "오늘") {
@@ -542,6 +541,13 @@ export default function CalendarPage() {
     setSelectedDate(today);
   }
 
+  function changeViewMode(nextView: string) {
+    setViewMode(nextView);
+    if (nextView === "달력 보기") {
+      goToday();
+    }
+  }
+
   function getCalendarDays() {
     const [year, month] = currentMonth.split("-").map(Number);
     const firstDate = new Date(year, month - 1, 1);
@@ -578,26 +584,28 @@ export default function CalendarPage() {
     const typeMatched = matchesTypeFilter(item);
     const assigneeMatched =
       assigneeFilter === "전체" || item.assignee === assigneeFilter;
-    const completedMatched =
-      !excludeCompleted || !isCompletedFilterTarget(item);
 
-    return quickMatched && typeMatched && assigneeMatched && completedMatched;
+    return quickMatched && typeMatched && assigneeMatched;
   });
+
+  const calendarVisibleItems = filteredItems.filter((item) =>
+    showCompleted || !isCompletedFilterTarget(item)
+  );
+  const currentViewItems = viewMode === "달력 보기" ? calendarVisibleItems : filteredItems;
 
   const ganttTaskIds = useMemo(
     () =>
       new Set(
         filteredItems
-          .filter((item) => item.id.startsWith("task-due-"))
-          .map((item) => Number(item.id.replace("task-due-", "")))
+          .map(getTaskIdFromCalendarItem)
+          .filter((taskId): taskId is number => taskId !== null && !Number.isNaN(taskId))
       ),
     [filteredItems]
   );
 
   function handleGanttTaskUpdated(updatedTask: Task) {
-    const projectName =
-      projects.find((project) => project.id === updatedTask.project_id)
-        ?.project_name || "-";
+    const project = projects.find((project) => project.id === updatedTask.project_id);
+    const projectName = project?.project_name || "-";
     void recordRecentTask({
       task_id: updatedTask.id,
       project_id: updatedTask.project_id,
@@ -608,34 +616,13 @@ export default function CalendarPage() {
       status: updatedTask.status,
       due_date: updatedTask.due_date,
     });
-    const taskDueItem: CalendarItem | null = updatedTask.due_date
-      ? {
-          id: `task-due-${updatedTask.id}`,
-          date: updatedTask.due_date,
-          type: "업무마감",
-          title: updatedTask.task_name || "-",
-          status: updatedTask.status,
-          assignee: updatedTask.assignee || "미지정",
-          projectName,
-          taskType: updatedTask.task_type,
-          href: `/projects/${updatedTask.project_id}`,
-        }
-      : null;
-    const taskCompletedItem: CalendarItem | null = updatedTask.completed_date
-      ? {
-          id: `task-${updatedTask.id}`,
-          date: updatedTask.completed_date,
-          type: "업무완료",
-          title: `${updatedTask.task_name || "-"} / ${
-            updatedTask.task_type || "-"
-          }`,
-          status: "완료",
-          assignee: updatedTask.assignee || "미지정",
-          projectName,
-          taskType: updatedTask.task_type,
-          href: `/projects/${updatedTask.project_id}`,
-        }
-      : null;
+    const taskTitle = getTaskCalendarTitle(project, updatedTask);
+    const taskScheduleItems: CalendarItem[] = [];
+    const taskStartDate = updatedTask.start_date || updatedTask.due_date;
+    const taskEndDate = updatedTask.due_date || updatedTask.start_date;
+    if (taskStartDate && taskEndDate) {
+      taskScheduleItems.push({ id: `task-${updatedTask.id}`, date: taskEndDate, startDate: taskStartDate, endDate: taskEndDate, type: "업무일정", title: taskTitle, status: updatedTask.status, assignee: updatedTask.assignee || "미지정", projectName, assemblyVendorName: getTaskAssemblyVendorName(updatedTask), taskType: updatedTask.task_type, href: `/projects/${updatedTask.project_id}` });
+    }
 
     setTasks((currentTasks) =>
       currentTasks.map((task) =>
@@ -645,14 +632,23 @@ export default function CalendarPage() {
     setItems((currentItems) =>
       [
         ...currentItems.filter(
-          (item) =>
-            item.id !== `task-due-${updatedTask.id}` &&
-            item.id !== `task-${updatedTask.id}`
-        ),
-        ...(taskDueItem ? [taskDueItem] : []),
-        ...(taskCompletedItem ? [taskCompletedItem] : []),
+          (item) => item.id !== `task-${updatedTask.id}`
+          ),
+        ...taskScheduleItems,
       ].sort((a, b) => a.date.localeCompare(b.date))
     );
+  }
+
+  async function handleCalendarTaskDetailUpdated(updatedTask: Task) {
+    handleGanttTaskUpdated(updatedTask);
+    const orderResult = await persistRecalculatedTaskOrders(
+      tasks.map((task) => task.id === updatedTask.id ? updatedTask : task)
+    );
+    if (orderResult.error) {
+      window.alert(`업무 순서를 저장하지 못했습니다.\n${orderResult.error.message}`);
+      return;
+    }
+    setTasks(orderResult.data);
   }
 
   const groupedItems = useMemo(() => {
@@ -669,28 +665,22 @@ export default function CalendarPage() {
     return Object.entries(grouped).sort(([a], [b]) => a.localeCompare(b));
   }, [filteredItems]);
 
-  function getDateItems(date: string) {
-    return filteredItems
-      .filter((item) => item.date === date)
-      .sort((a, b) => {
-        const priorityDiff =
-          getCalendarItemPriority(a) - getCalendarItemPriority(b);
-
-        if (priorityDiff !== 0) return priorityDiff;
-
-        return a.title.localeCompare(b.title);
-      });
-  }
-
   function formatKoreanDate(date: string) {
     const [year, month, day] = date.split("-");
     return `${year}년 ${Number(month)}월 ${Number(day)}일`;
   }
 
   const calendarDays = getCalendarDays();
-  const selectedDateTaskItems = filteredItems
-    .filter(
-      (item) => item.date === selectedDate && item.type === "업무마감"
+  const calendarWeekLayouts = buildWeekSegments(
+    calendarVisibleItems,
+    splitMonthIntoWeeks(calendarDays)
+  );
+  const selectedDateTaskItems = calendarVisibleItems
+    .filter((item) =>
+      isTaskCalendarItem(item) &&
+      (item.startDate && item.endDate
+        ? item.startDate <= selectedDate && item.endDate >= selectedDate
+        : item.date === selectedDate)
     )
     .sort((a, b) => {
       const priorityDiff =
@@ -709,8 +699,7 @@ export default function CalendarPage() {
   const hasActiveFilter =
     quickFilter !== "전체" ||
     typeFilter !== "전체" ||
-    assigneeFilter !== "전체" ||
-    excludeCompleted;
+    assigneeFilter !== "전체";
 
   return (
     <div className="min-h-screen bg-slate-50 px-4 py-5 text-slate-900 sm:px-6 lg:px-8">
@@ -748,18 +737,6 @@ export default function CalendarPage() {
                 {filter}
               </Button>
             ))}
-            <Button
-              onClick={() => setExcludeCompleted((current) => !current)}
-              variant={excludeCompleted ? "primary" : "ghost"}
-              size="sm"
-              className={`h-9 rounded-2xl px-3.5 text-sm font-medium transition-colors duration-150 ${
-                excludeCompleted
-                  ? "shadow-sm ring-1 ring-blue-100"
-                  : "border border-transparent text-slate-600 hover:border-slate-200 hover:bg-slate-50 focus-visible:ring-2 focus-visible:ring-blue-100"
-              }`}
-            >
-              완료제외
-            </Button>
           </div>
           <Button
             onClick={loadCalendar}
@@ -772,30 +749,23 @@ export default function CalendarPage() {
         </div>
       </div>
 
-      <div className="mb-5 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+      <div className="mb-5 grid grid-cols-1 gap-4 md:grid-cols-3">
         <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
           <h3 className="text-sm font-medium text-slate-500">조회 일정</h3>
-          <p className="mt-1 text-3xl font-bold tracking-tight text-slate-950">{filteredItems.length}</p>
+          <p className="mt-1 text-3xl font-bold tracking-tight text-slate-950">{currentViewItems.length}</p>
         </div>
 
         <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-          <h3 className="text-sm font-medium text-slate-500">준공예정</h3>
+          <h3 className="text-sm font-medium text-slate-500">업무 일정</h3>
           <p className="mt-1 text-3xl font-bold tracking-tight text-blue-600">
-            {filteredItems.filter((item) => item.type === "준공예정").length}
-          </p>
-        </div>
-
-        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-          <h3 className="text-sm font-medium text-slate-500">출고예정</h3>
-          <p className="mt-1 text-3xl font-bold tracking-tight text-amber-600">
-            {filteredItems.filter((item) => item.type === "출고예정").length}
+            {currentViewItems.filter(isTaskCalendarItem).length}
           </p>
         </div>
 
         <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
           <h3 className="text-sm font-medium text-slate-500">오늘 일정</h3>
           <p className="mt-1 text-3xl font-bold tracking-tight text-orange-600">
-            {filteredItems.filter((item) => item.date === today).length}
+            {currentViewItems.filter((item) => item.date === today).length}
           </p>
         </div>
       </div>
@@ -809,7 +779,7 @@ export default function CalendarPage() {
               {viewList.map((view) => (
                 <Button
                   key={view}
-                  onClick={() => setViewMode(view)}
+                  onClick={() => changeViewMode(view)}
                   variant={viewMode === view ? "primary" : "ghost"}
                   className={`h-10 rounded-2xl px-4 text-sm font-medium transition-colors duration-150 ${
                     viewMode === view
@@ -853,24 +823,20 @@ export default function CalendarPage() {
             </select>
           </div>
 
-          <div>
+          {viewMode === "달력 보기" && <div>
             <div className="mb-1.5 text-xs font-medium text-slate-500">완료</div>
             <Button
-              onClick={() => setExcludeCompleted((current) => !current)}
-              variant={excludeCompleted ? "primary" : "ghost"}
-              className={`h-10 rounded-2xl px-4 text-sm font-medium transition-colors duration-150 ${
-                excludeCompleted
-                  ? "shadow-sm ring-1 ring-blue-100"
-                  : "border border-slate-200 bg-slate-50 text-slate-700 hover:bg-white focus-visible:ring-2 focus-visible:ring-blue-100"
-              }`}
+              onClick={() => setShowCompleted((current) => !current)}
+              variant={showCompleted ? "secondary" : "primary"}
+              className="h-10 rounded-2xl px-4 text-sm font-medium transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-blue-100"
             >
-              완료제외
+              {showCompleted ? "완료 숨기기" : "완료 보기"}
             </Button>
-          </div>
+          </div>}
         </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-5 xl:grid-cols-[minmax(0,1fr)_320px]">
+      <div className={`grid grid-cols-1 gap-5 ${viewMode === "간트 보기" ? "" : "xl:grid-cols-[minmax(0,1fr)_320px]"}`}>
         <div className="min-w-0">
       {isLoading ? (
         <div className="rounded-2xl border border-slate-200 bg-white p-8 text-center text-sm text-slate-500 shadow-sm">
@@ -931,102 +897,88 @@ export default function CalendarPage() {
               </div>
             ))}
 
-            {calendarDays.map((date, index) => {
-              const dateItems = date ? getDateItems(date) : [];
-              const visibleDateItems = dateItems.slice(0, 3);
+            <div className="col-span-7 space-y-1.5 sm:space-y-2">
+              {calendarWeekLayouts.map((week) => {
+                const weekHeight = Math.max(140, 52 + week.laneCount * 34);
 
-              return (
-                <div
-                  key={index}
-                  onClick={() => {
-                    if (date) {
-                      setSelectedDate(date);
-                    }
-                  }}
-                  role={date ? "button" : undefined}
-                  tabIndex={date ? 0 : undefined}
-                  onKeyDown={(event) => {
-                    if (!date) return;
-                    if (event.key === "Enter" || event.key === " ") {
-                      event.preventDefault();
-                      setSelectedDate(date);
-                    }
-                  }}
-                  className={`min-h-[140px] rounded-2xl border p-2.5 outline-none transition-all duration-150 sm:min-h-[148px] ${
-                    date === selectedDate
-                      ? "border-blue-200 bg-blue-50 shadow-sm ring-2 ring-blue-100"
-                      : date === today
-                        ? "border-amber-200 bg-amber-50"
-                        : "border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50 hover:shadow-sm"
-                  } ${date ? "cursor-pointer focus-visible:ring-2 focus-visible:ring-blue-100" : "border-slate-100 bg-slate-50/60"}`}
-                >
-                  {date && (
-                    <>
-                      <div className="mb-2 flex items-center justify-between gap-2 text-sm font-semibold text-slate-700">
-                        <span>
-                        {Number(date.slice(-2))}
-                        </span>
-                        {date === today && (
-                          <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-700">오늘</span>
-                        )}
-                      </div>
+                return (
+                  <div
+                    key={`week-${week.days.join("-")}`}
+                    className="relative"
+                    style={{ height: weekHeight }}
+                  >
+                    <div className="grid h-full grid-cols-7 gap-1.5 sm:gap-2">
+                      {week.days.map((date, dayIndex) => (
+                        <div
+                          key={date || `empty-${dayIndex}`}
+                          onClick={() => {
+                            if (date) setSelectedDate(date);
+                          }}
+                          role={date ? "button" : undefined}
+                          tabIndex={date ? 0 : undefined}
+                          onKeyDown={(event) => {
+                            if (!date) return;
+                            if (event.key === "Enter" || event.key === " ") {
+                              event.preventDefault();
+                              setSelectedDate(date);
+                            }
+                          }}
+                          className={`h-full rounded-2xl border p-2.5 outline-none transition-all duration-150 ${
+                            date === selectedDate
+                              ? "border-blue-200 bg-blue-50 shadow-sm ring-2 ring-blue-100"
+                              : date === today
+                                ? "border-amber-200 bg-amber-50"
+                                : "border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50 hover:shadow-sm"
+                          } ${date ? "cursor-pointer focus-visible:ring-2 focus-visible:ring-blue-100" : "border-slate-100 bg-slate-50/60"}`}
+                        >
+                          {date && (
+                            <div className="flex items-center justify-between gap-2 text-sm font-semibold text-slate-700">
+                              <span>{Number(date.slice(-2))}</span>
+                              {date === today && (
+                                <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-700">
+                                  오늘
+                                </span>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
 
-                      <div className="space-y-1.5">
-                        {visibleDateItems.map((item) =>
-                          isTaskCalendarItem(item) ? (
-                            <button
-                              type="button"
-                              key={item.id}
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                openTaskDetailModal(item);
-                              }}
-                              className="block w-full rounded-xl border border-slate-200 bg-white px-2.5 py-2 text-left transition-colors duration-150 hover:border-blue-200 hover:bg-blue-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-100"
-                            >
-                              <div className="truncate text-sm font-semibold leading-5 text-slate-900">
-                                {item.projectName || "-"}
-                              </div>
-                              <div className="truncate text-[11px] font-medium leading-4 text-slate-400">
-                                {item.taskType || getDisplayType(item.type)}
-                              </div>
-                              <div className="truncate text-xs leading-4 text-slate-600">
-                                {item.title}
-                              </div>
-                              <div
-                                className={`mt-1 inline-flex max-w-full rounded-full border px-2 py-0.5 text-[11px] font-medium ${getTaskDueClassName(
-                                  item
-                                )}`}
-                              >
-                                {getTaskDueLabel(item)}
-                              </div>
-                            </button>
-                          ) : (
-                            <button
-                              key={item.id}
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                openItemModal(item);
-                              }}
-                              className={`block w-full truncate rounded-xl border px-2.5 py-2 text-left text-xs font-medium transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-100 ${getTypeStyle(
-                                item.type
-                              )}`}
-                            >
-                              {getDisplayType(item.type)} · {item.title}
-                            </button>
-                          )
-                        )}
+                    <div className="pointer-events-none absolute inset-x-0 top-11 z-10 grid grid-cols-7 gap-x-1.5 gap-y-1.5 sm:gap-x-2">
+                      {week.segments.map((segment) => {
+                        const { item } = segment;
+                        const roundedClass = `${
+                          segment.isRangeStart ? "rounded-l-lg" : "rounded-l-none"
+                        } ${segment.isRangeEnd ? "rounded-r-lg" : "rounded-r-none"}`;
+                        const positionStyle = {
+                          gridColumn: `${segment.startColumn} / span ${segment.span}`,
+                          gridRow: segment.laneIndex + 1,
+                        };
 
-                        {dateItems.length > 3 && (
-                          <div className="rounded-lg bg-slate-100 px-2 py-1 text-xs font-medium text-slate-500">
-                            +{dateItems.length - 3}건
-                          </div>
-                        )}
-                      </div>
-                    </>
-                  )}
-                </div>
-              );
-            })}
+                        return (
+                          <button
+                            type="button"
+                            key={`${item.id}-week-${segment.weekIndex}`}
+                            title={`${item.title} · ${getItemRange(item).start} ~ ${getItemRange(item).end}`}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              openTaskDetailModal(item);
+                            }}
+                            className={`pointer-events-auto h-7 min-w-0 truncate border px-2 text-left text-xs font-semibold shadow-sm transition-colors hover:brightness-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-200 ${roundedClass} ${getTaskDueClassName(
+                              item
+                            )}`}
+                            style={positionStyle}
+                          >
+                            {item.title}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           </div>
         </div>
       ) : viewMode === "간트 보기" ? (
@@ -1038,6 +990,9 @@ export default function CalendarPage() {
           today={today}
           onCurrentMonthChange={selectMonth}
           onTaskUpdated={handleGanttTaskUpdated}
+          canEdit={can("task_update")}
+          showCompletedProjects={showCompletedProjects}
+          onShowCompletedProjectsChange={setShowCompletedProjects}
         />
       ) : (
         <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
@@ -1091,19 +1046,11 @@ export default function CalendarPage() {
                         </>
                       );
 
-                      return isTaskCalendarItem(item) ? (
+                      return (
                         <button
                           type="button"
                           key={item.id}
                           onClick={() => openTaskDetailModal(item)}
-                          className="block w-full rounded-2xl border border-slate-200 bg-slate-50 p-4 text-left transition-colors duration-150 hover:border-slate-300 hover:bg-white hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-100"
-                        >
-                          {itemContent}
-                        </button>
-                      ) : (
-                        <button
-                          key={item.id}
-                          onClick={() => openItemModal(item)}
                           className="block w-full rounded-2xl border border-slate-200 bg-slate-50 p-4 text-left transition-colors duration-150 hover:border-slate-300 hover:bg-white hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-100"
                         >
                           {itemContent}
@@ -1119,7 +1066,7 @@ export default function CalendarPage() {
       )}
         </div>
 
-        <aside className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <aside className={`rounded-2xl border border-slate-200 bg-white p-5 shadow-sm ${viewMode === "간트 보기" ? "hidden" : ""}`}>
           <div className="mb-5 border-b border-slate-100 pb-4">
             <h2 className="text-lg font-bold tracking-tight text-slate-950">
               {formatKoreanDate(selectedDate)}
@@ -1152,6 +1099,9 @@ export default function CalendarPage() {
                     </div>
                     <div className="mt-1 truncate text-sm font-medium leading-5 text-slate-600">
                       {item.projectName || "-"}
+                    </div>
+                    <div className="mt-1 truncate text-xs font-semibold text-blue-600">
+                      조립업체 {item.assemblyVendorName || "미지정"}
                     </div>
                     <div className="mt-3 flex flex-wrap items-center gap-1.5">
                       <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-500">
@@ -1205,106 +1155,11 @@ export default function CalendarPage() {
         <GanttTaskDetailModal
           task={selectedTask}
           today={today}
-          onTaskUpdated={handleGanttTaskUpdated}
+          onTaskUpdated={(updatedTask) => void handleCalendarTaskDetailUpdated(updatedTask)}
           onClose={() => setSelectedTask(null)}
         />
       )}
 
-      {selectedItem && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="w-full max-w-[600px] rounded-2xl border border-slate-200 bg-white p-6 shadow-xl">
-            <div className="mb-5 flex items-center justify-between">
-              <h2 className="text-xl font-bold tracking-tight text-slate-950">일정 상세</h2>
-
-              <button
-                onClick={() => {
-                  setSelectedItem(null);
-                  setEditDate("");
-                }}
-                className="rounded-full px-2 py-1 text-sm text-slate-500 transition-colors hover:bg-slate-100"
-              >
-                ✕
-              </button>
-            </div>
-
-            <div className="space-y-4">
-              <div>
-                <div className="text-sm font-medium text-slate-500">일정명</div>
-                <div className="mt-1 font-medium text-slate-950">{selectedItem.title}</div>
-              </div>
-
-              <div>
-                <div className="text-sm font-medium text-slate-500">구분</div>
-                <span
-                  className={`mt-1 inline-block rounded-full border px-3 py-1 text-sm ${getTypeStyle(
-                    selectedItem.type
-                  )}`}
-                >
-                  {getDisplayType(selectedItem.type)}
-                </span>
-              </div>
-
-              <div>
-                <div className="text-sm font-medium text-slate-500">담당자</div>
-                <div className="mt-1 text-slate-900">{selectedItem.assignee}</div>
-              </div>
-
-              <div>
-                <div className="text-sm font-medium text-slate-500">상태</div>
-                <div className="mt-1 text-slate-900">{selectedItem.status || "-"}</div>
-              </div>
-
-              <div>
-                <div className="text-sm font-medium text-slate-500">일정일</div>
-
-                {selectedItem.type === "업무완료" ? (
-                  <div className="mt-1 text-slate-900">{selectedItem.date}</div>
-                ) : (
-                  <input
-                    type="date"
-                    value={editDate}
-                    onChange={(e) => setEditDate(e.target.value)}
-                    className="mt-1 h-10 w-full rounded-2xl border border-slate-200 bg-slate-50 px-3 text-sm outline-none transition-colors focus:border-blue-300 focus:bg-white"
-                  />
-                )}
-              </div>
-            </div>
-
-            <div className="mt-6 flex justify-end gap-3">
-              <Button
-                onClick={() => {
-                  setSelectedItem(null);
-                  setEditDate("");
-                }}
-                variant="secondary"
-                className="rounded-2xl px-4 py-2 text-sm"
-              >
-                닫기
-              </Button>
-
-              {selectedItem.type !== "업무완료" && (
-                <Button
-                  onClick={updateCalendarDate}
-                  disabled={isSavingDate}
-                  variant="primary"
-                  className="rounded-2xl px-4 py-2 text-sm"
-                >
-                  {isSavingDate ? "저장 중..." : "일정변경 저장"}
-                </Button>
-              )}
-
-              {selectedItem.href && (
-                <Link
-                  href={selectedItem.href}
-                  className="rounded-2xl bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700"
-                >
-                  상세보기
-                </Link>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

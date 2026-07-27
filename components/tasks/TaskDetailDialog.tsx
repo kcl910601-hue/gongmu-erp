@@ -14,6 +14,7 @@ import {
   TASK_DETAIL_UPDATED_EVENT,
 } from "@/lib/task-detail";
 import { getLocalDateString } from "@/lib/task-priority";
+import { getActiveEmployeeOptionsByFunction } from "@/lib/employee-master-data";
 import { isTaskCompleted, normalizeTaskStatus } from "@/lib/status";
 import { supabase } from "@/lib/supabase";
 import { toast } from "@/lib/toast";
@@ -32,7 +33,7 @@ const EMPTY_FORM: EditForm = {
   due_date: "",
 };
 
-export function TaskDetailDialog() {
+export function TaskDetailDialog({ canEdit = true }: { canEdit?: boolean }) {
   const [taskId, setTaskId] = useState<number | null>(null);
   const [task, setTask] = useState<TaskDetailData | null>(null);
   const [assignees, setAssignees] = useState<string[]>([]);
@@ -60,27 +61,24 @@ export function TaskDetailDialog() {
         .single();
       if (taskError) throw taskError;
 
-      const [{ data: projectData, error: projectError }, { data: employeeData }] =
+      const [{ data: projectData, error: projectError }, employeeResult] =
         await Promise.all([
           supabase
             .from("projects")
             .select("id, project_name, project_code")
             .eq("id", taskData.project_id)
             .maybeSingle(),
-          supabase
-            .from("employees")
-            .select("name")
-            .eq("active", true)
-            .order("name"),
+          getActiveEmployeeOptionsByFunction("operations"),
         ]);
       if (projectError) throw projectError;
+      if (employeeResult.error) throw new Error(employeeResult.error);
 
       const loadedTask: TaskDetailData = {
         ...taskData,
         project: projectData,
       };
       setTask(loadedTask);
-      setAssignees((employeeData ?? []).map((employee) => employee.name));
+      setAssignees(employeeResult.data.map((employee) => employee.value));
       setForm({
         assignee: loadedTask.assignee || "",
         status: normalizeTaskStatus(loadedTask.status) || "pending",
@@ -331,7 +329,7 @@ export function TaskDetailDialog() {
               <Button variant="outline" onClick={() => closeDialog()}>
                 닫기
               </Button>
-              {isEditing ? (
+              {canEdit && isEditing ? (
                 <>
                   <Button
                     variant="outline"
@@ -351,7 +349,7 @@ export function TaskDetailDialog() {
                     {isSaving ? "저장 중..." : "저장"}
                   </Button>
                 </>
-              ) : (
+              ) : canEdit ? (
                 <>
                   <Button
                     variant="outline"
@@ -372,7 +370,7 @@ export function TaskDetailDialog() {
                     </Button>
                   )}
                 </>
-              )}
+              ) : null}
               <Link
                 href={`/projects/${task.project_id}`}
                 className="inline-flex h-10 items-center justify-center rounded-xl border border-slate-300 bg-white px-4 text-sm font-medium text-slate-700 hover:bg-slate-50"

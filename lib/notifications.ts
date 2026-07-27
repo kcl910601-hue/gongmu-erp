@@ -307,20 +307,29 @@ export function calculateNotificationSummary({
 }
 
 export async function loadNotificationSummary(
-  limit = DEFAULT_LIMIT
+  limit = DEFAULT_LIMIT,
+  providedEmployee?: CurrentEmployee | null
 ): Promise<LoadNotificationSummaryResult> {
-  const currentEmployee = await getCurrentEmployee();
+  const currentEmployee =
+    providedEmployee === undefined
+      ? await getCurrentEmployee()
+      : providedEmployee;
   if (!currentEmployee) {
     return { data: null, error: new Error("직원 정보를 확인할 수 없습니다.") };
   }
 
   const isAdmin = currentEmployee.role === "admin";
+  const today = getToday();
+  const weekEnd = getWeekEnd(today);
   const recentCutoff = getRecentCutoffIso();
   let taskQuery = supabase
     .from("tasks")
     .select(
       "id, project_id, task_name, task_type, assignee, status, start_date, due_date"
-    );
+    )
+    .or("status.is.null,status.in.(pending,대기,in_progress,진행중)")
+    .or(`due_date.lte.${weekEnd},start_date.eq.${today}`)
+    .limit(200);
 
   if (!isAdmin) {
     taskQuery = taskQuery.eq("assignee", currentEmployee.name);
@@ -332,12 +341,15 @@ export async function loadNotificationSummary(
   const allowedProjectIds = Array.from(
     new Set((taskResult.data ?? []).map((task) => task.project_id))
   );
-  let projectQuery = supabase.from("projects").select("id, project_name");
   let shipmentQuery = supabase
     .from("shipments")
     .select(
       "id, project_id, item_name, site_name, status, shipment_date, driver_name"
-    );
+    )
+    .lte("shipment_date", weekEnd)
+    .or("status.is.null,status.neq.출고완료")
+    .order("shipment_date", { ascending: true })
+    .limit(100);
   let activityQuery = supabase
     .from("activity_logs")
     .select(
@@ -348,16 +360,12 @@ export async function loadNotificationSummary(
     .limit(50);
 
   if (!isAdmin && allowedProjectIds.length > 0) {
-    projectQuery = projectQuery.in("id", allowedProjectIds);
     shipmentQuery = shipmentQuery.in("project_id", allowedProjectIds);
     activityQuery = activityQuery.in("project_id", allowedProjectIds);
   }
 
-  const [projectResult, shipmentResult, approvalResult, activityResult] =
+  const [shipmentResult, approvalResult, activityResult] =
     await Promise.all([
-      !isAdmin && allowedProjectIds.length === 0
-        ? Promise.resolve({ data: [], error: null })
-        : projectQuery,
       !isAdmin && allowedProjectIds.length === 0
         ? Promise.resolve({ data: [], error: null })
         : shipmentQuery,
@@ -367,6 +375,7 @@ export async function loadNotificationSummary(
             .select("id, name, created_at")
             .eq("approval_status", "pending")
             .order("created_at", { ascending: false })
+            .limit(50)
         : Promise.resolve({ data: [], error: null }),
       !isAdmin && allowedProjectIds.length === 0
         ? Promise.resolve({ data: [], error: null })
@@ -374,12 +383,30 @@ export async function loadNotificationSummary(
     ]);
 
   const error =
-    projectResult.error ||
     shipmentResult.error ||
     approvalResult.error ||
     activityResult.error;
 
   if (error) return { data: null, error };
+
+  const projectIds = Array.from(
+    new Set([
+      ...allowedProjectIds,
+      ...(shipmentResult.data ?? []).flatMap((shipment) =>
+        shipment.project_id === null ? [] : [shipment.project_id]
+      ),
+      ...(activityResult.data ?? []).flatMap((activity) =>
+        activity.project_id === null ? [] : [activity.project_id]
+      ),
+    ])
+  );
+  const projectResult = projectIds.length
+    ? await supabase
+        .from("projects")
+        .select("id, project_name")
+        .in("id", projectIds)
+    : { data: [], error: null };
+  if (projectResult.error) return { data: null, error: projectResult.error };
 
   return {
     data: calculateNotificationSummary({

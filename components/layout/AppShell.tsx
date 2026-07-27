@@ -1,8 +1,11 @@
 ﻿"use client";
 
-import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import { getEmployeeByAuth, type CurrentEmployee } from "@/lib/auth";
+import { hasPermission } from "@/lib/permissions";
+import { AppShellUserProvider } from "@/contexts/AppShellUserContext";
 import Header from "./Header";
 import Sidebar from "./Sidebar";
 import GlobalSearch from "@/components/search/GlobalSearch";
@@ -29,6 +32,10 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const isPublicPage = pathname === "/login" || pathname === "/signup";
   const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const [employee, setEmployee] = useState<CurrentEmployee | null>(null);
+  const [authUserId, setAuthUserId] = useState<string | null>(null);
+  const [authEmail, setAuthEmail] = useState<string | null>(null);
+  const [isUserLoading, setIsUserLoading] = useState(!isPublicPage);
   const isCollapsed = useSyncExternalStore(
     subscribeSidebarChange,
     getSidebarSnapshot,
@@ -38,16 +45,54 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (isPublicPage) return;
 
+    let isMounted = true;
+
+    async function applySession(
+      session: Awaited<ReturnType<typeof supabase.auth.getSession>>["data"]["session"]
+    ) {
+      if (!isMounted) return;
+      if (!session?.user) {
+        setEmployee(null);
+        setAuthUserId(null);
+        setAuthEmail(null);
+        setIsUserLoading(false);
+        router.push("/login");
+        return;
+      }
+
+      setAuthUserId(session.user.id);
+      setAuthEmail(session.user.email ?? null);
+      const result = await getEmployeeByAuth(supabase, session.user);
+      if (!isMounted) return;
+      setEmployee(result.employee);
+      setIsUserLoading(false);
+    }
+
     async function checkAuth() {
       const {
         data: { session },
       } = await supabase.auth.getSession();
-
-      if (!session) router.push("/login");
+      await applySession(session);
     }
 
     void checkAuth();
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      void applySession(session);
+    });
+
+    return () => {
+      isMounted = false;
+      subscription.unsubscribe();
+    };
   }, [isPublicPage, router]);
+
+  const userContextValue = useMemo(
+    () => ({ employee, authUserId, authEmail, isLoading: isUserLoading }),
+    [authEmail, authUserId, employee, isUserLoading]
+  );
 
   const openSearch = useCallback(() => {
     if (isPublicPage) return;
@@ -77,6 +122,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   }
 
   return (
+    <AppShellUserProvider value={userContextValue}>
     <div className="flex min-h-screen bg-slate-50">
       <Sidebar />
       <main
@@ -88,10 +134,11 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         {children}
       </main>
       <GlobalSearch isOpen={isSearchOpen} onClose={closeSearch} />
-      <QuickActionsFab />
+      {hasPermission(employee?.role, "create") && <QuickActionsFab />}
       <ToastViewport />
       <FocusPanel />
-      <TaskDetailDialog />
+      <TaskDetailDialog canEdit={hasPermission(employee?.role, "update")} />
     </div>
+    </AppShellUserProvider>
   );
 }

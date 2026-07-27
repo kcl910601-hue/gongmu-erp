@@ -42,9 +42,10 @@ export function getProjectCreationErrorMessage(error: ProjectCreationError) {
 export async function createProjectWithSections(
   input: CreateProjectWithSectionsInput
 ): Promise<CreateProjectResult> {
-  const { data, error } = await supabase.rpc("create_project_with_sections", {
+  const { data, error } = await supabase.rpc("create_project_with_sections_and_vendors", {
     p_project: input.project,
     p_sections: input.sections,
+    p_assembly_vendor_ids: input.project.assemblyVendorIds,
   });
 
   if (error) {

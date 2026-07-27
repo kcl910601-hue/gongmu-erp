@@ -19,7 +19,7 @@ type SignupRequest = {
 export default function SignupRequests() {
   const [requests, setRequests] = useState<SignupRequest[]>([]);
   const [selected, setSelected] = useState<SignupRequest | null>(null);
-  const [role, setRole] = useState<EmployeeRole>("member");
+  const [role, setRole] = useState<EmployeeRole>("staff");
   const [position, setPosition] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -54,7 +54,7 @@ export default function SignupRequests() {
 
   function openApproval(request: SignupRequest) {
     setSelected(request);
-    setRole("member");
+    setRole("staff");
     setPosition(request.position ?? "");
     setErrorMessage("");
   }
@@ -221,4 +221,3 @@ export default function SignupRequests() {
     </section>
   );
 }
-

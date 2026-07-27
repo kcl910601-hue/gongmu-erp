@@ -19,7 +19,7 @@ import {
 } from "lucide-react";
 import type { KeyboardEvent } from "react";
 import { supabase } from "@/lib/supabase";
-import { getCurrentEmployee } from "@/lib/auth";
+import { useAppShellUser } from "@/contexts/AppShellUserContext";
 import { Badge, type BadgeVariant } from "@/components/ui/Badge";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ProgressBar } from "@/components/ui/ProgressBar";
@@ -211,14 +211,15 @@ function getProjectEndDate(project: Project) {
 }
 
 export default function Home() {
+  const { employee: currentEmployee } = useAppShellUser();
   const [projects, setProjects] = useState<Project[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [shipments, setShipments] = useState<MorningBriefShipment[]>([]);
   const [recentProjects, setRecentProjects] = useState<ProjectWithProgress[]>([]);
   const [searchText, setSearchText] = useState("");
   const [isLoading, setIsLoading] = useState(true);
-  const [currentUserName, setCurrentUserName] = useState("");
-  const [currentUserRole, setCurrentUserRole] = useState("");
+  const currentUserName = currentEmployee?.name ?? "";
+  const currentUserRole = currentEmployee?.role ?? "";
   const [showAllActivities, setShowAllActivities] = useState(false);
   const [expandedTeamAssignee, setExpandedTeamAssignee] = useState<string | null>(
     null
@@ -247,8 +248,6 @@ export default function Home() {
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
-      // eslint-disable-next-line react-hooks/immutability
-      void loadCurrentUser();
       // eslint-disable-next-line react-hooks/immutability
       void loadDashboard();
     }, 0);
@@ -361,15 +360,6 @@ export default function Home() {
 
   function isShipmentTask(task: Task) {
     return (task.task_type || "").includes("출고");
-  }
-
-  async function loadCurrentUser() {
-    const employee = await getCurrentEmployee();
-
-    if (!employee) return;
-
-    setCurrentUserName(employee.name);
-    setCurrentUserRole(employee.role || "");
   }
 
   async function loadDashboard() {
@@ -1070,13 +1060,32 @@ export default function Home() {
         currentUserRole={currentUserRole}
         isLoading={isLoading}
         onTaskCompleted={(taskId) => {
-          setTasks((current) =>
-            current.map((task) =>
+          setTasks((current) => {
+            const nextTasks = current.map((task) =>
               task.id === taskId
                 ? { ...task, status: "completed", completed_date: today }
                 : task
-            )
-          );
+            );
+
+            if (process.env.NODE_ENV === "development") {
+              console.table(
+                nextTasks
+                  .filter((task) => task.id === taskId)
+                  .map((task) => ({
+                    id: task.id,
+                    status: task.status,
+                    completed: isTaskCompleted(task.status),
+                    dueDate: task.due_date,
+                    delayed:
+                      !isTaskCompleted(task.status) &&
+                      task.due_date !== null &&
+                      task.due_date < today,
+                  }))
+              );
+            }
+
+            return nextTasks;
+          });
         }}
       />
 

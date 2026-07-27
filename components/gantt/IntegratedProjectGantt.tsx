@@ -12,6 +12,8 @@ import {
   Plus,
   Search,
   SlidersHorizontal,
+  Redo2,
+  Undo2,
   X,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -19,12 +21,23 @@ import { Badge, type BadgeVariant } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { GanttTaskDetailModal } from "@/components/gantt/GanttTaskDetailModal";
-import { normalizeAssemblyVendor } from "@/lib/projects";
+import { GanttMemoModal, type GanttMemoTarget } from "@/components/gantt/GanttMemoModal";
+import { GanttAssigneeModal } from "@/components/gantt/GanttAssigneeModal";
+import { TaskTagSelector } from "@/components/common/TaskTagSelector";
+import { GanttBulkEditModal, type GanttBulkEditKind } from "@/components/gantt/GanttBulkEditModal";
+import { GanttDependencyModal, type GanttDependencyItem } from "@/components/gantt/GanttDependencyModal";
+import { supabase } from "@/lib/supabase";
+import { logActivity } from "@/lib/activity";
+import { TASK_TAGS, getTaskTagDefinition, type TaskTagCode } from "@/lib/task-tags";
+import { formatProjectQuantity } from "@/lib/project-quantity";
+import { compareTasksBySchedule, persistRecalculatedTaskOrders } from "@/lib/task-ordering";
 import {
   getProjectStatusLabel,
   getTaskStatusLabel,
+  isProjectCompleted,
   isTaskCompleted,
   normalizeProjectStatus,
+  normalizeTaskStatus,
 } from "@/lib/status";
 
 export type IntegratedProject = {
@@ -38,12 +51,20 @@ export type IntegratedProject = {
   start_date: string | null;
   end_date: string | null;
   completion_due_date?: string | null;
+  quantity: number | null;
+  quantity_unit: string | null;
 };
 
 export type IntegratedTask = {
   id: number;
   project_id: number;
   project_section_id?: number | null;
+  project_assembly_vendor_id: number | null;
+  project_assembly_vendor?: {
+    id: number;
+    allocated_quantity: number | null;
+    organization: { name: string } | null;
+  } | null;
   task_order: number | null;
   task_name: string | null;
   task_type: string | null;
@@ -52,6 +73,7 @@ export type IntegratedTask = {
   start_date: string | null;
   due_date: string | null;
   completed_date: string | null;
+  created_at: string | null;
 };
 
 type GanttSegment = {
@@ -61,8 +83,30 @@ type GanttSegment = {
   lane: number;
 };
 
+type ProjectScheduleMemo = {
+  id: string;
+  project_id: number;
+  memo_date: string;
+  content: string;
+};
+
+type TaskScheduleMemo = {
+  id: string;
+  task_id: number;
+  content: string;
+};
+
+type TaskTagRow = {
+  task_id: number;
+  tag: string;
+};
+
 type ProjectRow = {
+  rowKey: string;
   project: IntegratedProject;
+  assemblyVendorId: number | null;
+  assemblyVendorName: string;
+  allocatedQuantity: number | null;
   progress: number;
   taskCount: number;
   completedCount: number;
@@ -81,12 +125,70 @@ type IntegratedProjectGanttProps = {
   today: string;
   onCurrentMonthChange?: (month: string) => void;
   onTaskUpdated: (task: IntegratedTask) => void;
+  canEdit: boolean;
+  showCompletedProjects: boolean;
+  onShowCompletedProjectsChange: (showCompleted: boolean) => void;
+};
+
+type TaskDragState = {
+  task: IntegratedTask;
+  project: IntegratedProject;
+  pointerId: number;
+  originClientX: number;
+  offsetDays: number;
+  startDate: string;
+  dueDate: string;
+  lane: number;
+};
+
+type TaskResizeState = {
+  task: IntegratedTask;
+  project: IntegratedProject;
+  edge: "start" | "end";
+  pointerId: number;
+  originClientX: number;
+  offsetDays: number;
+  startDate: string;
+  dueDate: string;
+  lane: number;
+};
+
+type TaskContextMenuState = {
+  x: number;
+  y: number;
+  task: IntegratedTask;
+  project: IntegratedProject;
+};
+
+type GanttScheduleChange = {
+  taskId: number;
+  before: { startDate: string; dueDate: string };
+  after: { startDate: string; dueDate: string };
+  taskName: string;
+  projectName: string;
+  source: "primary" | "multi-select" | "dependency";
+};
+
+type GanttHistoryEntry = {
+  id: string;
+  action: "move" | "resize";
+  changes: GanttScheduleChange[];
+  createdAt: number;
+};
+
+type PendingDependencyMove = {
+  action: "move" | "resize";
+  primaryTaskId: number;
+  offsetDays: number;
+  baseChanges: GanttScheduleChange[];
+  dependencyChanges: GanttScheduleChange[];
 };
 
 export type GanttTaskDetail = {
   taskId: number;
   projectId: number;
   projectName: string;
+  assemblyVendorName: string;
   projectCode: string | null;
   taskName: string | null;
   taskType: string | null;
@@ -112,6 +214,18 @@ type GanttSortKey =
   | "due_date"
   | "delayed"
   | "progress";
+const GANTT_VIEW_TYPES = {
+  project: "project",
+  vendor: "vendor",
+  salesperson: "salesperson",
+  assignee: "assignee",
+  status: "status",
+  process: "process",
+} as const;
+type GanttViewType = typeof GANTT_VIEW_TYPES[keyof typeof GANTT_VIEW_TYPES];
+type GanttDisplayItem =
+  | { kind: "group"; key: string; label: string; count: number; collapsed: boolean; height: number }
+  | { kind: "row"; key: string; row: ProjectRow; height: number };
 
 type PresentationPreferences = {
   scrollLeft: number;
@@ -129,16 +243,73 @@ type PresentationPreferences = {
 };
 
 const baseDayWidth = 36;
+const collapsedMonthWidth = 68;
+const groupHeaderHeight = 36;
 const PRESENTATION_KEY = "erp-gantt-presentation";
 const baseRowHeight = 58;
 const laneHeight = 22;
 const maxLanes = 3;
+const MAX_GANTT_HISTORY = 50;
 const dayFormatter = new Intl.DateTimeFormat("ko-KR", { day: "2-digit" });
 const weekdayFormatter = new Intl.DateTimeFormat("ko-KR", { weekday: "short" });
 const monthFormatter = new Intl.DateTimeFormat("ko-KR", {
   year: "numeric",
   month: "long",
 });
+
+function formatGanttMonthLabel(monthKey: string, isCollapsed: boolean) {
+  const [year, month] = monthKey.split("-");
+  if (isCollapsed) return `${year.slice(-2)}.${month}`;
+  return monthFormatter.format(parseDate(`${monthKey}-01`));
+}
+
+function buildGroupedView(
+  rows: ProjectRow[],
+  viewType: GanttViewType,
+  collapsedGroups: Set<string>
+): GanttDisplayItem[] {
+  if (viewType === GANTT_VIEW_TYPES.project) {
+    return rows.map((row) => ({ kind: "row", key: row.rowKey, row, height: row.rowHeight }));
+  }
+
+  if (viewType !== GANTT_VIEW_TYPES.vendor && viewType !== GANTT_VIEW_TYPES.salesperson) {
+    return rows.map((row) => ({ kind: "row", key: row.rowKey, row, height: row.rowHeight }));
+  }
+
+  const groupedRows = new Map<string, ProjectRow[]>();
+  rows.forEach((row) => {
+    const label = viewType === GANTT_VIEW_TYPES.vendor
+      ? row.assemblyVendorName || "업체 미지정"
+      : row.project.salesperson?.trim() || "영업자 미지정";
+    groupedRows.set(label, [...(groupedRows.get(label) ?? []), row]);
+  });
+
+  return Array.from(groupedRows.entries())
+    .sort(([labelA], [labelB]) => labelA.localeCompare(labelB))
+    .flatMap(([label, groupRows]) => {
+      const key = `${viewType}:${label}`;
+      const collapsed = collapsedGroups.has(key);
+      const projectCount = new Set(groupRows.map((row) => row.project.id)).size;
+      const header: GanttDisplayItem = {
+        kind: "group",
+        key,
+        label,
+        count: projectCount,
+        collapsed,
+        height: groupHeaderHeight,
+      };
+      if (collapsed) return [header];
+      const sortedRows = [...groupRows].sort((a, b) => {
+        const aStart = a.segments[0]?.startDate ?? "9999-12-31";
+        const bStart = b.segments[0]?.startDate ?? "9999-12-31";
+        return aStart.localeCompare(bStart) || a.project.project_name.localeCompare(b.project.project_name);
+      });
+      return [
+        header,
+        ...sortedRows.map((row): GanttDisplayItem => ({ kind: "row", key: row.rowKey, row, height: row.rowHeight })),
+      ];
+    });
+}
 const defaultTaskTypeColor: TaskTypeColor = {
   label: "기타",
   className: "bg-[#E2E8F0] text-slate-800 ring-slate-300",
@@ -250,6 +421,7 @@ const statusFilterOptions: Array<{ value: GanttStatusFilter; label: string }> = 
   { value: "today", label: "오늘" },
   { value: "week", label: "이번 주" },
 ];
+const taskStatusOptions = ["pending", "in_progress", "completed"] as const;
 
 const sortOptions: Array<{ value: GanttSortKey; label: string }> = [
   { value: "project_name", label: "프로젝트명" },
@@ -382,6 +554,21 @@ function getScheduleMarkerClass(task: IntegratedTask, today: string) {
   return "border border-transparent";
 }
 
+function getTaskAssemblyVendorName(task: IntegratedTask) {
+  return task.project_assembly_vendor?.organization?.name?.trim() || "업체 미지정";
+}
+
+function getTaskStatusPresentation(task: IntegratedTask, today: string) {
+  const delayedDays = getDelayedDays(task, today);
+  if (delayedDays !== null) {
+    return { icon: "⚠", label: `지연 ${delayedDays}일` };
+  }
+  const status = normalizeTaskStatus(task.status) || "pending";
+  if (status === "completed") return { icon: "✔", label: getTaskStatusLabel(status) };
+  if (status === "in_progress") return { icon: "▶", label: getTaskStatusLabel(status) };
+  return { icon: "⏸", label: getTaskStatusLabel(status) };
+}
+
 function assignSegmentLanes(
   segments: Array<Omit<GanttSegment, "lane">>
 ): { segments: GanttSegment[]; laneCount: number } {
@@ -415,17 +602,27 @@ export function IntegratedProjectGantt({
   today,
   onCurrentMonthChange,
   onTaskUpdated,
+  canEdit,
+  showCompletedProjects,
+  onShowCompletedProjectsChange,
 }: IntegratedProjectGanttProps) {
   const presentationRef = useRef<HTMLDivElement | null>(null);
+  const ganttSurfaceRef = useRef<HTMLDivElement | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const topScrollRef = useRef<HTMLDivElement | null>(null);
+  const headerScrollRef = useRef<HTMLDivElement | null>(null);
   const timelineContentRef = useRef<HTMLDivElement | null>(null);
   const hasInitialTodayScrollRef = useRef(false);
+  const hasInitializedMonthLayoutRef = useRef(false);
   const columnFocusRef = useRef<HTMLDivElement | null>(null);
   const cellFocusRef = useRef<HTMLDivElement | null>(null);
   const laserRef = useRef<HTMLDivElement | null>(null);
   const spotlightRef = useRef<HTMLDivElement | null>(null);
   const focusedRowElementsRef = useRef<HTMLElement[]>([]);
   const focusLockedRef = useRef(false);
+  const suppressTaskClickUntilRef = useRef(0);
+  const taskClickTimerRef = useRef<number | null>(null);
+  const contextMenuRef = useRef<HTMLDivElement | null>(null);
   const pointerFrozenRef = useRef(false);
   const projectRowRefs = useRef<Map<number, HTMLDivElement>>(new Map());
   const [searchQuery, setSearchQuery] = useState("");
@@ -434,7 +631,31 @@ export function IntegratedProjectGantt({
   const [taskTypeFilter, setTaskTypeFilter] = useState("전체");
   const [assemblyVendorFilter, setAssemblyVendorFilter] = useState("전체");
   const [sortKey, setSortKey] = useState<GanttSortKey>("project_name");
+  const [viewType, setViewType] = useState<GanttViewType>(GANTT_VIEW_TYPES.project);
+  const [collapsedViewGroups, setCollapsedViewGroups] = useState<Set<string>>(() => new Set());
   const [selectedTask, setSelectedTask] = useState<GanttTaskDetail | null>(null);
+  const [memoTarget, setMemoTarget] = useState<GanttMemoTarget | null>(null);
+  const [projectMemos, setProjectMemos] = useState<ProjectScheduleMemo[]>([]);
+  const [taskMemos, setTaskMemos] = useState<TaskScheduleMemo[]>([]);
+  const [taskDrag, setTaskDrag] = useState<TaskDragState | null>(null);
+  const [taskResize, setTaskResize] = useState<TaskResizeState | null>(null);
+  const [savingTaskId, setSavingTaskId] = useState<number | null>(null);
+  const [taskContextMenu, setTaskContextMenu] = useState<TaskContextMenuState | null>(null);
+  const [assigneeTask, setAssigneeTask] = useState<{ task: IntegratedTask; project: IntegratedProject } | null>(null);
+  const [tagTask, setTagTask] = useState<{ task: IntegratedTask; project: IntegratedProject } | null>(null);
+  const [dependencyTask, setDependencyTask] = useState<{ task: IntegratedTask; project: IntegratedProject } | null>(null);
+  const [dependencies, setDependencies] = useState<GanttDependencyItem[]>([]);
+  const [dependencyLoadState, setDependencyLoadState] = useState<"loading" | "ready" | "error">("loading");
+  const [pendingDependencyMove, setPendingDependencyMove] = useState<PendingDependencyMove | null>(null);
+  const [taskTags, setTaskTags] = useState<TaskTagRow[]>([]);
+  const [selectedTagFilters, setSelectedTagFilters] = useState<Set<TaskTagCode>>(() => new Set());
+  const [undoStack, setUndoStack] = useState<GanttHistoryEntry[]>([]);
+  const [redoStack, setRedoStack] = useState<GanttHistoryEntry[]>([]);
+  const [isHistoryApplying, setIsHistoryApplying] = useState(false);
+  const [selectedTaskIds, setSelectedTaskIds] = useState<Set<number>>(() => new Set());
+  const [selectionAnchorTaskId, setSelectionAnchorTaskId] = useState<number | null>(null);
+  const [bulkEditKind, setBulkEditKind] = useState<GanttBulkEditKind | null>(null);
+  const [isBulkApplying, setIsBulkApplying] = useState(false);
   const [isPresentation, setIsPresentation] = useState(false);
   const [isPresentationFilterOpen, setIsPresentationFilterOpen] =
     useState(false);
@@ -442,6 +663,7 @@ export function IntegratedProjectGantt({
   const [collapsedMonths, setCollapsedMonths] = useState<Set<string>>(
     () => new Set()
   );
+  const [isInitialMonthLayoutReady, setIsInitialMonthLayoutReady] = useState(false);
   const [meetingFocus, setMeetingFocus] = useState(false);
   const [laserEnabled, setLaserEnabled] = useState(false);
   const [spotlightEnabled, setSpotlightEnabled] = useState(false);
@@ -457,6 +679,7 @@ export function IntegratedProjectGantt({
       visibleTasks.map((task) => task.project_id)
     );
     const startDates = [
+      today,
       ...visibleTasks.flatMap((task) =>
         [task.start_date, task.due_date].filter(
           (date): date is string => Boolean(date)
@@ -471,6 +694,7 @@ export function IntegratedProjectGantt({
         ),
     ].sort();
     const endDates = [
+      today,
       ...visibleTasks.flatMap((task) =>
         [task.due_date, task.completed_date, task.start_date].filter(
           (date): date is string => Boolean(date)
@@ -491,21 +715,861 @@ export function IntegratedProjectGantt({
       start: startDates[0] || fallback.start,
       end: endDates[endDates.length - 1] || fallback.end,
     };
-  }, [currentMonth, projects, tasks, visibleTaskIds]);
+  }, [currentMonth, projects, tasks, today, visibleTaskIds]);
   const dateDays = useMemo(() => getDateRange(start, end), [end, start]);
-  const visibleDateDays = dateDays;
-  const monthGroups = useMemo(() => {
-    const groups: Array<{ key: string; count: number }> = [];
+
+  useEffect(() => {
+    if (hasInitializedMonthLayoutRef.current || dateDays.length === 0 || tasks.length === 0) return;
+    const currentMonthKey = today.slice(0, 7);
+    const previousMonthDate = parseDate(`${currentMonthKey}-01`);
+    previousMonthDate.setMonth(previousMonthDate.getMonth() - 1);
+    const previousMonthKey = formatDate(previousMonthDate).slice(0, 7);
+    const visibleProjectIds = new Set(
+      projects
+        .filter((project) => showCompletedProjects || !isProjectCompleted(project.status))
+        .map((project) => project.id)
+    );
+    const lastTaskMonth = tasks
+      .filter((task) => visibleTaskIds.has(task.id) && visibleProjectIds.has(task.project_id))
+      .flatMap((task) => [task.start_date, task.due_date].filter((date): date is string => Boolean(date)))
+      .sort()
+      .at(-1)
+      ?.slice(0, 7) ?? currentMonthKey;
+    const lastExpandedMonth = lastTaskMonth > currentMonthKey ? lastTaskMonth : currentMonthKey;
+    setCollapsedMonths(new Set(
+      dateDays
+        .map((date) => date.slice(0, 7))
+        .filter((month, index, months) => months.indexOf(month) === index)
+        .filter((month) => month < previousMonthKey || month > lastExpandedMonth)
+    ));
+    hasInitializedMonthLayoutRef.current = true;
+    setIsInitialMonthLayoutReady(true);
+  }, [dateDays, projects, showCompletedProjects, tasks, today, visibleTaskIds]);
+  const dayWidth = baseDayWidth * (zoom / 100);
+  const timelineColumns = useMemo(() => {
+    const columns: Array<{ key: string; monthKey: string; date: string | null; width: number }> = [];
+    const handledCollapsedMonths = new Set<string>();
     dateDays.forEach((date) => {
-      const key = date.slice(0, 7);
+      const monthKey = date.slice(0, 7);
+      if (collapsedMonths.has(monthKey)) {
+        if (!handledCollapsedMonths.has(monthKey)) {
+          columns.push({ key: `collapsed-${monthKey}`, monthKey, date: null, width: collapsedMonthWidth });
+          handledCollapsedMonths.add(monthKey);
+        }
+        return;
+      }
+      columns.push({ key: date, monthKey, date, width: dayWidth });
+    });
+    return columns;
+  }, [collapsedMonths, dateDays, dayWidth]);
+  const visibleDateDays = useMemo(
+    () => timelineColumns.flatMap((column) => column.date ? [column.date] : []),
+    [timelineColumns]
+  );
+  const timelineWidth = useMemo(
+    () => timelineColumns.reduce((total, column) => total + column.width, 0),
+    [timelineColumns]
+  );
+  const timelineColumnLefts = useMemo(() => {
+    let left = 0;
+    return timelineColumns.map((column) => {
+      const currentLeft = left;
+      left += column.width;
+      return currentLeft;
+    });
+  }, [timelineColumns]);
+  const monthGroups = useMemo(() => {
+    const groups: Array<{ key: string; width: number; collapsed: boolean }> = [];
+    timelineColumns.forEach((column) => {
       const last = groups[groups.length - 1];
-      if (last?.key === key) last.count += 1;
-      else groups.push({ key, count: 1 });
+      if (last?.key === column.monthKey) last.width += column.width;
+      else groups.push({ key: column.monthKey, width: column.width, collapsed: column.date === null });
     });
     return groups;
-  }, [dateDays]);
-  const dayWidth = baseDayWidth * (zoom / 100);
+  }, [timelineColumns]);
+  const dateLeftByValue = useMemo(() => new Map(
+    timelineColumns.flatMap((column, index) => column.date ? [[column.date, timelineColumnLefts[index]] as const] : [])
+  ), [timelineColumnLefts, timelineColumns]);
+
+  const getVisibleRangeGeometry = useCallback((rangeStart: string, rangeEnd: string) => {
+    const visibleIndexes = timelineColumns.flatMap((column, index) =>
+      column.date && column.date >= rangeStart && column.date <= rangeEnd ? [index] : []
+    );
+    if (visibleIndexes.length === 0) return null;
+    const firstIndex = visibleIndexes[0];
+    const lastIndex = visibleIndexes[visibleIndexes.length - 1];
+    const left = timelineColumnLefts[firstIndex];
+    const right = timelineColumnLefts[lastIndex] + timelineColumns[lastIndex].width;
+    return { left, width: Math.max(right - left, 28) };
+  }, [timelineColumnLefts, timelineColumns]);
+
+  function getTimelineColumnAtOffset(offset: number) {
+    const index = timelineColumns.findIndex(
+      (column, columnIndex) => offset < timelineColumnLefts[columnIndex] + column.width
+    );
+    return index >= 0 ? { column: timelineColumns[index], left: timelineColumnLefts[index] } : null;
+  }
+
+  function getCalendarOffsetForVisibleStep(anchorDate: string, visibleStep: number) {
+    if (visibleStep === 0 || visibleDateDays.length === 0) return 0;
+    let anchorIndex = visibleDateDays.findIndex((date) => date >= anchorDate);
+    if (anchorIndex === -1) anchorIndex = visibleDateDays.length - 1;
+    const targetIndex = Math.max(0, Math.min(anchorIndex + visibleStep, visibleDateDays.length - 1));
+    return getDayDiff(anchorDate, visibleDateDays[targetIndex]);
+  }
+
+  function syncHorizontalScroll(scrollLeft: number, source: "top" | "header" | "body") {
+    if (source !== "top" && topScrollRef.current && topScrollRef.current.scrollLeft !== scrollLeft) {
+      topScrollRef.current.scrollLeft = scrollLeft;
+    }
+    if (source !== "header" && headerScrollRef.current && headerScrollRef.current.scrollLeft !== scrollLeft) {
+      headerScrollRef.current.scrollLeft = scrollLeft;
+    }
+    if (source !== "body" && scrollRef.current && scrollRef.current.scrollLeft !== scrollLeft) {
+      scrollRef.current.scrollLeft = scrollLeft;
+    }
+  }
+
   const weekRange = useMemo(() => getWeekRange(today), [today]);
+  const projectIdsKey = useMemo(() => projects.map((project) => project.id).sort((a, b) => a - b).join(","), [projects]);
+  const taskIdsKey = useMemo(() => tasks.map((task) => task.id).sort((a, b) => a - b).join(","), [tasks]);
+
+  useEffect(() => {
+    let isActive = true;
+
+    async function loadMemos() {
+      const projectIds = projectIdsKey ? projectIdsKey.split(",").map(Number) : [];
+      const taskIds = taskIdsKey ? taskIdsKey.split(",").map(Number) : [];
+      const [projectResult, taskResult] = await Promise.all([
+        projectIds.length
+          ? supabase.from("project_schedule_memos").select("id, project_id, memo_date, content").in("project_id", projectIds)
+          : Promise.resolve({ data: [], error: null }),
+        taskIds.length
+          ? supabase.from("task_schedule_memos").select("id, task_id, content").in("task_id", taskIds)
+          : Promise.resolve({ data: [], error: null }),
+      ]);
+
+      if (!isActive) return;
+      if (projectResult.error || taskResult.error) {
+        console.error("Gantt memo load error:", projectResult.error || taskResult.error);
+        return;
+      }
+      setProjectMemos((projectResult.data || []) as ProjectScheduleMemo[]);
+      setTaskMemos((taskResult.data || []) as TaskScheduleMemo[]);
+    }
+
+    void loadMemos();
+    return () => { isActive = false; };
+  }, [projectIdsKey, taskIdsKey]);
+
+  useEffect(() => {
+    if (!taskContextMenu) return;
+    function closeOnPointerDown(event: PointerEvent) {
+      if (contextMenuRef.current?.contains(event.target as Node)) return;
+      setTaskContextMenu(null);
+    }
+    function closeMenu() {
+      setTaskContextMenu(null);
+    }
+    function closeOnEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") closeMenu();
+    }
+    window.addEventListener("pointerdown", closeOnPointerDown);
+    window.addEventListener("scroll", closeMenu, true);
+    window.addEventListener("keydown", closeOnEscape);
+    return () => {
+      window.removeEventListener("pointerdown", closeOnPointerDown);
+      window.removeEventListener("scroll", closeMenu, true);
+      window.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [taskContextMenu]);
+
+  useEffect(() => {
+    let isActive = true;
+    async function loadTaskTags() {
+      const taskIds = taskIdsKey ? taskIdsKey.split(",").map(Number) : [];
+      if (taskIds.length === 0) {
+        setTaskTags([]);
+        return;
+      }
+      const { data, error } = await supabase
+        .from("task_tags")
+        .select("task_id, tag")
+        .in("task_id", taskIds);
+      if (!isActive) return;
+      if (error) {
+        console.error("Gantt task tag load error:", error);
+        return;
+      }
+      setTaskTags((data || []) as TaskTagRow[]);
+    }
+    void loadTaskTags();
+    return () => { isActive = false; };
+  }, [taskIdsKey]);
+
+  useEffect(() => {
+    let isActive = true;
+    async function loadDependencies() {
+      setDependencyLoadState("loading");
+      const taskIds = taskIdsKey ? taskIdsKey.split(",").map(Number) : [];
+      if (taskIds.length === 0) {
+        setDependencies([]);
+        setDependencyLoadState("ready");
+        return;
+      }
+      const { data, error } = await supabase
+        .from("task_dependencies")
+        .select("id, predecessor_task_id, successor_task_id, dependency_type")
+        .in("successor_task_id", taskIds);
+      if (!isActive) return;
+      if (error) {
+        console.error("Gantt dependency load error:", error);
+        setDependencyLoadState("error");
+        return;
+      }
+      setDependencies((data || []) as GanttDependencyItem[]);
+      setDependencyLoadState("ready");
+    }
+    void loadDependencies();
+    return () => { isActive = false; };
+  }, [taskIdsKey]);
+
+  function openProjectMemo(project: IntegratedProject, memoDate: string) {
+    const memo = projectMemos.find((item) => item.project_id === project.id && item.memo_date === memoDate);
+    setMemoTarget({
+      type: "project",
+      projectId: project.id,
+      projectName: project.project_name,
+      date: memoDate,
+      taskId: null,
+      taskName: null,
+      memoId: memo?.id || null,
+      content: memo?.content || "",
+    });
+  }
+
+  function openTaskMemo(project: IntegratedProject, task: IntegratedTask) {
+    const memo = taskMemos.find((item) => item.task_id === task.id);
+    setMemoTarget({
+      type: "task",
+      projectId: project.id,
+      projectName: project.project_name,
+      date: null,
+      taskId: task.id,
+      taskName: task.task_name,
+      memoId: memo?.id || null,
+      content: memo?.content || "",
+    });
+  }
+
+  async function saveMemo(content: string) {
+    if (!memoTarget) return;
+
+    if (memoTarget.type === "project" && memoTarget.date) {
+      const { data, error } = await supabase.from("project_schedule_memos").upsert({
+        project_id: memoTarget.projectId,
+        memo_date: memoTarget.date,
+        content,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: "project_id,memo_date" }).select("id, project_id, memo_date, content").single();
+      if (error) throw error;
+      const saved = data as ProjectScheduleMemo;
+      setProjectMemos((current) => [...current.filter((item) => !(item.project_id === saved.project_id && item.memo_date === saved.memo_date)), saved]);
+    } else if (memoTarget.taskId !== null) {
+      const { data, error } = await supabase.from("task_schedule_memos").upsert({
+        task_id: memoTarget.taskId,
+        content,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: "task_id" }).select("id, task_id, content").single();
+      if (error) throw error;
+      const saved = data as TaskScheduleMemo;
+      setTaskMemos((current) => [...current.filter((item) => item.task_id !== saved.task_id), saved]);
+    }
+    setMemoTarget(null);
+  }
+
+  async function deleteMemo() {
+    if (!memoTarget?.memoId) return;
+    const table = memoTarget.type === "project" ? "project_schedule_memos" : "task_schedule_memos";
+    const { error } = await supabase.from(table).delete().eq("id", memoTarget.memoId);
+    if (error) throw error;
+    if (memoTarget.type === "project") {
+      setProjectMemos((current) => current.filter((item) => item.id !== memoTarget.memoId));
+    } else {
+      setTaskMemos((current) => current.filter((item) => item.id !== memoTarget.memoId));
+    }
+    setMemoTarget(null);
+  }
+
+  async function createDependency(successorTask: IntegratedTask, predecessorTaskId: number) {
+    const predecessor = tasks.find((task) => task.id === predecessorTaskId);
+    if (!predecessor || predecessor.project_id !== successorTask.project_id) throw new Error("같은 프로젝트의 업무만 연결할 수 있습니다.");
+    if (predecessor.project_assembly_vendor_id !== successorTask.project_assembly_vendor_id) throw new Error("같은 조립업체의 업무만 연결할 수 있습니다.");
+    const { data, error } = await supabase.rpc("create_task_dependency", {
+      p_predecessor_task_id: predecessorTaskId,
+      p_successor_task_id: successorTask.id,
+    });
+    if (error) throw error;
+    const saved = data as GanttDependencyItem;
+    setDependencies((current) => [...current.filter((item) => item.id !== saved.id), saved]);
+    void logActivity({
+      type: "task_update",
+      title: "선후관계 생성",
+      description: `${predecessor.task_name || "업무"}\n↓\n${successorTask.task_name || "업무"}\nFS`,
+      projectId: successorTask.project_id,
+      targetType: "task",
+      targetId: successorTask.id,
+      metadata: { dependencyId: saved.id, predecessorTaskId, successorTaskId: successorTask.id, dependencyType: "FS" },
+    });
+  }
+
+  async function deleteDependency(dependency: GanttDependencyItem) {
+    const { error } = await supabase.from("task_dependencies").delete().eq("id", dependency.id);
+    if (error) throw error;
+    setDependencies((current) => current.filter((item) => item.id !== dependency.id));
+    const predecessor = tasks.find((task) => task.id === dependency.predecessor_task_id);
+    const successor = tasks.find((task) => task.id === dependency.successor_task_id);
+    void logActivity({
+      type: "task_update",
+      title: "선후관계 삭제",
+      description: `${predecessor?.task_name || "업무"}\n↓\n${successor?.task_name || "업무"}\nFS`,
+      projectId: successor?.project_id || predecessor?.project_id,
+      targetType: "task",
+      targetId: successor?.id,
+      metadata: { dependencyId: dependency.id, predecessorTaskId: dependency.predecessor_task_id, successorTaskId: dependency.successor_task_id, dependencyType: "FS" },
+    });
+  }
+
+  function shiftDate(date: string, offsetDays: number) {
+    return formatDate(addDays(parseDate(date), offsetDays));
+  }
+
+  function registerScheduleHistory(entry: Omit<GanttHistoryEntry, "id" | "createdAt">) {
+    const historyEntry: GanttHistoryEntry = {
+      ...entry,
+      id: crypto.randomUUID(),
+      createdAt: Date.now(),
+    };
+    setUndoStack((current) => [...current, historyEntry].slice(-MAX_GANTT_HISTORY));
+    setRedoStack([]);
+  }
+
+  const persistAndPublishTaskOrders = useCallback(async (nextTasks: IntegratedTask[]) => {
+    const orderResult = await persistRecalculatedTaskOrders(nextTasks);
+    if (orderResult.error) {
+      window.alert(`업무 순서를 저장하지 못했습니다.\n${orderResult.error.message}`);
+      return false;
+    }
+    orderResult.data.forEach((task) => onTaskUpdated(task));
+    return true;
+  }, [onTaskUpdated]);
+
+  function getDescendantTaskIds(predecessorTaskId: number) {
+    const result: number[] = [];
+    const visited = new Set<number>([predecessorTaskId]);
+    const queue = [predecessorTaskId];
+    while (queue.length > 0) {
+      const currentTaskId = queue.shift();
+      if (currentTaskId === undefined) break;
+      dependencies
+        .filter((dependency) => dependency.predecessor_task_id === currentTaskId)
+        .forEach((dependency) => {
+          if (visited.has(dependency.successor_task_id)) return;
+          visited.add(dependency.successor_task_id);
+          result.push(dependency.successor_task_id);
+          queue.push(dependency.successor_task_id);
+        });
+    }
+    return result;
+  }
+
+  function createMoveChange(task: IntegratedTask, offsetDays: number, source: GanttScheduleChange["source"]): GanttScheduleChange | null {
+    if (!task.start_date && !task.due_date) return null;
+    const startDate = task.start_date || task.due_date || "";
+    const dueDate = task.due_date || task.start_date || "";
+    return {
+      taskId: task.id,
+      before: { startDate, dueDate },
+      after: { startDate: shiftDate(startDate, offsetDays), dueDate: shiftDate(dueDate, offsetDays) },
+      taskName: task.task_name || "업무",
+      projectName: projects.find((project) => project.id === task.project_id)?.project_name || "프로젝트",
+      source,
+    };
+  }
+
+  async function saveScheduleBatch(operation: PendingDependencyMove, includeDependencies: boolean) {
+    const changesByTaskId = new Map<number, GanttScheduleChange>();
+    operation.baseChanges.forEach((change) => changesByTaskId.set(change.taskId, change));
+    if (includeDependencies) operation.dependencyChanges.forEach((change) => {
+      if (!changesByTaskId.has(change.taskId)) changesByTaskId.set(change.taskId, change);
+    });
+    const changes = Array.from(changesByTaskId.values());
+    if (changes.length === 0) return false;
+
+    setSavingTaskId(operation.primaryTaskId);
+    changes.forEach((change) => {
+      const task = tasks.find((item) => item.id === change.taskId);
+      if (task) onTaskUpdated({ ...task, start_date: change.after.startDate, due_date: change.after.dueDate });
+    });
+    const results = await Promise.all(changes.map((change) =>
+      supabase.from("tasks").update({ start_date: change.after.startDate, due_date: change.after.dueDate }).eq("id", change.taskId)
+    ));
+    const failed = results.find((result) => result.error);
+    if (failed?.error) {
+      console.error("Gantt schedule batch update error:", { changes, error: failed.error });
+      changes.forEach((change) => {
+        const task = tasks.find((item) => item.id === change.taskId);
+        if (task) onTaskUpdated(task);
+      });
+      await Promise.all(results.map((result, index) => result.error
+        ? Promise.resolve()
+        : supabase.from("tasks").update({ start_date: changes[index].before.startDate, due_date: changes[index].before.dueDate }).eq("id", changes[index].taskId)));
+      setSavingTaskId(null);
+      window.alert(`업무 일정을 저장하지 못했습니다. 모든 변경을 원복했습니다.\n${failed.error.message}`);
+      return false;
+    }
+
+    const savedScheduleByTaskId = new Map(changes.map((change) => [change.taskId, change.after]));
+    await persistAndPublishTaskOrders(tasks.map((task) => {
+      const schedule = savedScheduleByTaskId.get(task.id);
+      return schedule ? { ...task, start_date: schedule.startDate, due_date: schedule.dueDate } : task;
+    }));
+
+    registerScheduleHistory({ action: operation.action, changes });
+    const primary = changes.find((change) => change.taskId === operation.primaryTaskId) || changes[0];
+    const multiCount = changes.filter((change) => change.source === "multi-select").length;
+    const dependencyCount = changes.filter((change) => change.source === "dependency").length;
+    void logActivity({
+      type: "task_update",
+      title: operation.action === "move" ? "간트 일정 일괄 이동" : "간트 업무 기간 변경",
+      description: `기준 업무: ${primary.taskName}\n이동: ${operation.offsetDays > 0 ? "+" : ""}${operation.offsetDays}일\n다중 선택: ${multiCount}건\n후행 업무: ${dependencyCount}건`,
+      projectId: tasks.find((task) => task.id === operation.primaryTaskId)?.project_id,
+      targetType: "task",
+      targetId: operation.primaryTaskId,
+      metadata: { action: operation.action, offsetDays: operation.offsetDays, changes },
+    });
+    setSavingTaskId(null);
+    return true;
+  }
+
+  function requestScheduleBatch(operation: PendingDependencyMove) {
+    if (operation.dependencyChanges.length === 0) {
+      void saveScheduleBatch(operation, false);
+      return;
+    }
+    setPendingDependencyMove(operation);
+  }
+
+  async function resolveDependencyMove(choice: "include" | "exclude" | "cancel") {
+    const operation = pendingDependencyMove;
+    setPendingDependencyMove(null);
+    if (!operation || choice === "cancel") return;
+    const saved = await saveScheduleBatch(operation, choice === "include");
+    if (!saved || choice === "include") return;
+    const primaryAfter = operation.baseChanges.find((change) => change.taskId === operation.primaryTaskId)?.after;
+    const hasViolation = primaryAfter && dependencies
+      .filter((dependency) => dependency.predecessor_task_id === operation.primaryTaskId)
+      .some((dependency) => {
+        const successor = tasks.find((task) => task.id === dependency.successor_task_id);
+        const successorStart = successor?.start_date || successor?.due_date;
+        return successorStart ? primaryAfter.dueDate >= successorStart : false;
+      });
+    if (hasViolation) window.alert("후행 작업 일정이 선행 작업 종료일보다 빠릅니다.");
+  }
+
+  function startTaskDrag(
+    event: React.PointerEvent<HTMLButtonElement>,
+    project: IntegratedProject,
+    task: IntegratedTask,
+    startDate: string,
+    dueDate: string,
+    lane: number
+  ) {
+    if (!canEdit || savingTaskId !== null || isHistoryApplying || isBulkApplying || event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey) return;
+    if (dependencyLoadState !== "ready") {
+      window.alert(dependencyLoadState === "error" ? "선후관계 데이터를 불러오지 못해 일정을 이동할 수 없습니다." : "선후관계 데이터를 불러오는 중입니다.");
+      return;
+    }
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setTaskDrag({
+      task,
+      project,
+      pointerId: event.pointerId,
+      originClientX: event.clientX,
+      offsetDays: 0,
+      startDate,
+      dueDate,
+      lane,
+    });
+  }
+
+  function moveTaskDrag(event: React.PointerEvent<HTMLButtonElement>) {
+    if (!taskDrag || taskDrag.pointerId !== event.pointerId) return;
+    const pixelOffset = event.clientX - taskDrag.originClientX;
+    const visibleStep = Math.abs(pixelOffset) < dayWidth / 2
+      ? 0
+      : Math.round(pixelOffset / dayWidth);
+    const nextOffset = getCalendarOffsetForVisibleStep(taskDrag.startDate, visibleStep);
+    if (nextOffset !== taskDrag.offsetDays) {
+      if (nextOffset !== 0 && taskClickTimerRef.current !== null) {
+        window.clearTimeout(taskClickTimerRef.current);
+        taskClickTimerRef.current = null;
+      }
+      setTaskDrag((current) => current ? { ...current, offsetDays: nextOffset } : null);
+    }
+  }
+
+  function finishTaskDrag(event: React.PointerEvent<HTMLButtonElement>) {
+    if (!taskDrag || taskDrag.pointerId !== event.pointerId) return;
+    event.currentTarget.releasePointerCapture(event.pointerId);
+    const completedDrag = taskDrag;
+    setTaskDrag(null);
+    if (completedDrag.offsetDays === 0) return;
+
+    suppressTaskClickUntilRef.current = Date.now() + 500;
+    const selectedIds = selectedTaskIds.has(completedDrag.task.id) && selectedTaskIds.size > 1
+      ? selectedTaskIds
+      : new Set([completedDrag.task.id]);
+    const baseChanges = tasks.flatMap((task) => {
+      if (!selectedIds.has(task.id)) return [];
+      const change = createMoveChange(task, completedDrag.offsetDays, task.id === completedDrag.task.id ? "primary" : "multi-select");
+      return change ? [change] : [];
+    });
+    const baseIds = new Set(baseChanges.map((change) => change.taskId));
+    const dependencyChanges = getDescendantTaskIds(completedDrag.task.id).flatMap((taskId) => {
+      if (baseIds.has(taskId)) return [];
+      const task = tasks.find((item) => item.id === taskId);
+      const change = task ? createMoveChange(task, completedDrag.offsetDays, "dependency") : null;
+      return change ? [change] : [];
+    });
+    requestScheduleBatch({ action: "move", primaryTaskId: completedDrag.task.id, offsetDays: completedDrag.offsetDays, baseChanges, dependencyChanges });
+  }
+
+  function cancelTaskDrag(event: React.PointerEvent<HTMLButtonElement>) {
+    if (taskDrag?.pointerId !== event.pointerId) return;
+    setTaskDrag(null);
+  }
+
+  function startTaskResize(
+    event: React.PointerEvent<HTMLSpanElement>,
+    edge: "start" | "end",
+    project: IntegratedProject,
+    task: IntegratedTask,
+    startDate: string,
+    dueDate: string,
+    lane: number
+  ) {
+    event.stopPropagation();
+    if (!canEdit || savingTaskId !== null || isHistoryApplying || isBulkApplying || event.button !== 0) return;
+    if (dependencyLoadState !== "ready") {
+      window.alert(dependencyLoadState === "error" ? "선후관계 데이터를 불러오지 못해 기간을 조절할 수 없습니다." : "선후관계 데이터를 불러오는 중입니다.");
+      return;
+    }
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setTaskResize({
+      task,
+      project,
+      edge,
+      pointerId: event.pointerId,
+      originClientX: event.clientX,
+      offsetDays: 0,
+      startDate,
+      dueDate,
+      lane,
+    });
+  }
+
+  function moveTaskResize(event: React.PointerEvent<HTMLSpanElement>) {
+    event.stopPropagation();
+    if (!taskResize || taskResize.pointerId !== event.pointerId) return;
+    const pixelOffset = event.clientX - taskResize.originClientX;
+    const visibleStep = Math.abs(pixelOffset) < dayWidth / 2
+      ? 0
+      : Math.round(pixelOffset / dayWidth);
+    const anchorDate = taskResize.edge === "start" ? taskResize.startDate : taskResize.dueDate;
+    const snappedOffset = getCalendarOffsetForVisibleStep(anchorDate, visibleStep);
+    const maximumShrink = getDayDiff(taskResize.startDate, taskResize.dueDate);
+    const nextOffset = taskResize.edge === "start"
+      ? Math.min(snappedOffset, maximumShrink)
+      : Math.max(snappedOffset, -maximumShrink);
+    if (nextOffset !== taskResize.offsetDays) {
+      setTaskResize((current) => current ? { ...current, offsetDays: nextOffset } : null);
+    }
+  }
+
+  function finishTaskResize(event: React.PointerEvent<HTMLSpanElement>) {
+    event.stopPropagation();
+    if (!taskResize || taskResize.pointerId !== event.pointerId) return;
+    event.currentTarget.releasePointerCapture(event.pointerId);
+    const completedResize = taskResize;
+    setTaskResize(null);
+    if (completedResize.offsetDays === 0) return;
+
+    suppressTaskClickUntilRef.current = Date.now() + 500;
+    const nextStartDate = completedResize.edge === "start"
+      ? shiftDate(completedResize.startDate, completedResize.offsetDays)
+      : completedResize.startDate;
+    const nextDueDate = completedResize.edge === "end"
+      ? shiftDate(completedResize.dueDate, completedResize.offsetDays)
+      : completedResize.dueDate;
+    const primaryChange: GanttScheduleChange = {
+      taskId: completedResize.task.id,
+      before: { startDate: completedResize.startDate, dueDate: completedResize.dueDate },
+      after: { startDate: nextStartDate, dueDate: nextDueDate },
+      taskName: completedResize.task.task_name || "업무",
+      projectName: completedResize.project.project_name,
+      source: "primary",
+    };
+    const dependencyChanges = completedResize.edge === "end"
+      ? getDescendantTaskIds(completedResize.task.id).flatMap((taskId) => {
+          const task = tasks.find((item) => item.id === taskId);
+          const change = task ? createMoveChange(task, completedResize.offsetDays, "dependency") : null;
+          return change ? [change] : [];
+        })
+      : [];
+    requestScheduleBatch({ action: "resize", primaryTaskId: completedResize.task.id, offsetDays: completedResize.offsetDays, baseChanges: [primaryChange], dependencyChanges });
+  }
+
+  function cancelTaskResize(event: React.PointerEvent<HTMLSpanElement>) {
+    event.stopPropagation();
+    if (taskResize?.pointerId !== event.pointerId) return;
+    setTaskResize(null);
+  }
+
+  async function saveTaskAssignee(task: IntegratedTask, project: IntegratedProject, assignee: string | null) {
+    const previousAssignee = task.assignee || null;
+    if (previousAssignee === assignee) {
+      setAssigneeTask(null);
+      return;
+    }
+
+    const optimisticTask = { ...task, assignee };
+    onTaskUpdated(optimisticTask);
+    const { error } = await supabase
+      .from("tasks")
+      .update({ assignee })
+      .eq("id", task.id);
+
+    if (error) {
+      console.error("Gantt task assignee update error:", {
+        taskId: task.id,
+        previousAssignee,
+        nextAssignee: assignee,
+        error,
+      });
+      onTaskUpdated(task);
+      throw error;
+    }
+
+    void logActivity({
+      type: "task_assignee_change",
+      title: "업무 담당자 변경",
+      description: `프로젝트: ${project.project_name}\n업무: ${task.task_name || "업무"}\n기존 담당자: ${previousAssignee || "미지정"}\n변경 담당자: ${assignee || "미지정"}`,
+      projectId: task.project_id,
+      targetType: "task",
+      targetId: task.id,
+      metadata: {
+        previousAssignee,
+        nextAssignee: assignee,
+      },
+    });
+    setAssigneeTask(null);
+  }
+
+  async function saveTaskStatus(task: IntegratedTask, nextStatus: string) {
+    const previousStatus = normalizeTaskStatus(task.status) || "pending";
+    if (previousStatus === nextStatus || savingTaskId !== null) {
+      setTaskContextMenu(null);
+      return;
+    }
+
+    const nextCompletedDate = isTaskCompleted(nextStatus) ? today : null;
+    const optimisticTask = {
+      ...task,
+      status: nextStatus,
+      completed_date: nextCompletedDate,
+    };
+    setTaskContextMenu(null);
+    setSavingTaskId(task.id);
+    onTaskUpdated(optimisticTask);
+
+    const { error } = await supabase
+      .from("tasks")
+      .update({ status: nextStatus, completed_date: nextCompletedDate })
+      .eq("id", task.id);
+
+    if (error) {
+      console.error("Gantt task status update error:", {
+        taskId: task.id,
+        previousStatus,
+        nextStatus,
+        previousCompletedDate: task.completed_date,
+        nextCompletedDate,
+        error,
+      });
+      onTaskUpdated(task);
+      setSavingTaskId(null);
+      window.alert(`업무 상태를 저장하지 못했습니다.\n${error.message}`);
+      return;
+    }
+
+    void logActivity({
+      type: isTaskCompleted(nextStatus) ? "task_complete" : "task_status_change",
+      title: isTaskCompleted(nextStatus) ? "업무 완료" : "업무 상태 변경",
+      description: `${task.task_name || "업무"}\n${getTaskStatusLabel(previousStatus)} → ${getTaskStatusLabel(nextStatus)}`,
+      projectId: task.project_id,
+      targetType: "task",
+      targetId: task.id,
+      metadata: {
+        previousStatus,
+        nextStatus,
+        previousCompletedDate: task.completed_date,
+        nextCompletedDate,
+      },
+    });
+    setSavingTaskId(null);
+  }
+
+  async function saveTaskTags(task: IntegratedTask, nextTags: TaskTagCode[]) {
+    const previousTags = taskTags.filter((item) => item.task_id === task.id).map((item) => item.tag);
+    const nextRows = nextTags.map((tag) => ({ task_id: task.id, tag }));
+    setTaskTags((current) => [...current.filter((item) => item.task_id !== task.id), ...nextRows]);
+
+    const { data, error } = await supabase.rpc("set_task_tags", {
+      p_task_id: task.id,
+      p_tags: nextTags,
+    });
+    if (error) {
+      console.error("Gantt task tag update error:", { taskId: task.id, previousTags, nextTags, error });
+      setTaskTags((current) => [
+        ...current.filter((item) => item.task_id !== task.id),
+        ...previousTags.map((tag) => ({ task_id: task.id, tag })),
+      ]);
+      throw error;
+    }
+
+    const savedRows = (data || []) as TaskTagRow[];
+    setTaskTags((current) => [...current.filter((item) => item.task_id !== task.id), ...savedRows]);
+    const addedTags = nextTags.filter((tag) => !previousTags.includes(tag));
+    const removedTags = previousTags.filter((tag) => !nextTags.includes(tag as TaskTagCode));
+    const describeTags = (tags: string[]) => tags
+      .map((tag) => getTaskTagDefinition(tag))
+      .filter((tag) => tag !== undefined)
+      .map((tag) => `${tag.icon} ${tag.label}`)
+      .join(", ");
+    void logActivity({
+      type: "task_update",
+      title: "업무 Tag 변경",
+      description: `${task.task_name || "업무"}\n추가: ${describeTags(addedTags) || "-"}\n삭제: ${describeTags(removedTags) || "-"}`,
+      projectId: task.project_id,
+      targetType: "task",
+      targetId: task.id,
+      metadata: { addedTags, removedTags },
+    });
+    setTagTask(null);
+  }
+
+  const applyScheduleHistory = useCallback(async (direction: "undo" | "redo") => {
+    if (!canEdit || isHistoryApplying || savingTaskId !== null) return;
+    const sourceStack = direction === "undo" ? undoStack : redoStack;
+    const entry = sourceStack[sourceStack.length - 1];
+    if (!entry) return;
+
+    const currentItems = entry.changes.map((change) => ({ change, task: tasks.find((task) => task.id === change.taskId) }));
+    if (currentItems.some((item) => !item.task)) {
+      if (direction === "undo") setUndoStack((current) => current.slice(0, -1));
+      else setRedoStack((current) => current.slice(0, -1));
+      window.alert("이력에 포함된 업무가 현재 데이터에 없어 이력을 제거했습니다.");
+      return;
+    }
+
+    const scheduleItems = currentItems.map(({ change, task }) => {
+      const existingTask = task as IntegratedTask;
+      return {
+        change,
+        task: existingTask,
+        current: { startDate: existingTask.start_date || existingTask.due_date || "", dueDate: existingTask.due_date || existingTask.start_date || "" },
+        expected: direction === "undo" ? change.after : change.before,
+        target: direction === "undo" ? change.before : change.after,
+      };
+    });
+    if (scheduleItems.some((item) => item.current.startDate !== item.expected.startDate || item.current.dueDate !== item.expected.dueDate) &&
+      !window.confirm("이 업무 일정이 다른 곳에서 변경되었을 수 있습니다. 계속하시겠습니까?")
+    ) return;
+
+    setIsHistoryApplying(true);
+    setSavingTaskId(scheduleItems[0]?.task.id || null);
+    scheduleItems.forEach((item) => onTaskUpdated({ ...item.task, start_date: item.target.startDate, due_date: item.target.dueDate }));
+    const results = await Promise.all(scheduleItems.map((item) =>
+      supabase.from("tasks").update({ start_date: item.target.startDate, due_date: item.target.dueDate }).eq("id", item.task.id)
+    ));
+    const failedResult = results.find((result) => result.error);
+
+    if (failedResult?.error) {
+      console.error(`Gantt schedule ${direction} error:`, { entry, error: failedResult.error });
+      scheduleItems.forEach((item) => onTaskUpdated(item.task));
+      await Promise.all(results.map((result, index) => result.error
+        ? Promise.resolve()
+        : supabase.from("tasks").update({ start_date: scheduleItems[index].current.startDate, due_date: scheduleItems[index].current.dueDate }).eq("id", scheduleItems[index].task.id)));
+      setSavingTaskId(null);
+      setIsHistoryApplying(false);
+      window.alert(`업무 일정 ${direction === "undo" ? "실행 취소" : "다시 실행"}에 실패했습니다.\n${failedResult.error.message}`);
+      return;
+    }
+
+    const historyScheduleByTaskId = new Map(scheduleItems.map((item) => [item.task.id, item.target]));
+    await persistAndPublishTaskOrders(tasks.map((task) => {
+      const schedule = historyScheduleByTaskId.get(task.id);
+      return schedule ? { ...task, start_date: schedule.startDate, due_date: schedule.dueDate } : task;
+    }));
+
+    if (direction === "undo") {
+      setUndoStack((current) => current.slice(0, -1));
+      setRedoStack((current) => [...current, entry].slice(-MAX_GANTT_HISTORY));
+    } else {
+      setRedoStack((current) => current.slice(0, -1));
+      setUndoStack((current) => [...current, entry].slice(-MAX_GANTT_HISTORY));
+    }
+
+    void logActivity({
+      type: "task_update",
+      title: direction === "undo" ? "간트 일정 변경 실행 취소" : "간트 일정 변경 다시 실행",
+      description: `${entry.changes.length}개 업무 일정 ${direction === "undo" ? "복구" : "재적용"}`,
+      projectId: scheduleItems[0].task.project_id,
+      targetType: "task",
+      targetId: scheduleItems[0].task.id,
+      metadata: { direction, action: entry.action, changes: entry.changes },
+    });
+    setSavingTaskId(null);
+    setIsHistoryApplying(false);
+  }, [canEdit, isHistoryApplying, onTaskUpdated, persistAndPublishTaskOrders, redoStack, savingTaskId, tasks, undoStack]);
+
+  useEffect(() => {
+    function handleHistoryShortcut(event: KeyboardEvent) {
+      if (!canEdit || !(event.ctrlKey || event.metaKey)) return;
+      const target = event.target;
+      if (
+        target instanceof HTMLInputElement ||
+        target instanceof HTMLTextAreaElement ||
+        target instanceof HTMLSelectElement ||
+        (target instanceof HTMLElement && target.isContentEditable)
+      ) return;
+
+      const key = event.key.toLowerCase();
+      if (key === "z" && event.shiftKey) {
+        event.preventDefault();
+        void applyScheduleHistory("redo");
+      } else if (key === "z") {
+        event.preventDefault();
+        void applyScheduleHistory("undo");
+      } else if (key === "y") {
+        event.preventDefault();
+        void applyScheduleHistory("redo");
+      }
+    }
+    window.addEventListener("keydown", handleHistoryShortcut);
+    return () => window.removeEventListener("keydown", handleHistoryShortcut);
+  }, [applyScheduleHistory, canEdit]);
 
   const savePresentationState = useCallback(
     (patch: Partial<PresentationPreferences> = {}) => {
@@ -604,6 +1668,9 @@ export function IntegratedProjectGantt({
   }, [isPresentation]);
 
   async function enterPresentation() {
+    setTaskContextMenu(null);
+    setAssigneeTask(null);
+    setTagTask(null);
     try {
       const stored = JSON.parse(
         window.localStorage.getItem(PRESENTATION_KEY) || "{}"
@@ -656,6 +1723,9 @@ export function IntegratedProjectGantt({
   }
 
   async function exitPresentation() {
+    setTaskContextMenu(null);
+    setAssigneeTask(null);
+    setTagTask(null);
     focusLockedRef.current = false;
     pointerFrozenRef.current = false;
     setFocusLocked(false);
@@ -666,16 +1736,52 @@ export function IntegratedProjectGantt({
   }
 
   const availableTasks = useMemo(
-    () =>
-      tasks.filter(
+    () => {
+      const visibleProjectIds = new Set(
+        projects
+          .filter((project) => showCompletedProjects || !isProjectCompleted(project.status))
+          .map((project) => project.id)
+      );
+      return tasks.filter(
         (task) =>
           visibleTaskIds.has(task.id) &&
+          visibleProjectIds.has(task.project_id) &&
           (task.start_date || task.due_date) &&
           (task.start_date || task.due_date || "") <= end &&
           (task.due_date || task.start_date || "") >= start
-      ),
-    [end, start, tasks, visibleTaskIds]
+      );
+    },
+    [end, projects, showCompletedProjects, start, tasks, visibleTaskIds]
   );
+
+  function toggleMonthCollapse(monthKey: string) {
+    const previousScrollLeft = scrollRef.current?.scrollLeft ?? 0;
+    const previousScrollTop = ganttSurfaceRef.current?.scrollTop ?? 0;
+    setCollapsedMonths((current) => {
+      const next = new Set(current);
+      if (next.has(monthKey)) next.delete(monthKey);
+      else next.add(monthKey);
+      savePresentationState({ collapsedMonths: Array.from(next) });
+      return next;
+    });
+    window.requestAnimationFrame(() => {
+      syncHorizontalScroll(previousScrollLeft, "body");
+      if (scrollRef.current) scrollRef.current.scrollLeft = previousScrollLeft;
+      if (ganttSurfaceRef.current) ganttSurfaceRef.current.scrollTop = previousScrollTop;
+    });
+  }
+
+  function toggleCompletedVisibility() {
+    const scrollPosition = {
+      left: scrollRef.current?.scrollLeft ?? 0,
+      top: ganttSurfaceRef.current?.scrollTop ?? 0,
+    };
+    onShowCompletedProjectsChange(!showCompletedProjects);
+    window.requestAnimationFrame(() => {
+      scrollRef.current?.scrollTo({ left: scrollPosition.left });
+      ganttSurfaceRef.current?.scrollTo({ top: scrollPosition.top });
+    });
+  }
 
   const assigneeOptions = useMemo(() => {
     const assignees = availableTasks.map((task) => task.assignee || "미배정");
@@ -690,15 +1796,10 @@ export function IntegratedProjectGantt({
   }, [availableTasks]);
 
   const assemblyVendorOptions = useMemo(() => {
-    const visibleProjectIds = new Set(
-      availableTasks.map((task) => task.project_id)
-    );
-    const vendors = projects
-      .filter((project) => visibleProjectIds.has(project.id))
-      .map((project) => normalizeAssemblyVendor(project.assembly_vendor) || "미지정");
+    const vendors = availableTasks.map((task) => getTaskAssemblyVendorName(task));
 
     return ["전체", ...Array.from(new Set(vendors)).sort()];
-  }, [availableTasks, projects]);
+  }, [availableTasks]);
 
   function resetGanttFilters() {
     setSearchQuery("");
@@ -707,28 +1808,35 @@ export function IntegratedProjectGantt({
     setTaskTypeFilter("전체");
     setAssemblyVendorFilter("전체");
     setSortKey("project_name");
+    setViewType(GANTT_VIEW_TYPES.project);
+    setSelectedTagFilters(new Set());
   }
 
   const rows = useMemo<ProjectRow[]>(() => {
     const projectMap = new Map(projects.map((project) => [project.id, project]));
-    const tasksByProject = new Map<number, IntegratedTask[]>();
+    const tasksByScope = new Map<string, IntegratedTask[]>();
     const normalizedSearchQuery = searchQuery.trim().toLowerCase();
 
     tasks.forEach((task) => {
-      if (!tasksByProject.has(task.project_id)) {
-        tasksByProject.set(task.project_id, []);
+      const scopeKey = `${task.project_id}:${task.project_assembly_vendor_id ?? "legacy"}`;
+      if (!tasksByScope.has(scopeKey)) {
+        tasksByScope.set(scopeKey, []);
       }
 
-      tasksByProject.get(task.project_id)?.push(task);
+      tasksByScope.get(scopeKey)?.push(task);
     });
 
-    return Array.from(tasksByProject.entries())
-      .map(([projectId, projectTasks]) => {
-        const project = projectMap.get(projectId);
+    return Array.from(tasksByScope.entries())
+      .map(([rowKey, projectTasks]) => {
+        const firstTask = projectTasks[0];
+        if (!firstTask) return null;
+        const project = projectMap.get(firstTask.project_id);
         if (!project) return null;
+        if (!showCompletedProjects && isProjectCompleted(project.status)) return null;
 
-        const assemblyVendor =
-          normalizeAssemblyVendor(project.assembly_vendor) || "미지정";
+        const assemblyVendorId = firstTask.project_assembly_vendor_id;
+        const assemblyVendor = getTaskAssemblyVendorName(firstTask);
+        const allocatedQuantity = firstTask.project_assembly_vendor?.allocated_quantity ?? null;
         const matchesAssemblyVendor =
           assemblyVendorFilter === "전체" ||
           assemblyVendor === assemblyVendorFilter;
@@ -769,6 +1877,12 @@ export function IntegratedProjectGantt({
             const matchesTaskType =
               taskTypeFilter === "전체" ||
               getTaskTypeLabel(task.task_type) === taskTypeFilter;
+            const tagsForTask = taskTags
+              .filter((item) => item.task_id === task.id)
+              .map((item) => item.tag);
+            const matchesTags =
+              selectedTagFilters.size === 0 ||
+              Array.from(selectedTagFilters).some((tag) => tagsForTask.includes(tag));
             const searchFields = [
               project.project_name,
               project.project_code || "",
@@ -777,6 +1891,7 @@ export function IntegratedProjectGantt({
               project.salesperson || "",
               task.task_name || "",
               task.task_type || "",
+              getTaskAssemblyVendorName(task),
             ].map((value) => value.toLowerCase());
             const matchesSearch =
               normalizedSearchQuery === "" ||
@@ -786,17 +1901,11 @@ export function IntegratedProjectGantt({
               matchesStatus &&
               matchesAssignee &&
               matchesTaskType &&
+              matchesTags &&
               matchesSearch
             );
           })
-          .sort((a, b) => {
-            const orderA = a.task.task_order ?? Number.MAX_SAFE_INTEGER;
-            const orderB = b.task.task_order ?? Number.MAX_SAFE_INTEGER;
-
-            if (orderA !== orderB) return orderA - orderB;
-            if (a.startDate !== b.startDate) return a.startDate.localeCompare(b.startDate);
-            return (a.task.task_name || "").localeCompare(b.task.task_name || "");
-          });
+          .sort((a, b) => compareTasksBySchedule(a.task, b.task));
 
         if (visibleTasks.length === 0) return null;
 
@@ -818,7 +1927,11 @@ export function IntegratedProjectGantt({
             : 0;
 
         return {
+          rowKey,
           project,
+          assemblyVendorId,
+          assemblyVendorName: assemblyVendor,
+          allocatedQuantity,
           progress,
           taskCount: projectTasks.length,
           completedCount,
@@ -852,8 +1965,8 @@ export function IntegratedProjectGantt({
         }
 
         if (sortKey === "assembly_vendor") {
-          const vendorA = normalizeAssemblyVendor(a.project.assembly_vendor);
-          const vendorB = normalizeAssemblyVendor(b.project.assembly_vendor);
+          const vendorA = a.assemblyVendorName;
+          const vendorB = b.assemblyVendorName;
 
           if (vendorA && !vendorB) return -1;
           if (!vendorA && vendorB) return 1;
@@ -871,16 +1984,173 @@ export function IntegratedProjectGantt({
     end,
     projects,
     searchQuery,
+    selectedTagFilters,
+    showCompletedProjects,
     sortKey,
     start,
     statusFilter,
     taskTypeFilter,
+    taskTags,
     tasks,
     today,
     visibleTaskIds,
     weekRange.end,
     weekRange.start,
   ]);
+
+  const displayItems = useMemo(
+    () => buildGroupedView(rows, viewType, collapsedViewGroups),
+    [collapsedViewGroups, rows, viewType]
+  );
+
+  function changeViewType(nextViewType: GanttViewType) {
+    if (
+      nextViewType === GANTT_VIEW_TYPES.assignee ||
+      nextViewType === GANTT_VIEW_TYPES.status ||
+      nextViewType === GANTT_VIEW_TYPES.process
+    ) return;
+    const scrollPosition = {
+      left: scrollRef.current?.scrollLeft ?? 0,
+      top: ganttSurfaceRef.current?.scrollTop ?? 0,
+    };
+    setViewType(nextViewType);
+    window.requestAnimationFrame(() => {
+      scrollRef.current?.scrollTo({ left: scrollPosition.left });
+      ganttSurfaceRef.current?.scrollTo({ top: scrollPosition.top });
+    });
+  }
+
+  function toggleViewGroup(groupKey: string) {
+    setCollapsedViewGroups((current) => {
+      const next = new Set(current);
+      if (next.has(groupKey)) next.delete(groupKey);
+      else next.add(groupKey);
+      return next;
+    });
+  }
+
+  const visibleTaskOrder = useMemo(
+    () => rows.flatMap((row) => row.segments.map((segment) => segment.task.id)),
+    [rows]
+  );
+  const dependencyLines = useMemo(() => {
+    const positions = new Map<number, { startX: number; endX: number; y: number; taskName: string }>();
+    let rowTop = 0;
+    displayItems.forEach((item) => {
+      if (item.kind === "group") {
+        rowTop += item.height;
+        return;
+      }
+      const row = item.row;
+      row.segments.forEach((segment) => {
+        const geometry = getVisibleRangeGeometry(segment.startDate, segment.dueDate);
+        if (!geometry) return;
+        const startX = geometry.left + 4;
+        const width = Math.max(geometry.width - 8, 28);
+        positions.set(segment.task.id, {
+          startX,
+          endX: startX + width,
+          y: rowTop + 16 + segment.lane * laneHeight + 10,
+          taskName: segment.task.task_name || "업무",
+        });
+      });
+      rowTop += row.rowHeight;
+    });
+    return dependencies.flatMap((dependency) => {
+      const predecessor = positions.get(dependency.predecessor_task_id);
+      const successor = positions.get(dependency.successor_task_id);
+      if (!predecessor || !successor) return [];
+      const elbowX = Math.max(predecessor.endX + 8, successor.startX - 12);
+      return [{
+        ...dependency,
+        path: `M ${predecessor.endX} ${predecessor.y} H ${elbowX} V ${successor.y} H ${successor.startX}`,
+        title: `${predecessor.taskName} → ${successor.taskName} · FS`,
+      }];
+    });
+  }, [dependencies, displayItems, getVisibleRangeGeometry]);
+
+  useEffect(() => {
+    function handleSelectionShortcut(event: KeyboardEvent) {
+      const target = event.target;
+      const isInput = target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement || (target instanceof HTMLElement && target.isContentEditable);
+      if (event.key === "Escape") {
+        setSelectedTaskIds(new Set());
+        setSelectionAnchorTaskId(null);
+        return;
+      }
+      if (!canEdit || isInput || !(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== "a") return;
+      event.preventDefault();
+      setSelectedTaskIds(new Set(visibleTaskOrder));
+      setSelectionAnchorTaskId(visibleTaskOrder[0] ?? null);
+    }
+    window.addEventListener("keydown", handleSelectionShortcut);
+    return () => window.removeEventListener("keydown", handleSelectionShortcut);
+  }, [canEdit, visibleTaskOrder]);
+
+  function selectTask(event: React.MouseEvent<HTMLButtonElement>, taskId: number) {
+    if (!canEdit || !(event.ctrlKey || event.metaKey || event.shiftKey)) return false;
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.shiftKey && selectionAnchorTaskId !== null) {
+      const anchorIndex = visibleTaskOrder.indexOf(selectionAnchorTaskId);
+      const taskIndex = visibleTaskOrder.indexOf(taskId);
+      if (anchorIndex !== -1 && taskIndex !== -1) {
+        const [from, to] = anchorIndex <= taskIndex ? [anchorIndex, taskIndex] : [taskIndex, anchorIndex];
+        setSelectedTaskIds((current) => new Set([...current, ...visibleTaskOrder.slice(from, to + 1)]));
+        return true;
+      }
+    }
+    setSelectedTaskIds((current) => {
+      const next = new Set(current);
+      if (next.has(taskId)) next.delete(taskId); else next.add(taskId);
+      return next;
+    });
+    setSelectionAnchorTaskId(taskId);
+    return true;
+  }
+
+  async function applyBulkEdit(value: string | null | TaskTagCode[]) {
+    const selectedTasks = tasks.filter((task) => selectedTaskIds.has(task.id));
+    if (!bulkEditKind || selectedTasks.length === 0 || isBulkApplying || isHistoryApplying || savingTaskId !== null) return;
+    setIsBulkApplying(true);
+    try {
+      if (bulkEditKind === "assignee") {
+        const results = await Promise.allSettled(selectedTasks.map((task) => {
+          const project = projects.find((item) => item.id === task.project_id);
+          if (!project) return Promise.resolve();
+          return saveTaskAssignee(task, project, typeof value === "string" || value === null ? value : null);
+        }));
+        const failures = results.filter((result) => result.status === "rejected");
+        if (failures.length > 0) throw new Error(`${failures.length}개 업무의 담당자를 저장하지 못했습니다.`);
+      } else if (bulkEditKind === "tags") {
+        const tags = Array.isArray(value) ? value : [];
+        const results = await Promise.allSettled(selectedTasks.map((task) => saveTaskTags(task, tags)));
+        const failures = results.filter((result) => result.status === "rejected");
+        if (failures.length > 0) throw new Error(`${failures.length}개 업무의 태그를 저장하지 못했습니다.`);
+      } else {
+        const nextStatus = typeof value === "string" ? value : "";
+        const results = await Promise.allSettled(selectedTasks.map(async (task) => {
+          const previousStatus = normalizeTaskStatus(task.status) || "pending";
+          if (!nextStatus || previousStatus === nextStatus) return;
+          const nextCompletedDate = isTaskCompleted(nextStatus) ? today : null;
+          const optimisticTask = { ...task, status: nextStatus, completed_date: nextCompletedDate };
+          onTaskUpdated(optimisticTask);
+          const { error } = await supabase.from("tasks").update({ status: nextStatus, completed_date: nextCompletedDate }).eq("id", task.id);
+          if (error) {
+            onTaskUpdated(task);
+            console.error("Gantt bulk task status update error:", { taskId: task.id, previousStatus, nextStatus, error });
+            throw error;
+          }
+          void logActivity({ type: isTaskCompleted(nextStatus) ? "task_complete" : "task_status_change", title: "업무 상태 일괄 변경", description: `${task.task_name || "업무"}\n${getTaskStatusLabel(previousStatus)} → ${getTaskStatusLabel(nextStatus)}`, projectId: task.project_id, targetType: "task", targetId: task.id, metadata: { previousStatus, nextStatus } });
+        }));
+        const failures = results.filter((result) => result.status === "rejected");
+        if (failures.length > 0) throw new Error(`${failures.length}개 업무의 상태를 저장하지 못했습니다.`);
+      }
+      setBulkEditKind(null);
+    } finally {
+      setIsBulkApplying(false);
+    }
+  }
 
   const taskTypeLegendItems = useMemo(() => {
     const legendMap = new Map<string, TaskTypeColor>();
@@ -902,31 +2172,40 @@ export function IntegratedProjectGantt({
   }, [rows]);
 
   const scrollToToday = useCallback(() => {
-    if (!scrollRef.current || visibleDateDays.length === 0) return;
-
-    const todayIndex = visibleDateDays.findIndex((date) => date >= today);
-    const targetIndex =
-      todayIndex === -1
-        ? visibleDateDays.length - 1
-        : Math.max(todayIndex, 0);
-    const targetLeft =
-      targetIndex * dayWidth - scrollRef.current.clientWidth / 2 + dayWidth;
+    if (!scrollRef.current) return;
+    const todayMonth = today.slice(0, 7);
+    if (collapsedMonths.has(todayMonth)) {
+      setCollapsedMonths((current) => {
+        const next = new Set(current);
+        next.delete(todayMonth);
+        savePresentationState({ collapsedMonths: Array.from(next) });
+        return next;
+      });
+      window.requestAnimationFrame(() => window.requestAnimationFrame(scrollToToday));
+      return;
+    }
+    const todayLeft = dateLeftByValue.get(today);
+    if (todayLeft === undefined) return;
+    const targetLeft = todayLeft - scrollRef.current.clientWidth / 2 + dayWidth / 2;
 
     scrollRef.current.scrollLeft = Math.max(targetLeft, 0);
-  }, [dayWidth, today, visibleDateDays]);
+  }, [collapsedMonths, dateLeftByValue, dayWidth, savePresentationState, today]);
 
   useEffect(() => {
     if (
       hasInitialTodayScrollRef.current ||
+      !isInitialMonthLayoutReady ||
       visibleDateDays.length === 0 ||
       rows.length === 0
     ) {
       return;
     }
-    hasInitialTodayScrollRef.current = true;
-    const frame = window.requestAnimationFrame(scrollToToday);
+    const frame = window.requestAnimationFrame(() => {
+      scrollToToday();
+      hasInitialTodayScrollRef.current = true;
+    });
     return () => window.cancelAnimationFrame(frame);
-  }, [rows.length, scrollToToday, visibleDateDays.length]);
+  }, [isInitialMonthLayoutReady, rows.length, scrollToToday, visibleDateDays.length]);
 
   function clearMeetingFocus(force = false) {
     if (focusLockedRef.current && !force) return;
@@ -981,18 +2260,18 @@ export function IntegratedProjectGantt({
     const content = timelineContentRef.current;
     if (!content || clientX < content.getBoundingClientRect().left) return;
     const contentRect = content.getBoundingClientRect();
-    const index = Math.floor((clientX - contentRect.left) / dayWidth);
-    if (index < 0 || index >= visibleDateDays.length) return;
-    const left = index * dayWidth;
+    const targetColumn = getTimelineColumnAtOffset(clientX - contentRect.left);
+    if (!targetColumn?.column.date) return;
+    const left = targetColumn.left;
 
     if (columnFocusRef.current) {
-      columnFocusRef.current.style.width = `${dayWidth}px`;
+      columnFocusRef.current.style.width = `${targetColumn.column.width}px`;
       columnFocusRef.current.style.transform = `translateX(${left}px)`;
       columnFocusRef.current.style.opacity = "1";
     }
     if (cellFocusRef.current && rowElement) {
       const rowRect = rowElement.getBoundingClientRect();
-      cellFocusRef.current.style.width = `${dayWidth}px`;
+      cellFocusRef.current.style.width = `${targetColumn.column.width}px`;
       cellFocusRef.current.style.height = `${rowRect.height}px`;
       cellFocusRef.current.style.transform = `translate(${left}px, ${
         rowRect.top - contentRect.top
@@ -1053,6 +2332,12 @@ export function IntegratedProjectGantt({
         <div className="relative z-50 flex h-14 items-center gap-2 border-b border-slate-200 bg-white px-3 shadow-sm">
           <Button type="button" size="sm" variant="secondary" onClick={scrollToToday}>
             <LocateFixed size={15} /> 오늘
+          </Button>
+          <Button type="button" size="sm" variant="secondary" disabled={!canEdit || undoStack.length === 0 || isHistoryApplying || savingTaskId !== null} title={undoStack.length ? `실행 취소: ${undoStack[undoStack.length - 1].changes[0]?.taskName || "업무"}` : "실행 취소할 일정 변경이 없습니다."} onClick={() => void applyScheduleHistory("undo")}>
+            <Undo2 size={15} /> Undo
+          </Button>
+          <Button type="button" size="sm" variant="secondary" disabled={!canEdit || redoStack.length === 0 || isHistoryApplying || savingTaskId !== null} title={redoStack.length ? `다시 실행: ${redoStack[redoStack.length - 1].changes[0]?.taskName || "업무"}` : "다시 실행할 일정 변경이 없습니다."} onClick={() => void applyScheduleHistory("redo")}>
+            <Redo2 size={15} /> Redo
           </Button>
           <div className="relative min-w-56 flex-1 max-w-sm">
             <Search className="absolute left-3 top-2.5 text-slate-400" size={15} />
@@ -1189,11 +2474,43 @@ export function IntegratedProjectGantt({
             현장별 업무 일정을 선택 월 기준으로 확인합니다.
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
+          <label className="flex h-9 items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 text-sm font-medium text-slate-600">
+            <span>보기</span>
+            <select
+              aria-label="간트 보기 기준"
+              value={viewType}
+              onChange={(event) => changeViewType(event.target.value as GanttViewType)}
+              className="bg-transparent text-sm font-semibold text-slate-800 outline-none"
+            >
+              <option value="project">현장별</option>
+              <option value="vendor">업체별</option>
+              <option value="salesperson">영업자별</option>
+              <option disabled>──────────</option>
+              <option value="assignee" disabled>담당자별 (준비중)</option>
+              <option value="status" disabled>상태별 (준비중)</option>
+              <option value="process" disabled>공정별 (준비중)</option>
+            </select>
+          </label>
+          <Button type="button" variant={showCompletedProjects ? "secondary" : "primary"} size="sm" onClick={toggleCompletedVisibility} className="h-9 rounded-2xl px-3.5 text-sm font-medium">
+            {showCompletedProjects ? "완료 현장 숨기기" : "완료 현장 보기"}
+          </Button>
+          <Button type="button" variant="secondary" size="sm" disabled={!canEdit || undoStack.length === 0 || isHistoryApplying || savingTaskId !== null} title={undoStack.length ? `실행 취소: ${undoStack[undoStack.length - 1].changes[0]?.taskName || "업무"}` : "실행 취소할 일정 변경이 없습니다."} onClick={() => void applyScheduleHistory("undo")} className="h-9 rounded-2xl px-3.5 text-sm font-medium"><Undo2 size={15} /> Undo</Button>
+          <Button type="button" variant="secondary" size="sm" disabled={!canEdit || redoStack.length === 0 || isHistoryApplying || savingTaskId !== null} title={redoStack.length ? `다시 실행: ${redoStack[redoStack.length - 1].changes[0]?.taskName || "업무"}` : "다시 실행할 일정 변경이 없습니다."} onClick={() => void applyScheduleHistory("redo")} className="h-9 rounded-2xl px-3.5 text-sm font-medium"><Redo2 size={15} /> Redo</Button>
           <Button type="button" variant="secondary" size="sm" onClick={scrollToToday} className="h-9 rounded-2xl px-3.5 text-sm font-medium">오늘로 이동</Button>
           <Button type="button" variant="primary" size="sm" onClick={() => void enterPresentation()} className="h-9 rounded-2xl px-3.5 text-sm font-medium"><Monitor size={15} /> Presentation</Button>
         </div>
       </div>
+      )}
+
+      {canEdit && selectedTaskIds.size > 0 && (
+        <div className="relative z-40 mb-4 flex flex-wrap items-center gap-2 rounded-2xl border border-blue-200 bg-blue-50 p-3 shadow-sm">
+          <strong className="mr-2 text-sm text-blue-900">{selectedTaskIds.size}개 선택됨</strong>
+          <Button type="button" size="sm" variant="secondary" disabled={isBulkApplying || isHistoryApplying || savingTaskId !== null} onClick={() => setBulkEditKind("assignee")}>담당자 변경</Button>
+          <Button type="button" size="sm" variant="secondary" disabled={isBulkApplying || isHistoryApplying || savingTaskId !== null} onClick={() => setBulkEditKind("status")}>상태 변경</Button>
+          <Button type="button" size="sm" variant="secondary" disabled={isBulkApplying || isHistoryApplying || savingTaskId !== null} onClick={() => setBulkEditKind("tags")}>태그</Button>
+          <Button type="button" size="sm" variant="ghost" disabled={isBulkApplying} onClick={() => { setSelectedTaskIds(new Set()); setSelectionAnchorTaskId(null); }}>선택 해제</Button>
+        </div>
       )}
 
       {!isPresentation && (
@@ -1309,6 +2626,37 @@ export function IntegratedProjectGantt({
               </Button>
             ))}
           </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="mr-1 text-xs font-semibold text-slate-500">Tag</span>
+            <Button
+              type="button"
+              variant={selectedTagFilters.size === 0 ? "primary" : "ghost"}
+              size="sm"
+              onClick={() => setSelectedTagFilters(new Set())}
+              className="h-8 rounded-2xl px-3 text-xs font-semibold"
+            >
+              전체
+            </Button>
+            {TASK_TAGS.map((tag) => {
+              const selected = selectedTagFilters.has(tag.code);
+              return (
+                <Button
+                  key={tag.code}
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setSelectedTagFilters((current) => {
+                    const next = new Set(current);
+                    if (next.has(tag.code)) next.delete(tag.code); else next.add(tag.code);
+                    return next;
+                  })}
+                  className={`h-8 rounded-2xl px-3 text-xs font-semibold ring-1 ${selected ? tag.colorClassName : "bg-white text-slate-500 ring-slate-200"}`}
+                >
+                  {tag.icon} {tag.label}
+                </Button>
+              );
+            })}
+          </div>
         </div>
       </div>
       )}
@@ -1361,23 +2709,69 @@ export function IntegratedProjectGantt({
           className="rounded-2xl bg-slate-50 p-10 text-center text-sm text-slate-500"
         />
       ) : (
-        <div data-gantt-focus-surface className={`overflow-y-auto border border-slate-200 ${isPresentation ? "h-[calc(100vh-56px)] rounded-none border-x-0 border-b-0" : "rounded-2xl"}`}>
-          <div className="flex min-w-[1080px]">
-            <div className="sticky left-0 z-30 w-[340px] shrink-0 border-r border-slate-200 bg-white">
-              <div className="sticky top-0 z-20 grid h-[74px] grid-cols-[minmax(0,1fr)_70px] items-end gap-3 border-b border-slate-200 bg-slate-50 px-4 pb-3 text-xs font-semibold text-slate-500">
-                <span>프로젝트</span>
-                <span>진행률</span>
+        <div>
+          <div className="flex w-full min-w-0 border-x border-t border-slate-200 bg-white">
+            <div className="w-[430px] shrink-0 border-r border-slate-200" />
+            <div
+              ref={topScrollRef}
+              aria-label="간트 상단 가로 스크롤"
+              onScroll={(event) => syncHorizontalScroll(event.currentTarget.scrollLeft, "top")}
+              className="min-w-0 flex-1 overflow-x-auto overflow-y-hidden [scrollbar-width:thin]"
+            >
+              <div aria-hidden="true" className="h-3" style={{ width: timelineWidth }} />
+            </div>
+          </div>
+        <div ref={ganttSurfaceRef} data-gantt-focus-surface className={`overflow-x-hidden overflow-y-auto border border-slate-200 ${isPresentation ? "h-[calc(100vh-56px)] rounded-none border-x-0 border-b-0" : "max-h-[calc(100vh-220px)] rounded-b-2xl"}`}>
+          <div className="sticky top-0 z-50 flex w-full min-w-0 bg-white shadow-sm">
+            <div className="grid h-[74px] w-[430px] shrink-0 grid-cols-[minmax(0,1fr)_90px_70px] items-end gap-3 border-r border-b border-slate-200 bg-slate-50 px-4 pb-3 text-xs font-semibold text-slate-500">
+              <span>프로젝트</span><span>수량</span><span>진행률</span>
+            </div>
+            <div ref={headerScrollRef} className="min-w-0 flex-1 overflow-hidden">
+              <div style={{ width: timelineWidth }}>
+                <div className="flex h-9 border-b border-slate-200 bg-slate-50">
+                  {monthGroups.map((month) => (
+                    <button key={month.key} type="button" aria-expanded={!month.collapsed} aria-label={`${monthFormatter.format(parseDate(`${month.key}-01`))} ${month.collapsed ? "펼치기" : "접기"}`} onClick={() => toggleMonthCollapse(month.key)} style={{ width: month.width }} className="flex shrink-0 items-center justify-center gap-1 border-r border-slate-200 px-1.5 text-xs font-semibold text-slate-500 hover:text-slate-800">
+                      {month.collapsed ? <ChevronRight size={13} /> : <ChevronDown size={13} />}
+                      <span className="shrink-0 whitespace-nowrap">{formatGanttMonthLabel(month.key, month.collapsed)}</span>
+                    </button>
+                  ))}
+                </div>
+                <div className="flex h-[37px] border-b border-slate-200 bg-white">
+                  {timelineColumns.map((column) => column.date ? (
+                    <div key={column.key} className={`flex shrink-0 flex-col items-center justify-center border-r border-slate-100 text-[11px] ${column.date === today ? "bg-slate-200 font-bold text-slate-900 ring-1 ring-inset ring-slate-300" : isWeekend(column.date) ? "bg-slate-50 text-slate-400" : "text-slate-500"}`} style={{ width: column.width }}>
+                      <span className="font-bold">{dayFormatter.format(parseDate(column.date))}</span><span>{weekdayFormatter.format(parseDate(column.date))}</span>
+                    </div>
+                  ) : <div key={column.key} aria-hidden="true" className="flex shrink-0 items-center justify-center border-r border-slate-200 bg-slate-100 text-[10px] text-slate-400" style={{ width: column.width }}>접힘</div>)}
+                </div>
               </div>
-
-              {rows.map((row) => (
+            </div>
+          </div>
+          <div className="flex w-full min-w-0">
+            <div className="sticky left-0 z-30 w-[430px] shrink-0 border-r border-slate-200 bg-white">
+              {displayItems.map((item) => item.kind === "group" ? (
+                <button
+                  key={item.key}
+                  type="button"
+                  aria-expanded={!item.collapsed}
+                  aria-label={`${item.label} 그룹 ${item.collapsed ? "펼치기" : "접기"}`}
+                  onClick={() => toggleViewGroup(item.key)}
+                  className="flex w-full items-center gap-2 border-b border-slate-200 bg-slate-100 px-4 text-left text-xs font-bold text-slate-700 hover:bg-slate-200"
+                  style={{ height: item.height }}
+                >
+                  {item.collapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
+                  <span>{item.label} ({item.count})</span>
+                </button>
+              ) : (() => {
+                const row = item.row;
+                return (
                 <div
-                  key={row.project.id}
+                  key={row.rowKey}
                   data-gantt-row-id={row.project.id}
                   ref={(node) => {
                     if (node) projectRowRefs.current.set(row.project.id, node);
                     else projectRowRefs.current.delete(row.project.id);
                   }}
-                  className={`grid grid-cols-[minmax(0,1fr)_70px] items-center gap-3 border-b border-slate-100 px-4 transition-colors last:border-b-0 ${
+                  className={`grid grid-cols-[minmax(0,1fr)_90px_70px] items-center gap-3 border-b border-slate-100 px-4 transition-colors last:border-b-0 ${
                     highlightedProjectId === row.project.id
                       ? "bg-amber-100"
                       : "bg-white"
@@ -1397,9 +2791,9 @@ export function IntegratedProjectGantt({
                       <span className="truncate text-xs font-medium text-slate-400">
                         {row.project.project_code || "코드 없음"}
                       </span>
-                      {normalizeAssemblyVendor(row.project.assembly_vendor) && (
+                      {row.assemblyVendorName && (
                         <span className="truncate text-xs font-medium text-slate-400">
-                          · {normalizeAssemblyVendor(row.project.assembly_vendor)}
+                          · {row.assemblyVendorName}
                         </span>
                       )}
                       <Badge
@@ -1421,6 +2815,10 @@ export function IntegratedProjectGantt({
                     )}
                   </div>
 
+                  <div className="truncate whitespace-nowrap text-sm font-semibold text-slate-700" title={formatProjectQuantity(row.allocatedQuantity, row.project.quantity_unit)}>
+                    {formatProjectQuantity(row.allocatedQuantity, row.project.quantity_unit)}
+                  </div>
+
                   <div>
                     <div className="text-right text-sm font-bold text-blue-600">
                       {row.progress}%
@@ -1436,24 +2834,27 @@ export function IntegratedProjectGantt({
                     </div>
                   </div>
                 </div>
-              ))}
+                );
+              })())}
             </div>
 
             <div
               ref={scrollRef}
               onScroll={(event) => {
-                if (!isPresentation) return;
-                savePresentationState({
-                  scrollLeft: event.currentTarget.scrollLeft,
-                  scrollTop: event.currentTarget.scrollTop,
-                });
+                syncHorizontalScroll(event.currentTarget.scrollLeft, "body");
+                if (isPresentation) {
+                  savePresentationState({
+                    scrollLeft: event.currentTarget.scrollLeft,
+                    scrollTop: event.currentTarget.scrollTop,
+                  });
+                }
               }}
               className="min-w-0 flex-1 overflow-x-auto scroll-smooth [scrollbar-width:thin]"
             >
               <div
                 ref={timelineContentRef}
                 className="relative"
-                style={{ width: visibleDateDays.length * dayWidth }}
+                style={{ width: timelineWidth }}
               >
                 <div
                   ref={columnFocusRef}
@@ -1465,12 +2866,16 @@ export function IntegratedProjectGantt({
                   aria-hidden="true"
                   className="pointer-events-none absolute left-0 top-0 z-30 border-2 border-blue-500 bg-blue-300/20 opacity-0 transition-opacity duration-150"
                 />
-                <div className="sticky top-0 z-20 flex h-9 border-b border-slate-200 bg-slate-50">
+                <div className="hidden">
                   {monthGroups.map((month) => (
                     <button
                       key={month.key}
                       type="button"
+                      aria-expanded={!month.collapsed}
+                      aria-label={`${monthFormatter.format(parseDate(`${month.key}-01`))} ${month.collapsed ? "펼치기" : "접기"}`}
                       onClick={() => {
+                        const previousScrollLeft = scrollRef.current?.scrollLeft ?? 0;
+                        const previousScrollTop = ganttSurfaceRef.current?.scrollTop ?? 0;
                         setCollapsedMonths((current) => {
                           const next = new Set(current);
                           if (next.has(month.key)) next.delete(month.key);
@@ -1480,93 +2885,149 @@ export function IntegratedProjectGantt({
                           });
                           return next;
                         });
+                        window.requestAnimationFrame(() => {
+                          if (scrollRef.current) scrollRef.current.scrollLeft = previousScrollLeft;
+                          if (ganttSurfaceRef.current) ganttSurfaceRef.current.scrollTop = previousScrollTop;
+                        });
                       }}
-                      style={{ width: month.count * dayWidth }}
-                      className="flex shrink-0 items-center justify-center gap-1 border-r border-slate-200 px-2 text-xs font-semibold text-slate-500 hover:text-slate-800"
+                      style={{ width: month.width }}
+                      className="flex shrink-0 items-center justify-center gap-1 border-r border-slate-200 px-1.5 text-xs font-semibold text-slate-500 hover:text-slate-800"
                     >
-                      {collapsedMonths.has(month.key) ? (
+                      {month.collapsed ? (
                         <ChevronRight size={13} />
                       ) : (
                         <ChevronDown size={13} />
                       )}
-                      {monthFormatter.format(parseDate(`${month.key}-01`))}
+                      <span className="shrink-0 whitespace-nowrap">
+                        {formatGanttMonthLabel(month.key, month.collapsed)}
+                      </span>
                     </button>
                   ))}
                 </div>
 
-                <div className="sticky top-9 z-20 flex h-[37px] border-b border-slate-200 bg-white">
-                  {visibleDateDays.map((date) => (
+                <div className="hidden">
+                  {timelineColumns.map((column) => column.date ? (
                     <div
-                      key={date}
+                      key={column.key}
                       className={`flex shrink-0 flex-col items-center justify-center border-r border-slate-100 text-[11px] ${
-                        date === today
+                        column.date === today
                           ? "bg-slate-200 font-bold text-slate-900 ring-1 ring-inset ring-slate-300"
-                          : isWeekend(date)
+                          : isWeekend(column.date)
                             ? "bg-slate-50 text-slate-400"
                             : "text-slate-500"
                       }`}
-                      style={{ width: dayWidth }}
+                      style={{ width: column.width }}
                     >
-                      {!collapsedMonths.has(date.slice(0, 7)) && (
-                        <>
-                          <span className="font-bold">{dayFormatter.format(parseDate(date))}</span>
-                          <span>{weekdayFormatter.format(parseDate(date))}</span>
-                        </>
-                      )}
+                      <span className="font-bold">{dayFormatter.format(parseDate(column.date))}</span>
+                      <span>{weekdayFormatter.format(parseDate(column.date))}</span>
                     </div>
+                  ) : (
+                    <div key={column.key} aria-hidden="true" className="flex shrink-0 items-center justify-center border-r border-slate-200 bg-slate-100 text-[10px] text-slate-400" style={{ width: column.width }}>접힘</div>
                   ))}
                 </div>
 
                 <div className="relative">
-                  {visibleDateDays.map((date, index) => (
+                  {timelineColumns.map((column, index) => (
                     <div
-                      key={date}
+                      key={column.key}
                       className={`absolute top-0 h-full border-r ${
-                        isWeekend(date)
+                        column.date === null
+                          ? "border-slate-200 bg-slate-100/80"
+                          : column.date === today
+                            ? "border-l-2 border-l-blue-500 border-r-slate-100 bg-blue-50/20"
+                          : isWeekend(column.date)
                             ? "border-slate-100 bg-slate-50/70"
                             : "border-slate-100"
                       }`}
                       style={{
-                        left: index * dayWidth,
-                        width: dayWidth,
+                        left: timelineColumnLefts[index],
+                        width: column.width,
                       }}
                     />
                   ))}
 
-                  {rows.map((row) => (
+                  <svg aria-label="업무 선후관계" className="pointer-events-none absolute inset-0 z-[15] h-full w-full overflow-visible">
+                    <defs>
+                      <marker id="gantt-dependency-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+                        <path d="M 0 0 L 10 5 L 0 10 z" className="fill-slate-500" />
+                      </marker>
+                    </defs>
+                    {dependencyLines.map((line) => (
+                      <path key={line.id} d={line.path} fill="none" stroke="rgb(100 116 139)" strokeWidth="1.5" markerEnd="url(#gantt-dependency-arrow)" className="pointer-events-auto">
+                        <title>{line.title}</title>
+                      </path>
+                    ))}
+                  </svg>
+
+                  {displayItems.map((item) => item.kind === "group" ? (
                     <div
-                      key={row.project.id}
+                      key={item.key}
+                      className="relative border-b border-slate-200 bg-slate-100/80"
+                      style={{ height: item.height }}
+                    />
+                  ) : (() => {
+                    const row = item.row;
+                    return (
+                    <div
+                      key={row.rowKey}
                       data-gantt-row-id={row.project.id}
+                      onDoubleClick={(event) => {
+                        const bounds = event.currentTarget.getBoundingClientRect();
+                        const memoDate = getTimelineColumnAtOffset(event.clientX - bounds.left)?.column.date;
+                        if (memoDate) openProjectMemo(row.project, memoDate);
+                      }}
                       className="relative border-b border-slate-100 transition-colors duration-150 last:border-b-0"
                       style={{ height: row.rowHeight }}
                     >
+                      {projectMemos
+                        .filter((memo) => memo.project_id === row.project.id && memo.memo_date >= start && memo.memo_date <= end)
+                        .flatMap((memo) => {
+                          const memoLeft = dateLeftByValue.get(memo.memo_date);
+                          if (memoLeft === undefined) return [];
+                          return [(
+                          <button
+                            key={memo.id}
+                            type="button"
+                            title={memo.content}
+                            aria-label={`${memo.memo_date} 프로젝트 메모`}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              openProjectMemo(row.project, memo.memo_date);
+                            }}
+                            onDoubleClick={(event) => event.stopPropagation()}
+                            className="absolute top-1 z-10 flex h-4 w-4 items-center justify-center rounded-full bg-amber-100 text-[10px] text-amber-700 shadow-sm ring-1 ring-amber-300 hover:bg-amber-200"
+                            style={{ left: memoLeft + dayWidth / 2 - 8 }}
+                          >
+                            ●
+                          </button>
+                          )];
+                        })}
                       {row.segments.map(({ task, startDate, dueDate, lane }) => {
-                        const visibleStart = startDate < start ? start : startDate;
-                        const visibleDue = dueDate > end ? end : dueDate;
-                        const startIndex = Math.max(
-                          getDayDiff(start, visibleStart),
-                          0
-                        );
-                        const duration = Math.max(
-                          getDayDiff(visibleStart, visibleDue) + 1,
-                          1
-                        );
-                        const left = startIndex * dayWidth + 4;
-                        const width = Math.max(
-                          duration * dayWidth - 8,
-                          28
-                        );
+                        const geometry = getVisibleRangeGeometry(startDate, dueDate);
+                        if (!geometry) return null;
+                        const left = geometry.left + 4;
+                        const width = Math.max(geometry.width - 8, 28);
                         const delayedDays = getDelayedDays(task, today);
+                        const statusPresentation = getTaskStatusPresentation(task, today);
+                        const assemblyVendorName = getTaskAssemblyVendorName(task);
                         const taskTypeColor = getTaskTypeColor(task.task_type);
+                        const taskMemo = taskMemos.find((memo) => memo.task_id === task.id);
+                        const tagDefinitions = taskTags
+                          .filter((item) => item.task_id === task.id)
+                          .map((item) => getTaskTagDefinition(item.tag))
+                          .filter((tag) => tag !== undefined);
                         const tooltipParts = [
+                          `${statusPresentation.icon} ${statusPresentation.label}`,
                           `프로젝트: ${row.project.project_name}`,
+                          `조립업체: ${assemblyVendorName}`,
                           `업무명: ${task.task_name || "업무명 없음"}`,
                           `업무유형: ${task.task_type || "-"}`,
                           `담당자: ${task.assignee || "미배정"}`,
                           `시작일: ${startDate}`,
                           `종료일: ${dueDate}`,
-                          `상태: ${getTaskStatusLabel(task.status)}`,
                           delayedDays !== null ? `지연: ${delayedDays}일` : null,
+                          taskMemo ? `메모: ${taskMemo.content}` : null,
+                          ...tagDefinitions.map((tag) => `${tag.icon} ${tag.label}`),
                         ].filter((value): value is string => value !== null);
 
                         return (
@@ -1574,24 +3035,67 @@ export function IntegratedProjectGantt({
                             type="button"
                             key={task.id}
                             title={tooltipParts.join("\n")}
-                            onClick={() =>
-                              setSelectedTask({
-                                taskId: task.id,
-                                projectId: row.project.id,
-                                projectName: row.project.project_name,
-                                projectCode: row.project.project_code,
-                                taskName: task.task_name,
-                                taskType: task.task_type,
-                                assignee: task.assignee,
-                                startDate,
-                                dueDate,
-                                status: task.status,
-                                completedDate: task.completed_date,
-                                delayedDays,
-                                taskTypeClassName: taskTypeColor.className,
-                              })
-                            }
-                            className={`absolute z-20 h-5 overflow-visible whitespace-nowrap rounded-full px-2 text-left text-[11px] font-semibold leading-5 shadow-sm ring-1 transition duration-150 hover:brightness-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-100 ${taskTypeColor.className} ${getScheduleMarkerClass(
+                            onPointerDown={(event) => startTaskDrag(event, row.project, task, startDate, dueDate, lane)}
+                            onPointerMove={moveTaskDrag}
+                            onPointerUp={(event) => void finishTaskDrag(event)}
+                            onPointerCancel={cancelTaskDrag}
+                            onContextMenu={(event) => {
+                              event.preventDefault();
+                              event.stopPropagation();
+                              if (!canEdit || savingTaskId !== null) return;
+                              if (taskClickTimerRef.current !== null) {
+                                window.clearTimeout(taskClickTimerRef.current);
+                                taskClickTimerRef.current = null;
+                              }
+                              const menuWidth = 192;
+                              const menuHeight = 304;
+                              setTaskContextMenu({
+                                x: Math.max(8, Math.min(event.clientX, window.innerWidth - menuWidth - 8)),
+                                y: Math.max(8, Math.min(event.clientY, window.innerHeight - menuHeight - 8)),
+                                task,
+                                project: row.project,
+                              });
+                            }}
+                            onClick={(event) => {
+                              if (selectTask(event, task.id)) return;
+                              if (Date.now() < suppressTaskClickUntilRef.current) {
+                                event.preventDefault();
+                                event.stopPropagation();
+                                return;
+                              }
+                              if (taskClickTimerRef.current !== null) window.clearTimeout(taskClickTimerRef.current);
+                              taskClickTimerRef.current = window.setTimeout(() => {
+                                setSelectedTask({
+                                  taskId: task.id,
+                                  projectId: row.project.id,
+                                  projectName: row.project.project_name,
+                                  assemblyVendorName,
+                                  projectCode: row.project.project_code,
+                                  taskName: task.task_name,
+                                  taskType: task.task_type,
+                                  assignee: task.assignee,
+                                  startDate,
+                                  dueDate,
+                                  status: task.status,
+                                  completedDate: task.completed_date,
+                                  delayedDays,
+                                  taskTypeClassName: taskTypeColor.className,
+                                });
+                                taskClickTimerRef.current = null;
+                              }, 220);
+                            }}
+                            onDoubleClick={(event) => {
+                              if (Date.now() < suppressTaskClickUntilRef.current) return;
+                              event.stopPropagation();
+                              if (taskClickTimerRef.current !== null) {
+                                window.clearTimeout(taskClickTimerRef.current);
+                                taskClickTimerRef.current = null;
+                              }
+                              setSelectedTask(null);
+                              openTaskMemo(row.project, task);
+                            }}
+                            aria-label={`${assemblyVendorName}, ${task.task_name || "업무"}, 드래그하여 일정 이동`}
+                            className={`group absolute z-20 h-5 touch-none overflow-visible whitespace-nowrap rounded-full px-2 text-left text-[11px] font-semibold leading-5 shadow-sm ring-1 transition duration-150 hover:brightness-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-100 ${selectedTaskIds.has(task.id) ? "!ring-2 !ring-blue-600 shadow-md brightness-105" : ""} ${canEdit ? "cursor-grab active:cursor-grabbing" : "cursor-default"} ${savingTaskId === task.id ? "cursor-wait animate-pulse" : ""} ${taskDrag?.task.id === task.id || taskResize?.task.id === task.id ? "opacity-35" : ""} ${taskTypeColor.className} ${getScheduleMarkerClass(
                               task,
                               today
                             )}`}
@@ -1601,17 +3105,133 @@ export function IntegratedProjectGantt({
                               width,
                             }}
                           >
+                            {canEdit && (
+                              <>
+                                <span
+                                  role="separator"
+                                  aria-label="시작일 조절"
+                                  className="absolute inset-y-0 left-0 z-30 w-2 cursor-ew-resize rounded-l-full border-l-2 border-blue-600 bg-white/70 opacity-0 transition-opacity group-hover:opacity-100"
+                                  onPointerDown={(event) => startTaskResize(event, "start", row.project, task, startDate, dueDate, lane)}
+                                  onPointerMove={moveTaskResize}
+                                  onPointerUp={(event) => void finishTaskResize(event)}
+                                  onPointerCancel={cancelTaskResize}
+                                  onClick={(event) => event.stopPropagation()}
+                                  onDoubleClick={(event) => event.stopPropagation()}
+                                />
+                                <span
+                                  role="separator"
+                                  aria-label="마감일 조절"
+                                  className="absolute inset-y-0 right-0 z-30 w-2 cursor-ew-resize rounded-r-full border-r-2 border-blue-600 bg-white/70 opacity-0 transition-opacity group-hover:opacity-100"
+                                  onPointerDown={(event) => startTaskResize(event, "end", row.project, task, startDate, dueDate, lane)}
+                                  onPointerMove={moveTaskResize}
+                                  onPointerUp={(event) => void finishTaskResize(event)}
+                                  onPointerCancel={cancelTaskResize}
+                                  onClick={(event) => event.stopPropagation()}
+                                  onDoubleClick={(event) => event.stopPropagation()}
+                                />
+                              </>
+                            )}
+                            <span className="mr-1 inline-flex font-bold" aria-label={statusPresentation.label}>
+                              {statusPresentation.icon}
+                            </span>
+                            {taskMemo && (
+                              <span
+                                role="button"
+                                tabIndex={0}
+                                className="mr-1 inline-flex cursor-pointer text-amber-700"
+                                aria-label="메모 열기"
+                                onPointerDown={(event) => event.stopPropagation()}
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  openTaskMemo(row.project, task);
+                                }}
+                                onKeyDown={(event) => {
+                                  if (event.key === "Enter" || event.key === " ") {
+                                    event.preventDefault();
+                                    event.stopPropagation();
+                                    openTaskMemo(row.project, task);
+                                  }
+                                }}
+                              >
+                                ●
+                              </span>
+                            )}
+                            {tagDefinitions.length > 0 && (
+                              <span
+                                className="mr-1 inline-flex items-center gap-0.5"
+                                title={tagDefinitions.map((tag) => `${tag.icon} ${tag.label}`).join("\n")}
+                              >
+                                {tagDefinitions.slice(0, 3).map((tag) => (
+                                  <span key={tag.code} aria-label={tag.label}>{tag.icon}</span>
+                                ))}
+                                {tagDefinitions.length > 3 && (
+                                  <span className="text-[10px] font-bold">+{tagDefinitions.length - 3}</span>
+                                )}
+                              </span>
+                            )}
+                            <span className="mr-1 font-bold">{assemblyVendorName}</span>·{" "}
                             {task.task_type || "업무"} ·{" "}
                             {task.task_name || "업무명 없음"}
                           </button>
                         );
                       })}
+                      {taskDrag?.project.id === row.project.id && taskDrag.task.project_assembly_vendor_id === row.assemblyVendorId && taskDrag.offsetDays !== 0 && (() => {
+                        const previewStart = shiftDate(taskDrag.startDate, taskDrag.offsetDays);
+                        const previewDue = shiftDate(taskDrag.dueDate, taskDrag.offsetDays);
+                        const previewGeometry = getVisibleRangeGeometry(previewStart, previewDue);
+                        if (!previewGeometry) return null;
+                        const previewLeft = previewGeometry.left + 4;
+                        const previewWidth = Math.max(previewGeometry.width - 8, 28);
+                        return (
+                          <div
+                            className="pointer-events-none absolute z-40 min-h-12 rounded-xl border-2 border-blue-500 bg-blue-50 px-2 py-1 text-[11px] font-semibold leading-4 text-blue-950 shadow-lg"
+                            style={{
+                              left: previewLeft,
+                              top: 12 + taskDrag.lane * laneHeight,
+                              width: Math.max(previewWidth, 170),
+                            }}
+                          >
+                            <div className="truncate">{taskDrag.task.task_name || "업무"}</div>
+                            <div className="whitespace-nowrap">{previewStart} ~ {previewDue}</div>
+                            <div>{taskDrag.offsetDays > 0 ? "+" : ""}{taskDrag.offsetDays}일 이동</div>
+                          </div>
+                        );
+                      })()}
+                      {taskResize?.project.id === row.project.id && taskResize.task.project_assembly_vendor_id === row.assemblyVendorId && taskResize.offsetDays !== 0 && (() => {
+                        const previewStart = taskResize.edge === "start"
+                          ? shiftDate(taskResize.startDate, taskResize.offsetDays)
+                          : taskResize.startDate;
+                        const previewDue = taskResize.edge === "end"
+                          ? shiftDate(taskResize.dueDate, taskResize.offsetDays)
+                          : taskResize.dueDate;
+                        const durationDays = getDayDiff(previewStart, previewDue) + 1;
+                        const previewGeometry = getVisibleRangeGeometry(previewStart, previewDue);
+                        if (!previewGeometry) return null;
+                        const previewLeft = previewGeometry.left + 4;
+                        const previewWidth = Math.max(previewGeometry.width - 8, 28);
+                        return (
+                          <div
+                            className="pointer-events-none absolute z-40 min-h-12 rounded-xl border-2 border-violet-500 bg-violet-50 px-2 py-1 text-[11px] font-semibold leading-4 text-violet-950 shadow-lg"
+                            style={{
+                              left: previewLeft,
+                              top: 12 + taskResize.lane * laneHeight,
+                              width: Math.max(previewWidth, 170),
+                            }}
+                          >
+                            <div className="truncate">{taskResize.task.task_name || "업무"}</div>
+                            <div className="whitespace-nowrap">{previewStart} ~ {previewDue}</div>
+                            <div>기간 {durationDays}일</div>
+                          </div>
+                        );
+                      })()}
                     </div>
-                  ))}
+                    );
+                  })())}
                 </div>
               </div>
             </div>
           </div>
+        </div>
         </div>
       )}
 
@@ -1619,8 +3239,154 @@ export function IntegratedProjectGantt({
         <GanttTaskDetailModal
           task={selectedTask}
           today={today}
-          onTaskUpdated={onTaskUpdated}
+          onTaskUpdated={(updatedTask) => {
+            onTaskUpdated(updatedTask);
+            void persistAndPublishTaskOrders(
+              tasks.map((task) => task.id === updatedTask.id ? updatedTask : task)
+            );
+          }}
           onClose={() => setSelectedTask(null)}
+        />
+      )}
+
+      {memoTarget && (
+        <GanttMemoModal
+          target={memoTarget}
+          onClose={() => setMemoTarget(null)}
+          onSave={saveMemo}
+          onDelete={deleteMemo}
+        />
+      )}
+
+      {pendingDependencyMove && (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-950/40 p-4" role="presentation" onClick={() => void resolveDependencyMove("cancel")}>
+          <div role="dialog" aria-modal="true" aria-labelledby="dependency-move-title" className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl" onClick={(event) => event.stopPropagation()}>
+            <h2 id="dependency-move-title" className="text-lg font-bold text-slate-950">후행 작업 일정 이동</h2>
+            <p className="mt-2 text-sm leading-6 text-slate-600">
+              이 업무와 연결된 후행 작업 {pendingDependencyMove.dependencyChanges.length}건도 함께 이동하시겠습니까?
+            </p>
+            <div className="mt-6 flex flex-wrap justify-end gap-2">
+              <Button type="button" variant="secondary" onClick={() => void resolveDependencyMove("cancel")}>취소</Button>
+              <Button type="button" variant="secondary" onClick={() => void resolveDependencyMove("exclude")}>현재 업무만 이동</Button>
+              <Button type="button" variant="primary" onClick={() => void resolveDependencyMove("include")}>함께 이동</Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {taskContextMenu && (
+        <div
+          ref={contextMenuRef}
+          role="menu"
+          className="fixed z-[60] w-48 rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl"
+          style={{ left: taskContextMenu.x, top: taskContextMenu.y }}
+          onClick={(event) => event.stopPropagation()}
+          onDoubleClick={(event) => event.stopPropagation()}
+          onPointerDown={(event) => event.stopPropagation()}
+        >
+          <button
+            type="button"
+            role="menuitem"
+            className="flex h-9 w-full items-center rounded-lg px-3 text-left text-sm font-medium text-slate-700 hover:bg-blue-50 hover:text-blue-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-100"
+            onClick={() => {
+              setAssigneeTask({ task: taskContextMenu.task, project: taskContextMenu.project });
+              setTaskContextMenu(null);
+            }}
+          >
+            담당자 변경
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            className="flex h-9 w-full items-center justify-between rounded-lg px-3 text-left text-sm font-medium text-slate-700 hover:bg-blue-50 hover:text-blue-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-100"
+            onClick={() => {
+              setTagTask({ task: taskContextMenu.task, project: taskContextMenu.project });
+              setTaskContextMenu(null);
+            }}
+          >
+            <span>태그</span>
+            <span className="text-xs text-slate-400">{taskTags.filter((item) => item.task_id === taskContextMenu.task.id).length}</span>
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            className="flex h-9 w-full items-center rounded-lg px-3 text-left text-sm font-medium text-slate-700 hover:bg-blue-50 hover:text-blue-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-100"
+            onClick={() => {
+              setDependencyTask({ task: taskContextMenu.task, project: taskContextMenu.project });
+              setTaskContextMenu(null);
+            }}
+          >
+            선후관계
+          </button>
+          <div className="my-1 border-t border-slate-100" />
+          <div className="px-3 py-1 text-[11px] font-semibold text-slate-400">상태 변경</div>
+          {taskStatusOptions.map((status) => {
+            const isCurrent = (normalizeTaskStatus(taskContextMenu.task.status) || "pending") === status;
+            return (
+              <button
+                key={status}
+                type="button"
+                role="menuitemradio"
+                aria-checked={isCurrent}
+                className={`flex h-9 w-full items-center justify-between rounded-lg px-3 text-left text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-100 ${isCurrent ? "bg-slate-100 text-slate-950" : "text-slate-700 hover:bg-blue-50 hover:text-blue-700"}`}
+                onClick={() => void saveTaskStatus(taskContextMenu.task, status)}
+              >
+                <span>{getTaskStatusLabel(status)}</span>
+                {isCurrent && <span aria-hidden="true">✓</span>}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {assigneeTask && (
+        <GanttAssigneeModal
+          project={assigneeTask.project}
+          task={assigneeTask.task}
+          onClose={() => setAssigneeTask(null)}
+          onSave={(assignee) => saveTaskAssignee(assigneeTask.task, assigneeTask.project, assignee)}
+        />
+      )}
+
+      {tagTask && (
+        <TaskTagSelector
+          projectName={tagTask.project.project_name}
+          taskName={tagTask.task.task_name || "업무명 없음"}
+          value={taskTags
+            .filter((item) => item.task_id === tagTask.task.id)
+            .map((item) => item.tag)
+            .filter((tag): tag is TaskTagCode => TASK_TAGS.some((definition) => definition.code === tag))}
+          disabled={!canEdit}
+          onClose={() => setTagTask(null)}
+          onSave={(tags) => saveTaskTags(tagTask.task, tags)}
+        />
+      )}
+
+      {dependencyTask && (
+        <GanttDependencyModal
+          task={dependencyTask.task}
+          projectName={dependencyTask.project.project_name}
+          projectTasks={tasks.filter((task) =>
+            task.project_id === dependencyTask.project.id
+            && task.project_assembly_vendor_id === dependencyTask.task.project_assembly_vendor_id
+          )}
+          dependencies={dependencies}
+          canEdit={canEdit}
+          onCreate={(predecessorTaskId) => createDependency(dependencyTask.task, predecessorTaskId)}
+          onDelete={deleteDependency}
+          onClose={() => setDependencyTask(null)}
+        />
+      )}
+
+      {bulkEditKind && (
+        <GanttBulkEditModal
+          kind={bulkEditKind}
+          taskCount={selectedTaskIds.size}
+          initialTags={TASK_TAGS
+            .filter((tag) => Array.from(selectedTaskIds).every((taskId) => taskTags.some((item) => item.task_id === taskId && item.tag === tag.code)))
+            .map((tag) => tag.code)}
+          onClose={() => setBulkEditKind(null)}
+          onSave={applyBulkEdit}
         />
       )}
     </div>

@@ -2,17 +2,18 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { Loader2 } from "lucide-react";
+import { AssemblyVendorMultiSelect } from "@/components/projects/AssemblyVendorMultiSelect";
 import { addActivity } from "@/lib/activity";
 import {
   createProjectWithSections,
   getProjectCreationErrorMessage,
   getUniqueConstraintName,
 } from "@/lib/project-creation";
-import { getActiveProcessTypes } from "@/lib/process-types";
+import { getActiveProcessTypes, normalizeProcessTypeCode } from "@/lib/process-types";
 import { supabase } from "@/lib/supabase";
 import { toast } from "@/lib/toast";
 import { getProjectEntryOptions } from "@/lib/project-master-data";
-import { EditableCombobox } from "@/components/ui/EditableCombobox";
+import { parseProjectQuantity } from "@/lib/project-quantity";
 import type { ProcessTypeOption } from "@/types/process-type";
 import type {
   CreateProjectWithSectionsInput,
@@ -25,11 +26,13 @@ type ProjectFormState = {
   client_name: string;
   salesperson: string;
   site_address: string;
-  assembly_vendor: string;
+  assemblyVendorIds: number[];
   task_manager: string;
   start_date: string;
   end_date: string;
   memo: string;
+  quantity: string;
+  quantity_unit: string;
 };
 
 type ProjectCreateFormProps = {
@@ -44,11 +47,13 @@ const initialProjectForm: ProjectFormState = {
   client_name: "",
   salesperson: "",
   site_address: "",
-  assembly_vendor: "",
+  assemblyVendorIds: [],
   task_manager: "",
   start_date: "",
   end_date: "",
   memo: "",
+  quantity: "",
+  quantity_unit: "",
 };
 
 const inputClassName =
@@ -75,12 +80,15 @@ export function ProjectCreateForm({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [salespersonOptions, setSalespersonOptions] = useState<Array<{ value: string; label: string }>>([]);
-  const [assemblyVendorOptions, setAssemblyVendorOptions] = useState<string[]>([]);
+  const [taskManagerOptions, setTaskManagerOptions] = useState<Array<{ id: number; value: string; label: string }>>([]);
+  const [assemblyVendorOptions, setAssemblyVendorOptions] = useState<Array<{ id: number; name: string }>>([]);
 
   const isDirty = useMemo(
     () =>
       sections.length > 0 ||
-      Object.values(projectForm).some((value) => value.trim() !== ""),
+      Object.values(projectForm).some((value) =>
+        typeof value === "string" ? value.trim() !== "" : Array.isArray(value) ? value.length > 0 : value !== null
+      ),
     [projectForm, sections.length]
   );
 
@@ -112,7 +120,7 @@ export function ProjectCreateForm({
         setTemplateProcessCodes(
           new Set(
             (templateResult.data ?? [])
-              .map((row) => row.process_type)
+              .map((row) => normalizeProcessTypeCode(row.process_type))
               .filter((code): code is string => Boolean(code))
           )
         );
@@ -122,6 +130,7 @@ export function ProjectCreateForm({
         console.error("project entry options error:", entryOptionResult.error);
       }
       setSalespersonOptions(entryOptionResult.data.salespeople);
+      setTaskManagerOptions(entryOptionResult.data.taskManagers);
       setAssemblyVendorOptions(entryOptionResult.data.assemblyVendors);
 
       setIsLoadingProcesses(false);
@@ -157,7 +166,7 @@ export function ProjectCreateForm({
         {
           process_type: process.code,
           process_name: process.name,
-          assembly_vendor: projectForm.assembly_vendor,
+          assembly_vendor: assemblyVendorOptions.find((vendor) => vendor.id === projectForm.assemblyVendorIds[0])?.name ?? "",
           task_manager: projectForm.task_manager,
           quantity: null,
           start_date: "",
@@ -196,6 +205,9 @@ export function ProjectCreateForm({
   function validate() {
     if (!projectForm.project_code.trim()) return "프로젝트 코드를 입력하세요.";
     if (!projectForm.project_name.trim()) return "프로젝트명을 입력하세요.";
+    const projectQuantity = parseProjectQuantity(projectForm.quantity);
+    if (projectForm.quantity.trim() && projectQuantity === null) return "프로젝트 수량을 숫자로 입력하세요.";
+    if (projectQuantity !== null && projectQuantity < 0) return "프로젝트 수량은 0 이상이어야 합니다.";
     if (sections.length === 0) return "공정을 최소 1개 선택하세요.";
 
     if (
@@ -255,11 +267,13 @@ export function ProjectCreateForm({
         client_name: normalizeText(projectForm.client_name),
         salesperson: normalizeText(projectForm.salesperson),
         site_address: normalizeText(projectForm.site_address),
-        assembly_vendor: normalizeText(projectForm.assembly_vendor),
+        assemblyVendorIds: projectForm.assemblyVendorIds,
         task_manager: normalizeText(projectForm.task_manager),
         start_date: projectForm.start_date || null,
         end_date: projectForm.end_date || null,
         memo: normalizeText(projectForm.memo),
+        quantity: parseProjectQuantity(projectForm.quantity),
+        quantity_unit: normalizeText(projectForm.quantity_unit),
       },
       sections: orderedSections.map((section, index) => ({
         process_type: section.process_type,
@@ -341,19 +355,33 @@ export function ProjectCreateForm({
           </label>
           <label className="text-sm font-semibold text-slate-700">
             영업자
-            <EditableCombobox className={inputClassName} placeholder="영업자를 검색하거나 직접 입력" options={salespersonOptions} value={projectForm.salesperson} onChange={(value) => updateProjectField("salesperson", value)} />
+            <select className={inputClassName} value={projectForm.salesperson} onChange={(event) => updateProjectField("salesperson", event.target.value)}>
+              <option value="">영업자 선택</option>
+              {salespersonOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+            </select>
           </label>
           <label className="text-sm font-semibold text-slate-700 sm:col-span-2">
             현장주소
             <input className={inputClassName} value={projectForm.site_address} onChange={(event) => updateProjectField("site_address", event.target.value)} />
           </label>
           <label className="text-sm font-semibold text-slate-700">
-            기본 조립처
-            <EditableCombobox className={inputClassName} placeholder="조립업체를 검색하거나 직접 입력" options={assemblyVendorOptions} value={projectForm.assembly_vendor} onChange={(value) => updateProjectField("assembly_vendor", value)} />
+            조립업체
+            <AssemblyVendorMultiSelect options={assemblyVendorOptions} value={projectForm.assemblyVendorIds} onChange={(value) => updateProjectField("assemblyVendorIds", value)} disabled={isSubmitting} />
           </label>
           <label className="text-sm font-semibold text-slate-700">
             기본 담당자
-            <input className={inputClassName} value={projectForm.task_manager} onChange={(event) => updateProjectField("task_manager", event.target.value)} />
+            <select className={inputClassName} value={projectForm.task_manager} onChange={(event) => updateProjectField("task_manager", event.target.value)}>
+              <option value="">담당자 선택</option>
+              {taskManagerOptions.map((option) => <option key={option.id} value={option.value}>{option.label}</option>)}
+            </select>
+          </label>
+          <label className="text-sm font-semibold text-slate-700">
+            프로젝트 수량
+            <input type="number" min={0} step="any" className={inputClassName} value={projectForm.quantity} onChange={(event) => updateProjectField("quantity", event.target.value)} />
+          </label>
+          <label className="text-sm font-semibold text-slate-700">
+            수량 단위
+            <input className={inputClassName} value={projectForm.quantity_unit} onChange={(event) => updateProjectField("quantity_unit", event.target.value)} placeholder="세대, 개, 짝, SET, 식" />
           </label>
           <label className="text-sm font-semibold text-slate-700">
             프로젝트 시작일
@@ -417,8 +445,8 @@ export function ProjectCreateForm({
             </p>
           )}
           <div className="mt-3 grid gap-3 sm:grid-cols-2">
-            <label className="text-sm font-semibold text-slate-700">조립처<input className={inputClassName} value={section.assembly_vendor} onChange={(event) => updateSection(section.process_type, { assembly_vendor: event.target.value })} /></label>
-            <label className="text-sm font-semibold text-slate-700">담당자<input className={inputClassName} value={section.task_manager} onChange={(event) => updateSection(section.process_type, { task_manager: event.target.value })} /></label>
+            <label className="text-sm font-semibold text-slate-700">조립처<select className={inputClassName} value={section.assembly_vendor} onChange={(event) => updateSection(section.process_type, { assembly_vendor: event.target.value })}><option value="">조립업체 선택</option>{assemblyVendorOptions.map((option) => <option key={option.id} value={option.name}>{option.name}</option>)}</select></label>
+            <label className="text-sm font-semibold text-slate-700">담당자<select className={inputClassName} value={section.task_manager} onChange={(event) => updateSection(section.process_type, { task_manager: event.target.value })}><option value="">담당자 선택</option>{taskManagerOptions.map((option) => <option key={option.id} value={option.value}>{option.label}</option>)}</select></label>
             <label className="text-sm font-semibold text-slate-700">수량<input type="number" min={0} className={inputClassName} value={section.quantity ?? ""} onChange={(event) => updateSection(section.process_type, { quantity: event.target.value === "" ? null : Number(event.target.value) })} /></label>
             <div />
             <label className="text-sm font-semibold text-slate-700">시작일<input type="date" className={inputClassName} value={section.start_date} onChange={(event) => updateSection(section.process_type, { start_date: event.target.value })} /></label>

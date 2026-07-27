@@ -1,13 +1,15 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight, Target, X } from "lucide-react";
 import { FocusTaskCard, type FocusTask } from "@/components/focus/FocusTaskCard";
 import { Button } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ErrorState } from "@/components/ui/ErrorState";
 import { Skeleton } from "@/components/ui/Skeleton";
-import { getCurrentEmployee, isAdmin, type CurrentEmployee } from "@/lib/auth";
+import { isAdmin } from "@/lib/auth";
+import { useAppShellUser } from "@/contexts/AppShellUserContext";
+import { getActiveEmployeeOptionsByFunction } from "@/lib/employee-master-data";
 import { completeTask } from "@/lib/task-actions";
 import {
   getLocalDateString,
@@ -31,41 +33,62 @@ type EmployeeOption = {
 };
 
 export function FocusPanel() {
+  const { employee } = useAppShellUser();
   const [isOpen, setIsOpen] = useState(false);
   const [tasks, setTasks] = useState<FocusTask[]>([]);
-  const [employee, setEmployee] = useState<CurrentEmployee | null>(null);
   const [employees, setEmployees] = useState<EmployeeOption[]>([]);
   const [assigneeFilter, setAssigneeFilter] = useState("mine");
   const [selectedTaskId, setSelectedTaskId] = useState<number | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(false);
   const [isCompleting, setIsCompleting] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const today = getLocalDateString();
+  const requestInFlightRef = useRef(false);
+  const hasLoadedRef = useRef(false);
 
   const loadData = useCallback(async () => {
+    if (!employee || requestInFlightRef.current) return;
+    requestInFlightRef.current = true;
     setIsLoading(true);
     setErrorMessage("");
     try {
-      const currentEmployee = await getCurrentEmployee();
-      setEmployee(currentEmployee);
       if (!window.localStorage.getItem(FILTER_KEY)) {
-        setAssigneeFilter(isAdmin(currentEmployee) ? "all" : "mine");
+        setAssigneeFilter(isAdmin(employee) ? "all" : "mine");
       }
 
-      const [{ data: taskData, error: taskError }, { data: projectData, error: projectError }] =
-        await Promise.all([
-          supabase
-            .from("tasks")
-            .select(
-              "id, project_id, task_name, task_type, assignee, status, start_date, due_date, completed_date, created_at"
-            ),
-          supabase.from("projects").select("id, project_name"),
-        ]);
+      let taskQuery = supabase
+        .from("tasks")
+        .select(
+          "id, project_id, task_name, task_type, assignee, status, start_date, due_date, completed_date, created_at"
+        )
+        .or("status.is.null,status.in.(pending,대기,in_progress,진행중)")
+        .order("due_date", { ascending: true, nullsFirst: false })
+        .limit(200);
+      if (!isAdmin(employee)) {
+        taskQuery = taskQuery.eq("assignee", employee.name);
+      }
+      const { data: taskData, error: taskError } = await taskQuery;
       if (taskError) throw taskError;
-      if (projectError) throw projectError;
+
+      const projectIds = Array.from(
+        new Set((taskData ?? []).map((task) => task.project_id))
+      );
+      const [projectResult, employeeResult] = await Promise.all([
+        projectIds.length
+          ? supabase
+              .from("projects")
+              .select("id, project_name")
+              .in("id", projectIds)
+          : Promise.resolve({ data: [], error: null }),
+        isAdmin(employee)
+          ? getActiveEmployeeOptionsByFunction("operations")
+          : Promise.resolve({ data: [], error: null }),
+      ]);
+      if (projectResult.error) throw projectResult.error;
+      if (employeeResult.error) throw employeeResult.error;
 
       const projectsById = new Map(
-        (projectData ?? []).map((project) => [project.id, project.project_name])
+        (projectResult.data ?? []).map((project) => [project.id, project.project_name])
       );
       setTasks(
         ((taskData ?? []) as PrioritizableTask[]).map((task) => ({
@@ -75,15 +98,10 @@ export function FocusPanel() {
         }))
       );
 
-      if (isAdmin(currentEmployee)) {
-        const { data: employeeData, error: employeeError } = await supabase
-          .from("employees")
-          .select("id, name, active")
-          .eq("active", true)
-          .order("name");
-        if (employeeError) throw employeeError;
-        setEmployees(employeeData ?? []);
+      if (isAdmin(employee)) {
+        setEmployees(employeeResult.data.map((option) => ({ id: option.id, name: option.value, active: true })));
       }
+      hasLoadedRef.current = true;
     } catch (error) {
       setErrorMessage(
         error instanceof Error
@@ -92,8 +110,9 @@ export function FocusPanel() {
       );
     } finally {
       setIsLoading(false);
+      requestInFlightRef.current = false;
     }
-  }, []);
+  }, [employee]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -101,14 +120,18 @@ export function FocusPanel() {
       const storedTaskId = Number(window.localStorage.getItem(TASK_KEY));
       setSelectedTaskId(Number.isFinite(storedTaskId) && storedTaskId > 0 ? storedTaskId : null);
       setAssigneeFilter(window.localStorage.getItem(FILTER_KEY) || "mine");
-      void loadData();
     }, 0);
     return () => window.clearTimeout(timer);
   }, [loadData]);
 
   useEffect(() => {
+    if (isOpen && !hasLoadedRef.current) void loadData();
+  }, [isOpen, loadData]);
+
+  useEffect(() => {
     function refreshAfterBulkChange() {
-      void loadData();
+      hasLoadedRef.current = false;
+      if (isOpen) void loadData();
     }
     window.addEventListener(TASKS_BULK_CHANGED_EVENT, refreshAfterBulkChange);
     return () =>
@@ -116,7 +139,7 @@ export function FocusPanel() {
         TASKS_BULK_CHANGED_EVENT,
         refreshAfterBulkChange
       );
-  }, [loadData]);
+  }, [isOpen, loadData]);
 
   useEffect(() => {
     function togglePanel() {

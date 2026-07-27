@@ -3,59 +3,97 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import SignupRequests from "@/components/employees/SignupRequests";
+import { EmployeeDialog } from "@/components/employees/EmployeeDialog";
+import { getEmployeeOrganizations } from "@/lib/employee-master-data";
+import { setEmployeeActive } from "@/lib/employees";
+import { Badge } from "@/components/ui/Badge";
+import { toast } from "@/lib/toast";
+import { normalizeRole, ROLE_PRESENTATION } from "@/lib/permissions";
+import { usePermission } from "@/hooks/usePermission";
+import type { Employee, EmployeeAccountInfo, EmployeeOrganizationOption } from "@/types/employee";
 
-type Employee = {
-  id: string;
-  name: string;
-  email: string;
-  department: string | null;
-  position: string | null;
-  role: string | null;
-  phone: string | null;
-  memo: string | null;
-  is_active: boolean;
-};
+function AuthLinkDialog({ employee, organizationName, onClose, onSuccess }: {
+  employee: Employee;
+  organizationName: string;
+  onClose: () => void;
+  onSuccess: () => void;
+}) {
+  const [email, setEmail] = useState(employee.email ?? "");
+  const [isSaving, setIsSaving] = useState(false);
 
-const roleLabels: Record<string, string> = {
-  admin: "관리자",
-  manager: "팀장",
-  staff: "직원",
-  viewer: "조회전용",
-};
+  async function handleSubmit() {
+    setIsSaving(true);
+    try {
+      const response = await fetch("/api/employees/auth-link", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ employeeId: employee.id, email }),
+      });
+      const result = await response.json() as { error?: string; invited?: boolean };
+      if (!response.ok) {
+        toast.error(result.error ?? "Auth 연결을 처리하지 못했습니다.");
+        return;
+      }
+      toast.success(result.invited ? "초대 메일을 발송하고 계정을 연결했습니다." : "기존 Auth 계정을 연결했습니다.");
+      onSuccess();
+    } catch (error) {
+      console.error("employee auth link request error:", error);
+      toast.error("네트워크 오류로 Auth 연결을 처리하지 못했습니다.");
+    } finally {
+      setIsSaving(false);
+    }
+  }
 
-export default function EmployeesPage() {
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/40 p-4" role="dialog" aria-modal="true" aria-labelledby="auth-link-title">
+      <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
+        <h2 id="auth-link-title" className="text-lg font-semibold text-slate-900">Auth 연결</h2>
+        <div className="mt-5 space-y-4">
+          <label className="block text-sm font-medium text-slate-700">직원명<input value={employee.name} readOnly className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm" /></label>
+          <label className="block text-sm font-medium text-slate-700">조직<input value={organizationName} readOnly className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm" /></label>
+          <label className="block text-sm font-medium text-slate-700">이메일<input type="email" value={email} onChange={(event) => setEmail(event.target.value)} autoFocus className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm" /></label>
+        </div>
+        <div className="mt-6 flex justify-end gap-2">
+          <button type="button" onClick={onClose} disabled={isSaving} className="rounded-xl border border-slate-300 px-4 py-2 text-sm">취소</button>
+          <button type="button" onClick={handleSubmit} disabled={isSaving} className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white disabled:bg-slate-400">{isSaving ? "연결 중..." : "연결 또는 초대"}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export function EmployeeManagement({ embedded = false }: { embedded?: boolean }) {
   const [employees, setEmployees] = useState<Employee[]>([]);
+  const [organizations, setOrganizations] = useState<EmployeeOrganizationOption[]>([]);
   const [selectedEmployee, setSelectedEmployee] = useState<Employee | null>(
     null
   );
+  const [authLinkEmployee, setAuthLinkEmployee] = useState<Employee | null>(null);
+  const [accountInfo, setAccountInfo] = useState<EmployeeAccountInfo | null>(null);
+  const [isEmployeeDialogOpen, setIsEmployeeDialogOpen] = useState(false);
 
   const [searchText, setSearchText] = useState("");
   const [roleFilter, setRoleFilter] = useState("all");
-  const [loading, setLoading] = useState(false);
-
-  const [form, setForm] = useState({
-    name: "",
-    email: "",
-    department: "공무팀",
-    position: "",
-    role: "staff",
-    phone: "",
-    memo: "",
-    is_active: true,
-  });
+  const { can } = usePermission();
+  const canCreateEmployee = can("manage_employees");
+  const canEditEmployee = can("manage_employees");
 
   const loadEmployees = useCallback(async function loadEmployees() {
-    const { data, error } = await supabase
-      .from("employees")
-      .select("*")
-      .order("created_at", { ascending: false });
+    const [employeeResult, organizationResult] = await Promise.all([
+      supabase
+        .from("employees")
+        .select("id, name, position, active, created_at, email, auth_user_id, role, approval_status, approved_at, approved_by, rejected_at, organization_id, phone, memo, updated_at")
+        .order("created_at", { ascending: false }),
+      getEmployeeOrganizations(),
+    ]);
 
-    if (error) {
-      alert(error.message);
+    if (employeeResult.error || organizationResult.error) {
+      alert(employeeResult.error?.message || organizationResult.error || "직원 정보를 불러오지 못했습니다.");
       return;
     }
 
-    setEmployees(data || []);
+    setEmployees(employeeResult.data || []);
+    setOrganizations(organizationResult.data);
   }, []);
 
   useEffect(() => {
@@ -66,278 +104,87 @@ export default function EmployeesPage() {
     return () => window.clearTimeout(timer);
   }, [loadEmployees]);
 
+  useEffect(() => {
+    if (!selectedEmployee?.auth_user_id) {
+      return;
+    }
+    let cancelled = false;
+    void fetch(`/api/employees/auth-link?employeeId=${selectedEmployee.id}`, { cache: "no-store" })
+      .then(async (response) => {
+        const result = await response.json() as { account?: EmployeeAccountInfo | null };
+        if (!cancelled && response.ok) setAccountInfo(result.account ?? null);
+      })
+      .catch((error) => console.error("employee account info error:", error));
+    return () => { cancelled = true; };
+  }, [selectedEmployee]);
+
   const filteredEmployees = useMemo(() => {
     return employees.filter((employee) => {
       const keyword = searchText.toLowerCase();
 
       const matchesSearch =
         employee.name.toLowerCase().includes(keyword) ||
-        employee.email.toLowerCase().includes(keyword) ||
-        (employee.position || "").toLowerCase().includes(keyword) ||
-        (employee.department || "").toLowerCase().includes(keyword);
+        (employee.email || "").toLowerCase().includes(keyword) ||
+        (employee.phone || "").toLowerCase().includes(keyword) ||
+        (organizations.find((organization) => organization.id === employee.organization_id)?.name || "")
+          .toLowerCase()
+          .includes(keyword);
 
       const matchesRole =
         roleFilter === "all" || employee.role === roleFilter;
 
       return matchesSearch && matchesRole;
+    }).sort((left, right) => {
+      if (left.active !== right.active) return left.active ? -1 : 1;
+      return left.name.localeCompare(right.name, "ko-KR", { numeric: true, sensitivity: "base" });
     });
-  }, [employees, searchText, roleFilter]);
+  }, [employees, organizations, searchText, roleFilter]);
 
-  function resetForm() {
-    setSelectedEmployee(null);
-    setForm({
-      name: "",
-      email: "",
-      department: "공무팀",
-      position: "",
-      role: "staff",
-      phone: "",
-      memo: "",
-      is_active: true,
-    });
-  }
-
-  function selectEmployee(employee: Employee) {
+  function openEditDialog(employee: Employee) {
+    setAccountInfo(null);
     setSelectedEmployee(employee);
-    setForm({
-      name: employee.name,
-      email: employee.email,
-      department: employee.department || "공무팀",
-      position: employee.position || "",
-      role: employee.role || "staff",
-      phone: employee.phone || "",
-      memo: employee.memo || "",
-      is_active: employee.is_active,
-    });
-  }
-
-  async function saveEmployee() {
-    if (!form.name.trim()) {
-      alert("이름을 입력해주세요.");
-      return;
-    }
-
-    if (!form.email.trim()) {
-      alert("이메일을 입력해주세요.");
-      return;
-    }
-
-    setLoading(true);
-
-    if (selectedEmployee) {
-      const { error } = await supabase
-        .from("employees")
-        .update({
-          name: form.name,
-          email: form.email,
-          department: form.department,
-          position: form.position,
-          role: form.role,
-          phone: form.phone,
-          memo: form.memo,
-          is_active: form.is_active,
-        })
-        .eq("id", selectedEmployee.id);
-
-      setLoading(false);
-
-      if (error) {
-        alert(error.message);
-        return;
-      }
-
-      alert("직원 정보가 수정되었습니다.");
-    } else {
-      const { error } = await supabase.from("employees").insert({
-        name: form.name,
-        email: form.email,
-        department: form.department,
-        position: form.position,
-        role: form.role,
-        phone: form.phone,
-        memo: form.memo,
-        is_active: form.is_active,
-      });
-
-      setLoading(false);
-
-      if (error) {
-        alert(error.message);
-        return;
-      }
-
-      alert("직원이 추가되었습니다.");
-    }
-
-    resetForm();
-    loadEmployees();
+    setIsEmployeeDialogOpen(true);
   }
 
   async function toggleActive(employee: Employee) {
-    const { error } = await supabase
-      .from("employees")
-      .update({
-        is_active: !employee.is_active,
-      })
-      .eq("id", employee.id);
-
-    if (error) {
-      alert(error.message);
+    if (employee.active && !window.confirm(`${employee.name} 직원을 비활성 처리하시겠습니까?`)) {
       return;
     }
-
-    loadEmployees();
-  }
-
-  async function deleteEmployee(employee: Employee) {
-    const confirmed = window.confirm(
-      `${employee.name} 직원을 삭제하시겠습니까?`
-    );
-
-    if (!confirmed) return;
-
-    const { error } = await supabase
-      .from("employees")
-      .delete()
-      .eq("id", employee.id);
+    const { error } = await setEmployeeActive(employee.id, !employee.active);
 
     if (error) {
-      alert(error.message);
+      alert(error);
       return;
-    }
-
-    if (selectedEmployee?.id === employee.id) {
-      resetForm();
     }
 
     loadEmployees();
   }
 
   return (
-    <main className="space-y-6 p-8">
-      <div className="flex items-center justify-between">
+    <main className={embedded ? "space-y-6" : "space-y-6 p-8"}>
+      <div className={`items-center justify-between ${embedded ? "flex justify-end" : "flex"}`}>
+        {!embedded && (
         <div>
           <h1 className="text-2xl font-bold text-slate-900">직원관리</h1>
           <p className="mt-1 text-sm text-slate-500">
             직원 정보, 권한, 활성 상태를 관리합니다.
           </p>
         </div>
+        )}
 
-        <button
-          onClick={resetForm}
-          className="rounded-xl bg-slate-900 px-5 py-3 text-sm font-semibold text-white hover:bg-slate-700"
-        >
-          + 신규 직원
-        </button>
       </div>
 
       <SignupRequests />
 
       <section className="rounded-2xl bg-white p-6 shadow-sm">
-        <h2 className="mb-4 text-lg font-semibold">
-          {selectedEmployee ? "직원 수정" : "직원 추가"}
-        </h2>
-
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
-          <input
-            value={form.name}
-            onChange={(e) =>
-              setForm({ ...form, name: e.target.value })
-            }
-            placeholder="이름"
-            className="rounded-xl border border-slate-300 px-4 py-3 text-sm"
-          />
-
-          <input
-            value={form.email}
-            onChange={(e) =>
-              setForm({ ...form, email: e.target.value })
-            }
-            placeholder="이메일"
-            className="rounded-xl border border-slate-300 px-4 py-3 text-sm"
-          />
-
-          <input
-            value={form.department}
-            onChange={(e) =>
-              setForm({ ...form, department: e.target.value })
-            }
-            placeholder="부서"
-            className="rounded-xl border border-slate-300 px-4 py-3 text-sm"
-          />
-
-          <input
-            value={form.position}
-            onChange={(e) =>
-              setForm({ ...form, position: e.target.value })
-            }
-            placeholder="직급"
-            className="rounded-xl border border-slate-300 px-4 py-3 text-sm"
-          />
-
-          <input
-            value={form.phone}
-            onChange={(e) =>
-              setForm({ ...form, phone: e.target.value })
-            }
-            placeholder="연락처"
-            className="rounded-xl border border-slate-300 px-4 py-3 text-sm"
-          />
-
-          <select
-            value={form.role}
-            onChange={(e) =>
-              setForm({ ...form, role: e.target.value })
-            }
-            className="rounded-xl border border-slate-300 px-4 py-3 text-sm"
-          >
-            <option value="admin">관리자</option>
-            <option value="manager">팀장</option>
-            <option value="staff">직원</option>
-            <option value="viewer">조회전용</option>
-          </select>
-
-          <select
-            value={form.is_active ? "active" : "inactive"}
-            onChange={(e) =>
-              setForm({
-                ...form,
-                is_active: e.target.value === "active",
-              })
-            }
-            className="rounded-xl border border-slate-300 px-4 py-3 text-sm"
-          >
-            <option value="active">사용중</option>
-            <option value="inactive">비활성</option>
-          </select>
-
-          <button
-            onClick={saveEmployee}
-            disabled={loading}
-            className="rounded-xl bg-blue-600 px-4 py-3 text-sm font-semibold text-white hover:bg-blue-700 disabled:bg-slate-400"
-          >
-            {loading ? "저장 중..." : selectedEmployee ? "수정 저장" : "직원 추가"}
-          </button>
-        </div>
-
-        <textarea
-          value={form.memo}
-          onChange={(e) => setForm({ ...form, memo: e.target.value })}
-          placeholder="메모"
-          className="mt-3 min-h-24 w-full rounded-xl border border-slate-300 px-4 py-3 text-sm"
-        />
-      </section>
-
-      <section className="rounded-2xl bg-white p-6 shadow-sm">
-        <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-          <h2 className="text-lg font-semibold">직원 목록</h2>
-
-          <div className="flex gap-2">
+        <h2 className="text-lg font-semibold">직원 관리</h2>
+        <div className="mb-4 mt-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <div className="flex flex-1 gap-2">
             <input
               value={searchText}
               onChange={(e) => setSearchText(e.target.value)}
-              placeholder="이름, 이메일, 부서, 직급 검색"
-              className="w-72 rounded-xl border border-slate-300 px-4 py-2 text-sm"
+              placeholder="이름, 이메일, 연락처, 조직 검색"
+              className="w-full max-w-md rounded-xl border border-slate-300 px-4 py-2 text-sm"
             />
 
             <select
@@ -346,12 +193,21 @@ export default function EmployeesPage() {
               className="rounded-xl border border-slate-300 px-4 py-2 text-sm"
             >
               <option value="all">전체 권한</option>
-              <option value="admin">관리자</option>
-              <option value="manager">팀장</option>
-              <option value="staff">직원</option>
-              <option value="viewer">조회전용</option>
+              <option value="admin">Admin</option>
+              <option value="manager">Manager</option>
+              <option value="staff">Staff</option>
+              <option value="viewer">Viewer</option>
             </select>
           </div>
+          {canCreateEmployee && <button
+            type="button"
+            onClick={() => {
+              setSelectedEmployee(null);
+              setAccountInfo(null);
+              setIsEmployeeDialogOpen(true);
+            }}
+            className="rounded-xl bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white hover:bg-slate-700"
+          >+ 신규 직원</button>}
         </div>
 
         <div className="overflow-hidden rounded-xl border border-slate-200">
@@ -359,12 +215,12 @@ export default function EmployeesPage() {
             <thead className="bg-slate-100 text-slate-600">
               <tr>
                 <th className="px-4 py-3">이름</th>
-                <th className="px-4 py-3">이메일</th>
-                <th className="px-4 py-3">부서</th>
+                <th className="px-4 py-3">조직</th>
                 <th className="px-4 py-3">직급</th>
                 <th className="px-4 py-3">권한</th>
+                <th className="px-4 py-3">연락처</th>
                 <th className="px-4 py-3">상태</th>
-                <th className="px-4 py-3 text-right">관리</th>
+                <th className="px-4 py-3">승인</th>
               </tr>
             </thead>
 
@@ -374,43 +230,38 @@ export default function EmployeesPage() {
                   key={employee.id}
                   className="border-t border-slate-200 hover:bg-slate-50"
                 >
-                  <td
-                    onClick={() => selectEmployee(employee)}
-                    className="cursor-pointer px-4 py-3 font-medium text-blue-600"
-                  >
-                    {employee.name}
+                  <td className="px-4 py-3 font-medium">
+                    {canEditEmployee ? (
+                      <button type="button" onClick={() => openEditDialog(employee)} className="text-blue-600 hover:underline">{employee.name}</button>
+                    ) : employee.name}
                   </td>
-                  <td className="px-4 py-3">{employee.email}</td>
-                  <td className="px-4 py-3">{employee.department || "-"}</td>
+                  <td className="px-4 py-3">
+                    {organizations.find((organization) => organization.id === employee.organization_id)?.name || "-"}
+                  </td>
                   <td className="px-4 py-3">{employee.position || "-"}</td>
                   <td className="px-4 py-3">
-                    {roleLabels[employee.role || "staff"]}
+                    <Badge variant={ROLE_PRESENTATION[normalizeRole(employee.role)].badge}>
+                      {ROLE_PRESENTATION[normalizeRole(employee.role)].label}
+                    </Badge>
+                  </td>
+                  <td className="whitespace-nowrap px-4 py-3">{employee.phone || "-"}</td>
+                  <td className="px-4 py-3">
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={employee.active}
+                      disabled={!canEditEmployee}
+                      onClick={() => void toggleActive(employee)}
+                      className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors disabled:cursor-default ${employee.active ? "bg-emerald-500" : "bg-slate-300"}`}
+                    >
+                      <span className={`inline-block h-4 w-4 rounded-full bg-white shadow transition-transform ${employee.active ? "translate-x-6" : "translate-x-1"}`} />
+                      <span className="sr-only">{employee.active ? "활성" : "비활성"}</span>
+                    </button>
                   </td>
                   <td className="px-4 py-3">
-                    <span
-                      className={`rounded-full px-3 py-1 text-xs font-semibold ${
-                        employee.is_active
-                          ? "bg-green-100 text-green-700"
-                          : "bg-slate-200 text-slate-500"
-                      }`}
-                    >
-                      {employee.is_active ? "사용중" : "비활성"}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3 text-right">
-                    <button
-                      onClick={() => toggleActive(employee)}
-                      className="mr-2 rounded-lg border border-slate-300 px-3 py-1 text-xs hover:bg-slate-100"
-                    >
-                      {employee.is_active ? "비활성" : "활성"}
-                    </button>
-
-                    <button
-                      onClick={() => deleteEmployee(employee)}
-                      className="rounded-lg border border-red-300 px-3 py-1 text-xs text-red-600 hover:bg-red-50"
-                    >
-                      삭제
-                    </button>
+                    <Badge variant={employee.auth_user_id ? "success" : "warning"}>
+                      {employee.auth_user_id ? "● 승인" : "● 확인중"}
+                    </Badge>
                   </td>
                 </tr>
               ))}
@@ -429,6 +280,41 @@ export default function EmployeesPage() {
           </table>
         </div>
       </section>
+      {isEmployeeDialogOpen && (
+        <EmployeeDialog
+          key={selectedEmployee?.id ?? "create"}
+          mode={selectedEmployee ? "edit" : "create"}
+          employee={selectedEmployee}
+          organizations={organizations}
+          accountInfo={accountInfo}
+          onAuthLink={(employee) => {
+            setIsEmployeeDialogOpen(false);
+            setAuthLinkEmployee(employee);
+          }}
+          onClose={() => setIsEmployeeDialogOpen(false)}
+          onSaved={() => {
+            setIsEmployeeDialogOpen(false);
+            setSelectedEmployee(null);
+            setAccountInfo(null);
+            void loadEmployees();
+          }}
+        />
+      )}
+      {authLinkEmployee && (
+        <AuthLinkDialog
+          employee={authLinkEmployee}
+          organizationName={organizations.find((organization) => organization.id === authLinkEmployee.organization_id)?.name || "-"}
+          onClose={() => setAuthLinkEmployee(null)}
+          onSuccess={() => {
+            setAuthLinkEmployee(null);
+            void loadEmployees();
+          }}
+        />
+      )}
     </main>
   );
+}
+
+export default function EmployeesPage() {
+  return <EmployeeManagement />;
 }

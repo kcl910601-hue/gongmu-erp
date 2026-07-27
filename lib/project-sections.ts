@@ -1,5 +1,6 @@
 import type { PostgrestError } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
+import { normalizeProcessTypeCode } from "@/lib/process-types";
 import type {
   CreateProjectSectionInput,
   ProjectSection,
@@ -102,9 +103,9 @@ export function getComputedSectionStatus(tasks: SectionProgressTask[]) {
 }
 
 export async function createProjectSectionWithTasks(input: CreateProjectSectionInput) {
-  const { data, error } = await supabase.rpc("create_project_section_with_tasks", {
+  const { data, error } = await supabase.rpc("create_project_section_with_vendor_tasks", {
     p_project_id: input.projectId,
-    p_process_type: input.processType,
+    p_process_type: normalizeProcessTypeCode(input.processType),
     p_assembly_vendor: input.assemblyVendor,
     p_task_manager: input.taskManager,
     p_quantity: input.quantity,
@@ -112,6 +113,7 @@ export async function createProjectSectionWithTasks(input: CreateProjectSectionI
     p_end_date: input.endDate,
     p_memo: input.memo,
     p_source_section_id: input.sourceSectionId ?? null,
+    p_target_project_assembly_vendor_ids: input.targetAssemblyVendorIds ?? null,
   });
 
   return { data: data as { section_id: number; task_count: number } | null, error };

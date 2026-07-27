@@ -16,6 +16,13 @@ import {
 import { addActivity } from "@/lib/activity";
 import { getCurrentEmployee, type CurrentEmployee } from "@/lib/auth";
 import {
+  getActiveEmployeeOptionsByFunction,
+  getEmployeeOrganizations,
+  type EmployeeOrganizationOption,
+} from "@/lib/employee-master-data";
+import { saveEmployee as saveEmployeeRecord } from "@/lib/employees";
+import { normalizeRole, ROLE_PRESENTATION } from "@/lib/permissions";
+import {
   PROJECT_FILE_TYPES,
   type ProjectFileType,
   uploadProjectFile,
@@ -55,6 +62,7 @@ type TaskForm = {
 type EmployeeForm = {
   name: string;
   email: string;
+  organization_id: string;
   role: string;
   position: string;
   active: boolean;
@@ -98,7 +106,8 @@ const initialTaskForm: TaskForm = {
 const initialEmployeeForm: EmployeeForm = {
   name: "",
   email: "",
-  role: "member",
+  organization_id: "",
+  role: "staff",
   position: "",
   active: true,
 };
@@ -110,7 +119,7 @@ const initialFileForm: FileForm = {
 
 const taskTypes = ["설계", "구매", "제작", "조립", "검수", "출고", "기타"];
 const taskStatuses = ["pending", "in_progress", "completed"];
-const employeeRoles = ["admin", "manager", "member", "viewer"];
+const employeeRoles = ["admin", "manager", "staff", "viewer"];
 const acceptedFileTypes = [
   "application/pdf",
   "image/*",
@@ -144,6 +153,7 @@ function isEmployeeFormDirty(form: EmployeeForm) {
   return (
     form.name.trim() !== "" ||
     form.email.trim() !== "" ||
+    form.organization_id !== "" ||
     form.role !== initialEmployeeForm.role ||
     form.position.trim() !== "" ||
     form.active !== initialEmployeeForm.active
@@ -204,6 +214,7 @@ export default function QuickCreate({
     null
   );
   const [employees, setEmployees] = useState<EmployeeOption[]>([]);
+  const [organizations, setOrganizations] = useState<EmployeeOrganizationOption[]>([]);
 
   const canCreate = Boolean(currentEmployee && currentEmployee.active !== false);
   const isDirty =
@@ -350,24 +361,40 @@ export default function QuickCreate({
     let isMounted = true;
 
     async function loadEmployees() {
-      const { data, error } = await supabase
-        .from("employees")
-        .select("id, name, active")
-        .eq("active", true)
-        .order("name", { ascending: true });
+      const { data, error } = await getActiveEmployeeOptionsByFunction("operations");
 
       if (!isMounted) return;
 
       if (error) {
-        setErrorMessage(getSupabaseMessage(error.message));
+        setErrorMessage(getSupabaseMessage(error));
         return;
       }
 
-      setEmployees((data || []) as EmployeeOption[]);
+      setEmployees(data.map((employee) => ({ id: employee.id, name: employee.value, active: true })));
     }
 
     void loadEmployees();
 
+    return () => {
+      isMounted = false;
+    };
+  }, [isOpen, view]);
+
+  useEffect(() => {
+    if (!isOpen || view !== "employee") return;
+    let isMounted = true;
+
+    async function loadOrganizations() {
+      const result = await getEmployeeOrganizations();
+      if (!isMounted) return;
+      if (result.error) {
+        setErrorMessage(result.error);
+        return;
+      }
+      setOrganizations(result.data);
+    }
+
+    void loadOrganizations();
     return () => {
       isMounted = false;
     };
@@ -423,6 +450,21 @@ export default function QuickCreate({
     setIsSaving(true);
     setErrorMessage("");
 
+    const { data: vendorRelation, error: vendorRelationError } = await supabase
+      .from("project_assembly_vendors")
+      .select("id")
+      .eq("project_id", selectedProject.id)
+      .order("is_primary", { ascending: false })
+      .order("sort_order", { ascending: true })
+      .limit(1)
+      .maybeSingle();
+
+    if (vendorRelationError || !vendorRelation) {
+      setErrorMessage(vendorRelationError?.message || "조립업체가 등록된 프로젝트에서만 업무를 생성할 수 있습니다.");
+      setIsSaving(false);
+      return;
+    }
+
     const { data: tasks, error: tasksError } = await supabase
       .from("tasks")
       .select("id, task_order, status")
@@ -450,6 +492,7 @@ export default function QuickCreate({
       .insert([
         {
           project_id: selectedProject.id,
+          project_assembly_vendor_id: Number(vendorRelation.id),
           task_order: maxOrder + 1,
           task_name: taskForm.task_name.trim(),
           task_type: taskForm.task_type.trim(),
@@ -523,30 +566,28 @@ export default function QuickCreate({
       return;
     }
 
-    if (!employeeForm.email.trim()) {
-      setErrorMessage("이메일을 입력하세요.");
+    const selectedOrganization = organizations.find(
+      (organization) => organization.id === Number(employeeForm.organization_id)
+    );
+    if (!selectedOrganization) {
+      setErrorMessage("조직을 선택하세요.");
       return;
     }
 
     setIsSaving(true);
     setErrorMessage("");
 
-    const { data: employeeData, error } = await supabase
-      .from("employees")
-      .insert([
-        {
-          name: employeeForm.name.trim(),
-          email: employeeForm.email.trim(),
-          position: employeeForm.position.trim() || null,
-          role: employeeForm.role,
-          active: employeeForm.active,
-        },
-      ])
-      .select("id")
-      .single();
+    const result = await saveEmployeeRecord({
+      name: employeeForm.name,
+      email: employeeForm.email,
+      organizationId: selectedOrganization.id,
+      position: employeeForm.position,
+      role: employeeForm.role,
+      active: employeeForm.active,
+    });
 
-    if (error || !employeeData) {
-      setErrorMessage(getSupabaseMessage(error?.message || ""));
+    if (result.error || result.employeeId === null) {
+      setErrorMessage(getSupabaseMessage(result.error || ""));
       setIsSaving(false);
       return;
     }
@@ -554,7 +595,7 @@ export default function QuickCreate({
     await addActivity({
       actionType: "employee_create",
       targetType: "employee",
-      targetId: employeeData.id as number,
+      targetId: result.employeeId,
       title: "직원 등록",
       description: `${employeeForm.name.trim()} 직원을 등록했습니다.`,
     });
@@ -936,7 +977,7 @@ export default function QuickCreate({
                 />
               </label>
               <label className="text-sm font-semibold text-slate-700">
-                이메일
+                이메일 (선택)
                 <input
                   type="email"
                   value={employeeForm.email}
@@ -949,6 +990,19 @@ export default function QuickCreate({
                   className="mt-1 w-full rounded-2xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-300"
                   placeholder="name@example.com"
                 />
+              </label>
+              <label className="text-sm font-semibold text-slate-700">
+                조직
+                <select
+                  value={employeeForm.organization_id}
+                  onChange={(event) => setEmployeeForm({ ...employeeForm, organization_id: event.target.value })}
+                  className="mt-1 w-full rounded-2xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-300"
+                >
+                  <option value="">조직 선택</option>
+                  {organizations.map((organization) => (
+                    <option key={organization.id} value={organization.id}>{organization.name}</option>
+                  ))}
+                </select>
               </label>
               <label className="text-sm font-semibold text-slate-700">
                 역할
@@ -964,7 +1018,7 @@ export default function QuickCreate({
                 >
                   {employeeRoles.map((role) => (
                     <option key={role} value={role}>
-                      {role}
+                      {ROLE_PRESENTATION[normalizeRole(role)].label}
                     </option>
                   ))}
                 </select>

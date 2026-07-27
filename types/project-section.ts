@@ -4,6 +4,15 @@ export type ProjectSectionStatus =
   | "hold"
   | "completed";
 
+export type ProjectAssemblyVendor = {
+  id: number;
+  organizationId: number;
+  organizationName: string;
+  isPrimary: boolean;
+  sortOrder: number;
+  allocatedQuantity: number | null;
+};
+
 export type ProjectSection = {
   id: number;
   project_id: number;
@@ -26,11 +35,13 @@ export type CreateProjectInput = {
   client_name: string | null;
   salesperson: string | null;
   site_address: string | null;
-  assembly_vendor: string | null;
+  assemblyVendorIds: number[];
   task_manager: string | null;
   start_date: string | null;
   end_date: string | null;
   memo: string | null;
+  quantity: number | null;
+  quantity_unit: string | null;
 };
 
 export type CreateSectionInput = {
@@ -86,4 +97,5 @@ export type CreateProjectSectionInput = {
   endDate: string | null;
   memo: string | null;
   sourceSectionId?: number | null;
+  targetAssemblyVendorIds?: number[] | null;
 };

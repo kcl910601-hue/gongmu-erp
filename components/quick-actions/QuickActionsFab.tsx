@@ -12,7 +12,7 @@ import {
 import { usePathname } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { logActivity } from "@/lib/activity";
-import { getCurrentEmployee, type CurrentEmployee } from "@/lib/auth";
+import { useAppShellUser } from "@/contexts/AppShellUserContext";
 import { supabase } from "@/lib/supabase";
 import type { QuickCreateInitialView } from "@/components/quick-create/QuickCreate";
 
@@ -46,10 +46,9 @@ function dispatchQuickCreate(
 
 export default function QuickActionsFab() {
   const pathname = usePathname();
+  const { employee: currentEmployee } = useAppShellUser();
   const [isOpen, setIsOpen] = useState(false);
   const [dialog, setDialog] = useState<FabDialog>(null);
-  const [currentEmployee, setCurrentEmployee] =
-    useState<CurrentEmployee | null>(null);
   const [projects, setProjects] = useState<ProjectOption[]>([]);
   const [shipmentForm, setShipmentForm] = useState(initialShipmentForm);
   const [memo, setMemo] = useState("");
@@ -71,10 +70,6 @@ export default function QuickActionsFab() {
     setIsOpen(false);
     setDialog(null);
     setErrorMessage("");
-  }, []);
-
-  useEffect(() => {
-    void getCurrentEmployee().then(setCurrentEmployee);
   }, []);
 
   useEffect(() => {
@@ -213,7 +208,7 @@ export default function QuickActionsFab() {
 
   return (
     <>
-      <div className="fixed bottom-6 right-6 z-30 flex flex-col items-end gap-3">
+      <div className="pointer-events-none fixed bottom-6 right-6 z-30 flex flex-col items-end gap-3">
         <div
           className={`origin-bottom-right transition-all duration-200 ${
             isOpen
@@ -265,7 +260,7 @@ export default function QuickActionsFab() {
           aria-label={isOpen ? "빠른 작업 닫기" : "빠른 작업 열기"}
           aria-expanded={isOpen}
           onClick={() => setIsOpen((current) => !current)}
-          className="flex h-14 w-14 items-center justify-center rounded-full bg-blue-600 text-white shadow-md transition-all duration-200 hover:scale-105 hover:bg-blue-700 hover:shadow-lg focus:outline-none focus:ring-4 focus:ring-blue-200"
+          className="pointer-events-auto flex h-14 w-14 items-center justify-center rounded-full bg-blue-600 text-white shadow-md transition-all duration-200 hover:scale-105 hover:bg-blue-700 hover:shadow-lg focus:outline-none focus:ring-4 focus:ring-blue-200"
         >
           <Plus
             size={24}

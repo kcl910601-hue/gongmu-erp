@@ -22,11 +22,12 @@ import {
   Star,
   Clock3,
   Truck,
-  Users,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
+import { useAppShellUser } from "@/contexts/AppShellUserContext";
+import { isTaskCompleted } from "@/lib/status";
+import { canAccessRoute, normalizeRole, ROLE_PRESENTATION } from "@/lib/permissions";
 import {
-  getRecentUserScope,
   hydrateFavoriteProjectsFromDatabase,
   readRecentWorkspace,
   removeFavoriteProject,
@@ -35,18 +36,10 @@ import {
   type RecentWorkspaceItem,
 } from "@/lib/recent";
 
-type EmployeeProfile = {
-  name: string;
-  position: string | null;
-  role: string | null;
-  email: string | null;
-};
-
 type MenuItem = {
   href: string;
   label: string;
   icon: typeof LayoutDashboard;
-  adminOnly?: boolean;
 };
 
 const menuItems: MenuItem[] = [
@@ -54,17 +47,14 @@ const menuItems: MenuItem[] = [
   { href: "/calendar", label: "Calendar", icon: CalendarDays },
   { href: "/board", label: "Project Board", icon: LayoutGrid },
   { href: "/projects", label: "프로젝트", icon: FolderKanban },
-  { href: "/employees", label: "직원관리", icon: Users, adminOnly: true },
+  { href: "/shipments", label: "출고", icon: Truck },
+  { href: "/shipments/schedule", label: "일정표 출력(PDF)", icon: FileText },
   { href: "/notices", label: "공지사항", icon: Megaphone },
-  { href: "/settings", label: "설정", icon: Settings, adminOnly: true },
+  { href: "/settings", label: "설정", icon: Settings },
 ];
 
 function getRoleLabel(role: string | null) {
-  if (role === "admin") return "관리자";
-  if (role === "manager") return "매니저";
-  if (role === "sales") return "영업";
-  if (role === "viewer") return "조회전용";
-  return "직원";
+  return ROLE_PRESENTATION[normalizeRole(role)].label;
 }
 
 function formatRecentProjectTime(value: string) {
@@ -99,11 +89,11 @@ function formatRecentProjectTime(value: string) {
 
 export default function Sidebar() {
   const pathname = usePathname();
+  const { employee, authUserId, authEmail } = useAppShellUser();
   const [isCollapsed, setIsCollapsed] = useState(() => {
     if (typeof window === "undefined") return false;
     return localStorage.getItem("sidebar-collapsed") === "true";
   });
-  const [userEmail, setUserEmail] = useState<string | null>(null);
   const [recentUserScope, setRecentUserScope] = useState<string | null>(null);
   const [favoriteProjects, setFavoriteProjects] = useState<FavoriteProject[]>([]);
   const [recentItems, setRecentItems] = useState<RecentWorkspaceItem[]>([]);
@@ -111,70 +101,15 @@ export default function Sidebar() {
   const [favoriteDueCounts, setFavoriteDueCounts] = useState<
     Record<number, number>
   >({});
-  const [employeeProfile, setEmployeeProfile] =
-    useState<EmployeeProfile | null>(null);
-
   useEffect(() => {
-    async function loadProfile(email: string) {
-      const { data, error } = await supabase
-        .from("employees")
-        .select("name, position, role, email")
-        .eq("email", email)
-        .maybeSingle();
-
-      if (error || !data) {
-        setEmployeeProfile(null);
-        return;
-      }
-
-      setEmployeeProfile(data);
-    }
-
-    async function loadSession() {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-
-      const email = session?.user?.email ?? null;
-      setUserEmail(email);
-
-      if (email) {
-        await loadProfile(email);
-      } else {
-        setEmployeeProfile(null);
-      }
-    }
-
-    void loadSession();
-
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
-      const email = session?.user?.email ?? null;
-      setUserEmail(email);
-
-      if (email) {
-        void loadProfile(email);
-      } else {
-        setEmployeeProfile(null);
-      }
-    });
-
-    return () => {
-      subscription.unsubscribe();
-    };
-  }, []);
-
-  useEffect(() => {
+    if (isCollapsed || !isWorkspaceOpen || !authUserId) return;
     let isMounted = true;
 
     async function loadWorkspaceLinks() {
-      const scope = await getRecentUserScope();
-      if (!isMounted) return;
-
+      const scope = authUserId;
       setRecentUserScope(scope);
       const favorites = (
-        await hydrateFavoriteProjectsFromDatabase(scope)
+        await hydrateFavoriteProjectsFromDatabase(scope, authUserId)
       ).slice(0, 10);
       setFavoriteProjects(favorites);
       setRecentItems(readRecentWorkspace(scope).slice(0, 15));
@@ -186,12 +121,13 @@ export default function Sidebar() {
           .from("tasks")
           .select("project_id, status")
           .in("project_id", projectIds)
-          .eq("due_date", today);
+          .eq("due_date", today)
+          .or("status.is.null,status.in.(pending,대기,in_progress,진행중)");
         if (!isMounted) return;
 
         const counts = (data ?? []).reduce<Record<number, number>>(
           (result, task) => {
-            if (task.status === "completed" || task.status === "완료") {
+            if (isTaskCompleted(task.status)) {
               return result;
             }
             result[task.project_id] = (result[task.project_id] ?? 0) + 1;
@@ -219,14 +155,18 @@ export default function Sidebar() {
         handleWorkspaceUpdated
       );
     };
-  }, []);
+  }, [authUserId, isCollapsed, isWorkspaceOpen]);
 
   function isActive(href: string) {
     if (href === "/dashboard") {
       return pathname === "/" || pathname.startsWith("/dashboard");
     }
 
-    return pathname.startsWith(href);
+    if (href === "/shipments") {
+      return pathname === href;
+    }
+
+    return pathname === href || pathname.startsWith(`${href}/`);
   }
 
   function toggleSidebar() {
@@ -280,7 +220,7 @@ export default function Sidebar() {
 
       <nav className="flex-1 space-y-1.5 px-3 py-5">
         {menuItems
-          .filter((item) => !item.adminOnly || employeeProfile?.role === "admin")
+          .filter((item) => canAccessRoute(employee?.role, item.href))
           .map((item) => {
           const Icon = item.icon;
           const active = isActive(item.href);
@@ -303,6 +243,7 @@ export default function Sidebar() {
             </Link>
           );
         })}
+
       </nav>
 
       {!isCollapsed && (
@@ -348,16 +289,16 @@ export default function Sidebar() {
         {!isCollapsed ? (
           <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 shadow-sm">
             <p className="truncate text-sm font-semibold text-slate-950">
-              {employeeProfile?.name || "로그인 사용자"}
+              {employee?.name || "로그인 사용자"}
             </p>
             <p className="mt-2 truncate text-xs text-slate-500">
-              {employeeProfile?.position || "직책 없음"}
+              {employee?.position || "직책 없음"}
             </p>
             <p className="mt-1 text-xs font-semibold text-blue-600">
-              {getRoleLabel(employeeProfile?.role || null)}
+              {getRoleLabel(employee?.role || null)}
             </p>
             <p className="mt-3 truncate text-[11px] text-slate-400">
-              {employeeProfile?.email || userEmail || "사용자 정보 없음"}
+              {employee?.email || authEmail || "사용자 정보 없음"}
             </p>
             <button
               onClick={handleLogout}

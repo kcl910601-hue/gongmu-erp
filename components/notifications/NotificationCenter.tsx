@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { createPortal } from "react-dom";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
   Bell,
@@ -25,6 +25,7 @@ import {
   type NotificationSummary,
 } from "@/lib/notifications";
 import { formatActivityTime } from "@/lib/activity";
+import { useAppShellUser } from "@/contexts/AppShellUserContext";
 
 type NotificationFilter = "all" | NotificationCategory;
 
@@ -158,37 +159,43 @@ export function NotificationRow({
 }
 
 export default function NotificationCenter() {
+  const { employee } = useAppShellUser();
   const [isOpen, setIsOpen] = useState(false);
   const [summary, setSummary] = useState<NotificationSummary | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
   const [activeFilter, setActiveFilter] = useState<NotificationFilter>("all");
   const [readIds, setReadIds] = useState<Set<string>>(() => new Set());
+  const requestInFlightRef = useRef(false);
+  const hasLoadedRef = useRef(false);
 
   const loadNotifications = useCallback(async () => {
+    if (!employee || requestInFlightRef.current) return;
+    requestInFlightRef.current = true;
     setIsLoading(true);
     setErrorMessage("");
 
-    const { data, error } = await loadNotificationSummary();
+    const { data, error } = await loadNotificationSummary(30, employee);
 
     if (error) {
       setSummary(null);
       setErrorMessage(error.message);
       setIsLoading(false);
+      requestInFlightRef.current = false;
       return;
     }
 
     setSummary(data);
+    hasLoadedRef.current = true;
     setIsLoading(false);
-  }, []);
+    requestInFlightRef.current = false;
+  }, [employee]);
 
   useEffect(() => {
-    const timer = window.setTimeout(() => {
-      void loadNotifications();
-    }, 0);
-
+    if (!employee) return;
+    const timer = window.setTimeout(() => void loadNotifications(), 0);
     return () => window.clearTimeout(timer);
-  }, [loadNotifications]);
+  }, [employee, loadNotifications]);
 
   useEffect(() => {
     const interval = window.setInterval(() => {
@@ -229,7 +236,7 @@ export default function NotificationCenter() {
         aria-label="알림 열기"
         onClick={() => {
           setIsOpen(true);
-          void loadNotifications();
+          if (!hasLoadedRef.current) void loadNotifications();
         }}
         className="relative flex h-10 w-10 items-center justify-center rounded-2xl border border-slate-200 bg-slate-50 text-slate-600 transition-colors hover:bg-white focus:outline-none focus:ring-2 focus:ring-blue-100"
       >

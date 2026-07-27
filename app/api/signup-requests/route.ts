@@ -1,32 +1,20 @@
 import { isEmployeeRole } from "@/lib/approval";
 import { createSupabaseServerClient } from "@/lib/supabase-server";
 import { logActivityWithClient } from "@/lib/activity";
+import { getEmployeeByAuth } from "@/lib/auth";
 
 async function getAdmin() {
   const supabase = await createSupabaseServerClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { supabase, admin: null };
 
-  let { data: admin } = await supabase
-    .from("employees")
-    .select("id, name, email")
-    .eq("auth_user_id", user.id)
-    .eq("role", "admin")
-    .eq("active", true)
-    .eq("approval_status", "approved")
-    .maybeSingle();
-
-  if (!admin && user.email) {
-    const fallback = await supabase
-      .from("employees")
-      .select("id, name, email")
-      .eq("email", user.email)
-      .eq("role", "admin")
-      .eq("active", true)
-      .eq("approval_status", "approved")
-      .maybeSingle();
-    admin = fallback.data;
-  }
+  const { employee, error } = await getEmployeeByAuth(supabase, user);
+  if (error) console.error("signup requests employee lookup error:", error);
+  const admin = employee?.role === "admin" &&
+    employee.active !== false &&
+    employee.approval_status === "approved"
+    ? employee
+    : null;
 
   return { supabase, admin };
 }
@@ -163,4 +151,3 @@ export async function PATCH(request: Request) {
 
   return Response.json({ success: true });
 }
-

@@ -151,7 +151,7 @@ export function GanttTaskDetailModal({
       })
       .eq("id", task.taskId)
       .select(
-        "id, project_id, task_order, task_name, task_type, assignee, status, start_date, due_date, completed_date"
+        "id, project_id, project_section_id, project_assembly_vendor_id, task_order, task_name, task_type, assignee, status, start_date, due_date, completed_date, created_at, project_assembly_vendor:project_assembly_vendors(id, allocated_quantity, organization:organizations(name))"
       )
       .single();
 
@@ -161,7 +161,7 @@ export function GanttTaskDetailModal({
       return;
     }
 
-    onTaskUpdated(data as IntegratedTask);
+    onTaskUpdated(data as unknown as IntegratedTask);
     setIsSaving(false);
     onClose();
   }
@@ -218,7 +218,7 @@ export function GanttTaskDetailModal({
               {task.taskName || "업무명 없음"}
             </h2>
             <p className="mt-1 truncate text-sm font-medium text-slate-600">
-              {task.projectName}
+              {task.projectName} · {task.assemblyVendorName}
             </p>
           </div>
           <button
@@ -234,6 +234,7 @@ export function GanttTaskDetailModal({
         <div className="mb-5 grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
           {[
             ["현장명", task.projectName],
+            ["조립업체", task.assemblyVendorName],
             ["프로젝트 코드", task.projectCode || "-"],
             ["업무유형", task.taskType || "미지정"],
             ["담당자", task.assignee || "미배정"],

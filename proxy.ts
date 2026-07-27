@@ -1,5 +1,7 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
+import { getEmployeeByAuth } from "@/lib/auth";
+import { canAccessRoute } from "@/lib/permissions";
 
 const PUBLIC_PATHS = ["/login", "/signup"];
 
@@ -37,20 +39,7 @@ export async function proxy(request: NextRequest) {
     return NextResponse.redirect(new URL("/login", request.url));
   }
 
-  let { data: employee } = await supabase
-    .from("employees")
-    .select("approval_status, active, role")
-    .eq("auth_user_id", user.id)
-    .maybeSingle();
-
-  if (!employee && user.email) {
-    const fallback = await supabase
-      .from("employees")
-      .select("approval_status, active, role")
-      .eq("email", user.email)
-      .maybeSingle();
-    employee = fallback.data;
-  }
+  const { employee } = await getEmployeeByAuth(supabase, user);
 
   const isApproved =
     employee?.approval_status === "approved" && employee.active !== false;
@@ -63,8 +52,8 @@ export async function proxy(request: NextRequest) {
     return redirectResponse;
   }
 
-  if (request.nextUrl.pathname.startsWith("/employees") && employee?.role !== "admin") {
-    return NextResponse.redirect(new URL("/", request.url));
+  if (!canAccessRoute(employee?.role, request.nextUrl.pathname)) {
+    return NextResponse.redirect(new URL("/forbidden", request.url));
   }
 
   return response;

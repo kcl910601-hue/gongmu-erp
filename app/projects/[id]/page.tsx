@@ -10,7 +10,6 @@ import {
   PROJECT_AUDIT_FIELDS,
   TASK_AUDIT_FIELDS,
 } from "@/lib/audit";
-import { normalizeAssemblyVendor } from "@/lib/projects";
 import {
   addFavoriteProject,
   getRecentUserScope,
@@ -24,12 +23,12 @@ import { Button } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ProgressBar } from "@/components/ui/ProgressBar";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
-import { EditableCombobox } from "@/components/ui/EditableCombobox";
+import { DatePicker } from "@/components/common/DatePicker";
 import { ProjectFiles } from "@/components/files/ProjectFiles";
 import ActivityTimeline from "@/components/activity/ActivityTimeline";
 import ProjectTimeline from "@/components/activity/ProjectTimeline";
 import { ProjectSectionDialog, type ProjectSectionDialogValue } from "@/components/projects/ProjectSectionDialog";
-import { getAllProcessTypes } from "@/lib/process-types";
+import { getAllProcessTypes, normalizeProcessTypeCode } from "@/lib/process-types";
 import {
   calculateSectionProgress,
   createProjectSectionWithTasks,
@@ -39,8 +38,13 @@ import {
 } from "@/lib/project-sections";
 import { toast } from "@/lib/toast";
 import { getProjectEntryOptions } from "@/lib/project-master-data";
+import { AssemblyVendorMultiSelect } from "@/components/projects/AssemblyVendorMultiSelect";
+import { getProjectAssemblyVendors, updateProjectAssemblyVendorQuantity, updateProjectWithVendors } from "@/lib/project-assembly-vendors";
+import { formatProjectQuantity, parseProjectQuantity } from "@/lib/project-quantity";
+import { PROJECT_SELECT_FIELDS } from "@/lib/projects";
+import { assignTaskOrdersByCurrentSequence, persistRecalculatedTaskOrders, sortTasksBySchedule } from "@/lib/task-ordering";
 import type { ProcessType } from "@/types/process-type";
-import type { ProjectSection } from "@/types/project-section";
+import type { ProjectAssemblyVendor, ProjectSection } from "@/types/project-section";
 import {
   getProjectStatusLabel,
   getTaskStatusLabel,
@@ -56,6 +60,7 @@ type Project = {
   project_code: string | null;
   project_name: string;
   client_name: string | null;
+  assembly_vendor_organization_id: number | null;
   assembly_vendor: string | null;
   process_type: string;
   salesperson: string | null;
@@ -65,12 +70,15 @@ type Project = {
   start_date: string | null;
   end_date: string | null;
   completion_due_date: string | null;
+  quantity: number | null;
+  quantity_unit: string | null;
 };
 
 type Task = {
   id: number;
   project_id: number;
   project_section_id?: number | null;
+  project_assembly_vendor_id: number | null;
   task_order: number | null;
   task_type: string | null;
   task_name: string | null;
@@ -79,6 +87,12 @@ type Task = {
   start_date: string | null;
   due_date: string | null;
   completed_date: string | null;
+  created_at: string | null;
+  project_assembly_vendor?: {
+    id: number;
+    allocated_quantity: number | null;
+    organization: { name: string } | null;
+  } | null;
 };
 
 type Employee = {
@@ -94,12 +108,20 @@ export default function ProjectDetail() {
   const projectId = params.id as string;
 
   const [project, setProject] = useState<Project | null>(null);
+  const [assemblyVendors, setAssemblyVendors] = useState<ProjectAssemblyVendor[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [sections, setSections] = useState<ProjectSection[]>([]);
   const [processTypes, setProcessTypes] = useState<ProcessType[]>([]);
   const [openSectionIds, setOpenSectionIds] = useState<Set<number>>(new Set());
+  const [openVendorIds, setOpenVendorIds] = useState<Set<number>>(new Set());
   const [selectedTaskSectionId, setSelectedTaskSectionId] = useState<number | null>(null);
-  const [sectionDialog, setSectionDialog] = useState<{ mode: "add" | "edit"; source: ProjectSection | null; target: ProjectSection | null } | null>(null);
+  const [selectedTaskVendorId, setSelectedTaskVendorId] = useState<number | null>(null);
+  const [sectionDialog, setSectionDialog] = useState<{
+    mode: "add" | "edit";
+    source: ProjectSection | null;
+    target: ProjectSection | null;
+    vendor: ProjectAssemblyVendor | null;
+  } | null>(null);
   const [isSavingSection, setIsSavingSection] = useState(false);
   const [sectionPendingDelete, setSectionPendingDelete] = useState<{
     section: ProjectSection;
@@ -108,7 +130,7 @@ export default function ProjectDetail() {
   } | null>(null);
   const [isDeletingSection, setIsDeletingSection] = useState(false);
   const [salespersonOptions, setSalespersonOptions] = useState<Array<{ value: string; label: string }>>([]);
-  const [assemblyVendorOptions, setAssemblyVendorOptions] = useState<string[]>([]);
+  const [assemblyVendorOptions, setAssemblyVendorOptions] = useState<Array<{ id: number; name: string }>>([]);
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [isUpdating, setIsUpdating] = useState(false);
   const [isEditingProject, setIsEditingProject] = useState(false);
@@ -123,13 +145,15 @@ export default function ProjectDetail() {
     project_code: "",
     project_name: "",
     client_name: "",
-    assembly_vendor: "",
+    assemblyVendorIds: [] as number[],
     process_type: "",
     salesperson: "",
     site_address: "",
     task_manager: "",
     start_date: "",
     end_date: "",
+    quantity: "",
+    quantity_unit: "",
   });
 
   const [taskForm, setTaskForm] = useState({
@@ -145,7 +169,7 @@ export default function ProjectDetail() {
   const loadProject = useCallback(async function loadProject() {
     const { data: projectData, error: projectError } = await supabase
       .from("projects")
-      .select("*")
+      .select(PROJECT_SELECT_FIELDS)
       .eq("id", projectId)
       .single();
 
@@ -154,24 +178,35 @@ export default function ProjectDetail() {
       return;
     }
 
-    setProject(projectData);
+    const vendorResult = await getProjectAssemblyVendors(Number(projectId));
+    if (vendorResult.error) {
+      alert(vendorResult.error.message);
+      return;
+    }
+    setProject({
+      ...projectData,
+      process_type: normalizeProcessTypeCode(projectData.process_type || ""),
+    });
+    setAssemblyVendors(vendorResult.data);
 
     setProjectForm({
       project_code: projectData.project_code || "",
       project_name: projectData.project_name || "",
       client_name: projectData.client_name || "",
-      assembly_vendor: projectData.assembly_vendor || "",
-      process_type: projectData.process_type || "",
+      assemblyVendorIds: vendorResult.data.map((vendor) => vendor.organizationId),
+      process_type: normalizeProcessTypeCode(projectData.process_type || ""),
       salesperson: projectData.salesperson || "",
       site_address: projectData.site_address || "",
       task_manager: projectData.task_manager || "",
       start_date: projectData.start_date || "",
       end_date: projectData.end_date || projectData.completion_due_date || "",
+      quantity: projectData.quantity === null ? "" : String(projectData.quantity),
+      quantity_unit: projectData.quantity_unit || "",
     });
 
     const { data: taskData, error: taskError } = await supabase
       .from("tasks")
-      .select("*")
+      .select("*, project_assembly_vendor:project_assembly_vendors(id, allocated_quantity, organization:organizations(name))")
       .eq("project_id", projectId)
       .order("task_order", { ascending: true, nullsFirst: false })
       .order("id", { ascending: true });
@@ -181,7 +216,8 @@ export default function ProjectDetail() {
       return;
     }
 
-    setTasks(taskData || []);
+    setTasks((taskData || []) as unknown as Task[]);
+    setOpenVendorIds(new Set(vendorResult.data.map((vendor) => vendor.id)));
 
     const [sectionResult, processTypeResult, entryOptionResult] = await Promise.all([
       getProjectSections(Number(projectId)),
@@ -192,7 +228,11 @@ export default function ProjectDetail() {
       alert(sectionResult.error?.message || processTypeResult.error?.message || "공정 정보를 불러오지 못했습니다.");
       return;
     }
-    const sortedSections = [...sectionResult.data].sort((a, b) => {
+    const normalizedSections = sectionResult.data.map((section) => ({
+      ...section,
+      process_type: normalizeProcessTypeCode(section.process_type),
+    }));
+    const sortedSections = normalizedSections.sort((a, b) => {
       const aType = processTypeResult.data.find((item) => item.code === a.process_type);
       const bType = processTypeResult.data.find((item) => item.code === b.process_type);
       return (aType?.sort_order ?? a.sort_order) - (bType?.sort_order ?? b.sort_order)
@@ -208,18 +248,11 @@ export default function ProjectDetail() {
     setAssemblyVendorOptions(entryOptionResult.data.assemblyVendors);
     setOpenSectionIds((current) => current.size > 0 ? current : new Set(sortedSections[0] ? [sortedSections[0].id] : []));
 
-    const { data: employeeData, error: employeeError } = await supabase
-      .from("employees")
-      .select("id, name, active")
-      .eq("active", true)
-      .order("name", { ascending: true });
-
-    if (employeeError) {
-      alert(employeeError.message);
-      return;
-    }
-
-    setEmployees(employeeData || []);
+    setEmployees(entryOptionResult.data.taskManagers.map((employee) => ({
+      id: employee.id,
+      name: employee.value,
+      active: true,
+    })));
   }, [projectId]);
 
   useEffect(() => {
@@ -450,6 +483,15 @@ export default function ProjectDetail() {
       alert("프로젝트코드와 프로젝트명은 필수입니다.");
       return;
     }
+    const quantity = parseProjectQuantity(projectForm.quantity);
+    if (projectForm.quantity.trim() && quantity === null) {
+      alert("프로젝트 수량을 숫자로 입력하세요.");
+      return;
+    }
+    if (quantity !== null && quantity < 0) {
+      alert("프로젝트 수량은 0 이상이어야 합니다.");
+      return;
+    }
 
     setIsUpdating(true);
 
@@ -457,13 +499,14 @@ export default function ProjectDetail() {
       project_code: projectForm.project_code.trim(),
       project_name: projectForm.project_name.trim(),
       client_name: projectForm.client_name.trim() || null,
-      assembly_vendor: normalizeAssemblyVendor(projectForm.assembly_vendor),
-      process_type: projectForm.process_type,
+      process_type: normalizeProcessTypeCode(projectForm.process_type),
       salesperson: projectForm.salesperson.trim() || null,
       site_address: projectForm.site_address.trim() || null,
       task_manager: projectForm.task_manager || null,
       start_date: projectForm.start_date || null,
       end_date: projectForm.end_date || null,
+      quantity,
+      quantity_unit: projectForm.quantity_unit.trim() || null,
     };
     const changes = createAuditChanges(
       project as unknown as Record<string, unknown>,
@@ -471,18 +514,16 @@ export default function ProjectDetail() {
       PROJECT_AUDIT_FIELDS
     );
 
-    if (changes.length === 0) {
+    const vendorsChanged = JSON.stringify(projectForm.assemblyVendorIds) !== JSON.stringify(assemblyVendors.map((vendor) => vendor.organizationId));
+    const addedVendorIds = projectForm.assemblyVendorIds.filter((id) => !assemblyVendors.some((vendor) => vendor.organizationId === id));
+    const removedVendors = assemblyVendors.filter((vendor) => !projectForm.assemblyVendorIds.includes(vendor.organizationId));
+    if (changes.length === 0 && !vendorsChanged) {
       setIsEditingProject(false);
       setIsUpdating(false);
       return;
     }
 
-    const { data, error } = await supabase
-      .from("projects")
-      .update(nextProjectData)
-      .eq("id", project.id)
-      .select()
-      .single();
+    const { error } = await updateProjectWithVendors(project.id, nextProjectData, projectForm.assemblyVendorIds);
 
     if (error) {
       alert(error.message);
@@ -490,15 +531,24 @@ export default function ProjectDetail() {
       return;
     }
 
-    setProject(data);
+    await loadProject();
+    for (const organizationId of addedVendorIds) {
+      const organizationName = assemblyVendorOptions.find((vendor) => vendor.id === organizationId)?.name || `업체 #${organizationId}`;
+      await addActivity({ type: "project_update", title: "업체 추가", description: `${organizationName} 업체를 추가했습니다.`, projectId: project.id, targetType: "project_assembly_vendor", metadata: { organizationId } });
+    }
+    for (const vendor of removedVendors) {
+      await addActivity({ type: "project_update", title: "업체 삭제", description: `${vendor.organizationName} 업체를 삭제했습니다.`, projectId: project.id, targetType: "project_assembly_vendor", targetId: vendor.id, metadata: { organizationId: vendor.organizationId } });
+    }
     await addActivity({
       type: "project_update",
-      title: `프로젝트 수정 · ${changes.length}개 항목 변경`,
-      description: `${data.project_name} 프로젝트 정보를 수정했습니다.`,
-      projectId: data.id,
+      title: `프로젝트 수정 · ${changes.length + (vendorsChanged ? 1 : 0)}개 항목 변경`,
+      description: changes.some((change) => change.field === "quantity" || change.field === "quantity_unit")
+        ? `프로젝트 수량 변경: ${formatProjectQuantity(project.quantity, project.quantity_unit)} → ${formatProjectQuantity(quantity, nextProjectData.quantity_unit)}`
+        : `${nextProjectData.project_name} 프로젝트 정보를 수정했습니다.`,
+      projectId: project.id,
       targetType: "project",
-      targetId: data.id,
-      metadata: { changes },
+      targetId: project.id,
+      metadata: { changes, assemblyVendorIds: projectForm.assemblyVendorIds },
     });
     setIsEditingProject(false);
     setIsUpdating(false);
@@ -511,16 +561,51 @@ export default function ProjectDetail() {
       project_code: project.project_code || "",
       project_name: project.project_name || "",
       client_name: project.client_name || "",
-      assembly_vendor: project.assembly_vendor || "",
-      process_type: project.process_type || "",
+      assemblyVendorIds: assemblyVendors.map((vendor) => vendor.organizationId),
+      process_type: normalizeProcessTypeCode(project.process_type || ""),
       salesperson: project.salesperson || "",
       site_address: project.site_address || "",
       task_manager: project.task_manager || "",
       start_date: project.start_date || "",
       end_date: project.end_date || project.completion_due_date || "",
+      quantity: project.quantity === null ? "" : String(project.quantity),
+      quantity_unit: project.quantity_unit || "",
     });
 
     setIsEditingProject(false);
+  }
+
+  async function editVendorAllocatedQuantity(vendor: ProjectAssemblyVendor) {
+    if (!project || isUpdating) return;
+    const input = window.prompt(
+      `${vendor.organizationName} 배정 수량을 입력하세요.`,
+      vendor.allocatedQuantity === null ? "" : String(vendor.allocatedQuantity)
+    );
+    if (input === null) return;
+    const parsed = parseProjectQuantity(input);
+    if (input.trim() && parsed === null) return toast.warning("업체 수량을 숫자로 입력하세요.");
+    if (parsed !== null && parsed < 0) return toast.warning("업체 수량은 0 이상이어야 합니다.");
+
+    setIsUpdating(true);
+    const result = await updateProjectAssemblyVendorQuantity(vendor.id, parsed);
+    if (result.error) {
+      toast.error(result.error.message);
+      setIsUpdating(false);
+      return;
+    }
+    setAssemblyVendors((current) => current.map((item) =>
+      item.id === vendor.id ? { ...item, allocatedQuantity: parsed } : item
+    ));
+    await addActivity({
+      type: "project_update",
+      title: "업체 수량 변경",
+      description: `${vendor.organizationName} 배정 수량을 ${formatProjectQuantity(parsed, project.quantity_unit)}(으)로 변경했습니다.`,
+      projectId: project.id,
+      targetType: "project_assembly_vendor",
+      targetId: vendor.id,
+      metadata: { previousQuantity: vendor.allocatedQuantity, nextQuantity: parsed },
+    });
+    setIsUpdating(false);
   }
 
   async function updateProjectStatus(nextTasks: Task[]) {
@@ -577,28 +662,12 @@ export default function ProjectDetail() {
   }
 
   async function saveTaskOrders(nextTasks: Task[]) {
-    const normalizedTasks = nextTasks.map((task, index) => ({
-      ...task,
-      task_order: index + 1,
-    }));
-
-    const results = await Promise.all(
-      normalizedTasks.map((task) =>
-        supabase
-          .from("tasks")
-          .update({ task_order: task.task_order })
-          .eq("id", task.id)
-      )
-    );
-
-    const failedResult = results.find((result) => result.error);
-
-    if (failedResult?.error) {
-      alert(failedResult.error.message);
+    const result = await persistRecalculatedTaskOrders(nextTasks);
+    if (result.error) {
+      alert(result.error.message);
       return null;
     }
-
-    return normalizedTasks;
+    return result.data;
   }
 
   async function handleTaskDrop(targetTaskId: number) {
@@ -615,13 +684,22 @@ export default function ProjectDetail() {
       return;
     }
 
+    if (
+      tasks[dragIndex].project_assembly_vendor_id !== tasks[targetIndex].project_assembly_vendor_id ||
+      tasks[dragIndex].project_section_id !== tasks[targetIndex].project_section_id
+    ) {
+      toast.warning("다른 조립업체 또는 공정으로는 순서를 이동할 수 없습니다.");
+      setDraggingTaskId(null);
+      return;
+    }
+
     setIsUpdating(true);
 
     const nextTasks = [...tasks];
     const [draggedTask] = nextTasks.splice(dragIndex, 1);
     nextTasks.splice(targetIndex, 0, draggedTask);
 
-    const savedTasks = await saveTaskOrders(nextTasks);
+    const savedTasks = await saveTaskOrders(assignTaskOrdersByCurrentSequence(nextTasks));
 
     if (savedTasks) {
       setTasks(savedTasks);
@@ -670,6 +748,7 @@ export default function ProjectDetail() {
         {
           project_id: project.id,
           project_section_id: task.project_section_id ?? null,
+          project_assembly_vendor_id: task.project_assembly_vendor_id,
           task_order: currentIndex + 2,
           task_name: `${task.task_name || "업무"}(복사본)`,
           task_type: task.task_type,
@@ -701,8 +780,8 @@ export default function ProjectDetail() {
 
     await addActivity({
       type: "task_create",
-      title: "업무 생성",
-      description: `${data.task_name || "업무"}을(를) 생성했습니다.`,
+      title: "업체 Task 생성",
+      description: `${assemblyVendors.find((vendor) => vendor.id === task.project_assembly_vendor_id)?.organizationName || "조립업체"} · ${data.task_name || "업무"}을(를) 생성했습니다.`,
       projectId: project.id,
       targetType: "task",
       targetId: data.id,
@@ -712,7 +791,7 @@ export default function ProjectDetail() {
   }
 
   async function addTask() {
-    if (!project || !selectedTaskSectionId || isSavingTask) return;
+    if (!project || !selectedTaskSectionId || !selectedTaskVendorId || isSavingTask) return;
 
     if (!taskForm.task_name.trim()) {
       alert("업무명을 입력하세요.");
@@ -726,7 +805,10 @@ export default function ProjectDetail() {
 
     setIsSavingTask(true);
 
-    const sectionTasks = tasks.filter((task) => task.project_section_id === selectedTaskSectionId);
+    const sectionTasks = tasks.filter((task) =>
+      task.project_section_id === selectedTaskSectionId
+      && task.project_assembly_vendor_id === selectedTaskVendorId
+    );
     const maxOrder =
       sectionTasks.length > 0
         ? Math.max(...sectionTasks.map((task) => task.task_order || 0))
@@ -743,6 +825,7 @@ export default function ProjectDetail() {
         {
           project_id: project.id,
           project_section_id: selectedTaskSectionId,
+          project_assembly_vendor_id: selectedTaskVendorId,
           task_order: maxOrder + 1,
           task_name: taskForm.task_name.trim(),
           task_type: taskForm.task_type.trim(),
@@ -765,7 +848,13 @@ export default function ProjectDetail() {
       return;
     }
 
-    const nextTasks = [...tasks, data];
+    const orderResult = await persistRecalculatedTaskOrders([...tasks, data as Task]);
+    if (orderResult.error) {
+      alert(orderResult.error.message);
+      setIsSavingTask(false);
+      return;
+    }
+    const nextTasks = orderResult.data;
 
     await updateProjectStatus(nextTasks);
 
@@ -773,8 +862,8 @@ export default function ProjectDetail() {
     recordTaskChange(data as Task);
     await addActivity({
       type: "task_create",
-      title: "업무 생성",
-      description: `${data.task_name || "업무"}을(를) 생성했습니다.`,
+      title: "업체 Task 생성",
+      description: `${assemblyVendors.find((vendor) => vendor.id === selectedTaskVendorId)?.organizationName || "조립업체"} · ${data.task_name || "업무"}을(를) 생성했습니다.`,
       projectId: project.id,
       targetType: "task",
       targetId: data.id,
@@ -789,6 +878,7 @@ export default function ProjectDetail() {
     });
     setShowTaskModal(false);
     setOpenSectionIds((current) => new Set(current).add(selectedTaskSectionId));
+    setSelectedTaskVendorId(null);
     setSelectedTaskSectionId(null);
     setIsSavingTask(false);
   }
@@ -816,9 +906,13 @@ export default function ProjectDetail() {
       ? { ...targetTask, assignee: savedAssignee }
       : null;
 
-    setTasks((prev) =>
-      prev.map((task) => (task.id === taskId && updatedTask ? updatedTask : task))
-    );
+    if (updatedTask) {
+      const orderResult = await persistRecalculatedTaskOrders(
+        tasks.map((task) => task.id === taskId ? updatedTask : task)
+      );
+      if (orderResult.error) alert(orderResult.error.message);
+      setTasks(orderResult.data);
+    }
 
     if (updatedTask) {
       const changes = createAuditChanges(
@@ -843,14 +937,12 @@ export default function ProjectDetail() {
     setIsUpdating(false);
   }
 
-  // 시작일은 상세 업무 목록 UI에서 숨기지만 기존 저장 로직은 유지합니다.
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  async function updateTaskStartDate(taskId: number, newStartDate: string) {
+  async function updateTaskStartDate(taskId: number, newStartDate: string | null) {
     if (isUpdating) return;
 
     setIsUpdating(true);
 
-    const savedDate = newStartDate || null;
+    const savedDate = newStartDate;
 
     const { error } = await supabase
       .from("tasks")
@@ -868,9 +960,13 @@ export default function ProjectDetail() {
       ? { ...targetTask, start_date: savedDate }
       : null;
 
-    setTasks((prev) =>
-      prev.map((task) => (task.id === taskId && updatedTask ? updatedTask : task))
-    );
+    if (updatedTask) {
+      const orderResult = await persistRecalculatedTaskOrders(
+        tasks.map((task) => task.id === taskId ? updatedTask : task)
+      );
+      if (orderResult.error) alert(orderResult.error.message);
+      setTasks(orderResult.data);
+    }
 
     if (updatedTask) {
       const changes = createAuditChanges(
@@ -893,12 +989,12 @@ export default function ProjectDetail() {
     setIsUpdating(false);
   }
 
-  async function updateTaskDueDate(taskId: number, newDueDate: string) {
+  async function updateTaskDueDate(taskId: number, newDueDate: string | null) {
     if (isUpdating) return;
 
     setIsUpdating(true);
 
-    const savedDate = newDueDate || null;
+    const savedDate = newDueDate;
 
     const { error } = await supabase
       .from("tasks")
@@ -914,9 +1010,13 @@ export default function ProjectDetail() {
     const targetTask = tasks.find((task) => task.id === taskId);
     const updatedTask = targetTask ? { ...targetTask, due_date: savedDate } : null;
 
-    setTasks((prev) =>
-      prev.map((task) => (task.id === taskId && updatedTask ? updatedTask : task))
-    );
+    if (updatedTask) {
+      const orderResult = await persistRecalculatedTaskOrders(
+        tasks.map((task) => task.id === taskId ? updatedTask : task)
+      );
+      if (orderResult.error) alert(orderResult.error.message);
+      setTasks(orderResult.data);
+    }
 
     if (updatedTask) {
       const changes = createAuditChanges(
@@ -936,6 +1036,48 @@ export default function ProjectDetail() {
       });
     }
 
+    setIsUpdating(false);
+  }
+
+  async function updateTaskVendor(taskId: number, projectAssemblyVendorId: number) {
+    if (isUpdating) return;
+    const targetTask = tasks.find((task) => task.id === taskId);
+    const nextVendor = assemblyVendors.find((vendor) => vendor.id === projectAssemblyVendorId);
+    if (!targetTask || !nextVendor || targetTask.project_assembly_vendor_id === projectAssemblyVendorId) return;
+
+    setIsUpdating(true);
+    const { data, error } = await supabase
+      .from("tasks")
+      .update({ project_assembly_vendor_id: projectAssemblyVendorId })
+      .eq("id", taskId)
+      .eq("project_id", targetTask.project_id)
+      .select("*, project_assembly_vendor:project_assembly_vendors(id, allocated_quantity, organization:organizations(name))")
+      .single();
+
+    if (error) {
+      toast.error(error.message);
+      setIsUpdating(false);
+      return;
+    }
+
+    const updatedTask = data as unknown as Task;
+    const orderResult = await persistRecalculatedTaskOrders(
+      tasks.map((task) => task.id === taskId ? updatedTask : task)
+    );
+    if (orderResult.error) toast.error(orderResult.error.message);
+    setTasks(orderResult.data);
+    await addActivity({
+      type: "task_update",
+      title: "업체 Task 수정",
+      description: `${targetTask.task_name || "업무"} 조립업체를 ${nextVendor.organizationName}(으)로 변경했습니다.`,
+      projectId: targetTask.project_id,
+      targetType: "task",
+      targetId: targetTask.id,
+      metadata: {
+        previousProjectAssemblyVendorId: targetTask.project_assembly_vendor_id,
+        nextProjectAssemblyVendorId: projectAssemblyVendorId,
+      },
+    });
     setIsUpdating(false);
   }
 
@@ -1041,37 +1183,48 @@ export default function ProjectDetail() {
     setIsUpdating(true);
 
     const targetTask = tasks.find((task) => task.id === taskId);
-    const { error } = await supabase.from("tasks").delete().eq("id", taskId);
-
-    if (error) {
-      alert(error.message);
+    if (!targetTask) {
+      toast.error("삭제할 업무를 찾을 수 없습니다.");
       setIsUpdating(false);
       return;
     }
 
-    const nextTasks = tasks.filter((task) => task.id !== taskId);
-    const savedTasks = await saveTaskOrders(nextTasks);
+    try {
+      const { data, error } = await supabase.rpc("delete_project_task", { p_task_id: taskId });
+      if (error?.code === "PGRST202") {
+        throw new Error("업무 삭제 DB migration이 적용되지 않았습니다. delete_project_task RPC를 먼저 배포해 주세요.");
+      }
+      if (error) throw new Error(error.message);
+      const result = data as { deleted_task_id?: number; project_status?: string; unlinked_shipment_count?: number } | null;
+      if (Number(result?.deleted_task_id) !== taskId) throw new Error("업무 삭제 결과를 확인할 수 없습니다.");
 
-    if (savedTasks) {
-      await updateProjectStatus(savedTasks);
-      setTasks(savedTasks);
+      const nextTasks = tasks.filter((task) => task.id !== taskId);
+      const orderResult = await persistRecalculatedTaskOrders(nextTasks);
+      if (orderResult.error) toast.error(orderResult.error.message);
+      setTasks(orderResult.data);
+      if (project && result?.project_status) setProject({ ...project, status: result.project_status });
+
+      await addActivity({
+        type: "task_delete",
+        title: "업체 Task 삭제",
+        description: `${assemblyVendors.find((vendor) => vendor.id === targetTask.project_assembly_vendor_id)?.organizationName || "조립업체 미지정"} · ${targetTask.task_name || "업무"}을(를) 삭제했습니다.`,
+        projectId: project?.id,
+        targetType: "task",
+        targetId: taskId,
+        metadata: {
+          deletedTaskName: targetTask.task_name ?? null,
+          deletedTaskType: targetTask.task_type ?? null,
+          deletedTaskStatus: targetTask.status ?? null,
+          unlinkedShipmentCount: result?.unlinked_shipment_count ?? 0,
+        },
+      });
+      toast.success("업무가 삭제되었습니다.");
+    } catch (error) {
+      console.error("task delete error:", error);
+      toast.error(error instanceof Error ? error.message : "업무를 삭제하지 못했습니다.");
+    } finally {
+      setIsUpdating(false);
     }
-
-    await addActivity({
-      type: "task_delete",
-      title: "업무 삭제",
-      description: `${targetTask?.task_name || "업무"}을(를) 삭제했습니다.`,
-      projectId: project?.id,
-      targetType: "task",
-      targetId: taskId,
-      metadata: {
-        deletedTaskName: targetTask?.task_name ?? null,
-        deletedTaskType: targetTask?.task_type ?? null,
-        deletedTaskStatus: targetTask?.status ?? null,
-      },
-    });
-
-    setIsUpdating(false);
   }
 
   function emptySectionValue(source: ProjectSection | null): ProjectSectionDialogValue {
@@ -1083,6 +1236,27 @@ export default function ProjectDetail() {
       start_date: null,
       end_date: null,
       memo: source?.memo ?? null,
+      targetAssemblyVendorIds: null,
+    };
+  }
+
+  function vendorSectionValue(section: ProjectSection, vendor: ProjectAssemblyVendor): ProjectSectionDialogValue {
+    const scopedTasks = tasks.filter((task) =>
+      task.project_section_id === section.id
+      && task.project_assembly_vendor_id === vendor.id
+    );
+    const startDates = scopedTasks.flatMap((task) => task.start_date ? [task.start_date] : []).sort();
+    const dueDates = scopedTasks.flatMap((task) => task.due_date ? [task.due_date] : []).sort();
+
+    return {
+      process_type: section.process_type,
+      assembly_vendor: vendor.organizationName,
+      task_manager: scopedTasks.find((task) => task.assignee?.trim())?.assignee ?? null,
+      quantity: vendor.allocatedQuantity,
+      start_date: startDates[0] ?? null,
+      end_date: dueDates[dueDates.length - 1] ?? null,
+      memo: section.memo,
+      targetAssemblyVendorIds: null,
     };
   }
 
@@ -1102,6 +1276,7 @@ export default function ProjectDetail() {
         endDate: value.end_date || null,
         memo: normalize(value.memo),
         sourceSectionId: sectionDialog.source?.id,
+        targetAssemblyVendorIds: value.targetAssemblyVendorIds,
       });
       if (result.error || !result.data) {
         console.error("section create error:", result.error);
@@ -1119,10 +1294,61 @@ export default function ProjectDetail() {
         metadata: { sectionId: result.data.section_id, processType: value.process_type, sourceSectionId: sectionDialog.source?.id ?? null },
       });
       setOpenSectionIds((current) => new Set(current).add(result.data!.section_id));
+    } else if (sectionDialog.target && sectionDialog.vendor) {
+      const target = sectionDialog.target;
+      const vendor = sectionDialog.vendor;
+      const taskUpdate = await supabase.from("tasks").update({
+        assignee: normalize(value.task_manager),
+        start_date: value.start_date || null,
+        due_date: value.end_date || null,
+      })
+        .eq("project_id", project.id)
+        .eq("project_section_id", target.id)
+        .eq("project_assembly_vendor_id", vendor.id);
+      if (taskUpdate.error) {
+        console.error("vendor section task update error:", taskUpdate.error);
+        alert("해당 조립업체의 공정 업무를 수정하지 못했습니다. 권한을 확인하세요.");
+        setIsSavingSection(false);
+        return;
+      }
+      const nextTasks = tasks.map((task) =>
+        task.project_section_id === target.id && task.project_assembly_vendor_id === vendor.id
+          ? {
+              ...task,
+              assignee: normalize(value.task_manager),
+              start_date: value.start_date || null,
+              due_date: value.end_date || null,
+            }
+          : task
+      );
+      const orderResult = await persistRecalculatedTaskOrders(nextTasks);
+      if (orderResult.error) {
+        alert(orderResult.error.message);
+        setIsSavingSection(false);
+        return;
+      }
+      setTasks(orderResult.data);
+
+      const quantityResult = await updateProjectAssemblyVendorQuantity(vendor.id, value.quantity);
+      if (quantityResult.error) {
+        console.error("vendor quantity update error:", quantityResult.error);
+        alert("해당 조립업체의 배정 수량을 수정하지 못했습니다.");
+        setIsSavingSection(false);
+        return;
+      }
+      await addActivity({
+        type: "task_update",
+        title: "업체 공정 수정",
+        description: `${vendor.organizationName} · ${target.process_type} 공정의 담당자, 수량, 기간을 수정했습니다.`,
+        projectId: project.id,
+        targetType: "project_section",
+        targetId: target.id,
+        metadata: { sectionId: target.id, projectAssemblyVendorId: vendor.id },
+      });
     } else if (sectionDialog.target) {
       const target = sectionDialog.target;
       const { error } = await supabase.from("project_sections").update({
-        assembly_vendor: normalize(value.assembly_vendor), task_manager: normalize(value.task_manager),
+        task_manager: normalize(value.task_manager),
         quantity: value.quantity, start_date: value.start_date || null, end_date: value.end_date || null,
         memo: normalize(value.memo), updated_at: new Date().toISOString(),
       }).eq("id", target.id).eq("project_id", project.id);
@@ -1327,8 +1553,8 @@ export default function ProjectDetail() {
             </h1>
             <p className="mt-2 text-sm leading-6 text-slate-500">
               {project.process_type} · 발주처 {project.client_name || "-"} · 조립처{" "}
-              {project.assembly_vendor || "-"} · 영업자 {project.salesperson || "-"} ·
-              담당자 {project.task_manager || "-"}
+              {assemblyVendors.map((vendor) => vendor.organizationName).join(" · ") || "-"} · 영업자 {project.salesperson || "-"} ·
+              담당자 {project.task_manager || "-"} · 수량 {formatProjectQuantity(project.quantity, project.quantity_unit)}
             </p>
           </div>
 
@@ -1349,7 +1575,7 @@ export default function ProjectDetail() {
 
       <nav
         aria-label="프로젝트 상세 메뉴"
-        className="mb-6 flex gap-1 overflow-x-auto rounded-2xl border border-slate-200 bg-white p-1.5 shadow-sm"
+        className="mb-6 flex flex-nowrap items-center gap-0.5 overflow-x-auto rounded-2xl border border-slate-200 bg-white p-1.5 shadow-sm"
       >
         {[
           ["#project-info", "Overview"],
@@ -1362,7 +1588,7 @@ export default function ProjectDetail() {
           <a
             key={label}
             href={href}
-            className="shrink-0 rounded-xl px-4 py-2 text-sm font-semibold text-slate-600 transition-colors hover:bg-slate-100 hover:text-slate-950"
+            className="shrink-0 whitespace-nowrap rounded-xl px-3 py-2 text-sm font-semibold text-slate-600 transition-colors hover:bg-slate-100 hover:text-slate-950 lg:px-4"
           >
             {label}
           </a>
@@ -1394,6 +1620,7 @@ export default function ProjectDetail() {
                 <span className="font-medium text-slate-700">
                   {project.project_name}
                 </span>
+                <span>· 수량 {formatProjectQuantity(project.quantity, project.quantity_unit)}</span>
                 <Badge
                   variant={getProjectStatusBadgeVariant(project.status)}
                   className="px-2 py-0.5"
@@ -1468,7 +1695,7 @@ export default function ProjectDetail() {
                   }
                   placeholder="발주처"
                 />
-                <EditableCombobox className="h-10 w-full rounded-2xl border border-slate-200 bg-slate-50 px-3 text-sm outline-none transition-colors focus:border-blue-300 focus:bg-white" placeholder="조립업체 검색 또는 직접 입력" options={assemblyVendorOptions} value={projectForm.assembly_vendor} onChange={(value) => setProjectForm({ ...projectForm, assembly_vendor: value })} />
+                <AssemblyVendorMultiSelect options={assemblyVendorOptions} value={projectForm.assemblyVendorIds} onChange={(value) => setProjectForm({ ...projectForm, assemblyVendorIds: value })} disabled={isUpdating} />
                 <select
                   className="h-10 w-full rounded-2xl border border-slate-200 bg-slate-50 px-3 text-sm outline-none transition-colors focus:border-blue-300 focus:bg-white"
                   value={projectForm.process_type}
@@ -1498,7 +1725,11 @@ export default function ProjectDetail() {
                   }
                   placeholder="현장주소"
                 />
-                <EditableCombobox className="h-10 w-full rounded-2xl border border-slate-200 bg-slate-50 px-3 text-sm outline-none transition-colors focus:border-blue-300 focus:bg-white" placeholder="영업자 검색 또는 직접 입력" options={salespersonOptions} value={projectForm.salesperson} onChange={(value) => setProjectForm({ ...projectForm, salesperson: value })} />
+                <select className="h-10 w-full rounded-2xl border border-slate-200 bg-slate-50 px-3 text-sm outline-none transition-colors focus:border-blue-300 focus:bg-white" value={projectForm.salesperson} onChange={(event) => setProjectForm({ ...projectForm, salesperson: event.target.value })}>
+                  <option value="">영업자 선택</option>
+                  {projectForm.salesperson && !salespersonOptions.some((option) => option.value === projectForm.salesperson) && <option value={projectForm.salesperson}>{projectForm.salesperson} (기존값)</option>}
+                  {salespersonOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                </select>
                 <select
                   className="h-10 w-full rounded-2xl border border-slate-200 bg-slate-50 px-3 text-sm outline-none transition-colors focus:border-blue-300 focus:bg-white"
                   value={projectForm.task_manager}
@@ -1513,6 +1744,8 @@ export default function ProjectDetail() {
                     </option>
                   ))}
                 </select>
+                <input type="number" min={0} step="any" className="h-10 w-full rounded-2xl border border-slate-200 bg-slate-50 px-3 text-sm outline-none transition-colors focus:border-blue-300 focus:bg-white" value={projectForm.quantity} onChange={(e) => setProjectForm({ ...projectForm, quantity: e.target.value })} placeholder="프로젝트 수량" />
+                <input className="h-10 w-full rounded-2xl border border-slate-200 bg-slate-50 px-3 text-sm outline-none transition-colors focus:border-blue-300 focus:bg-white" value={projectForm.quantity_unit} onChange={(e) => setProjectForm({ ...projectForm, quantity_unit: e.target.value })} placeholder="수량 단위 (세대, 개, 짝, SET, 식)" />
                 <input
                   type="date"
                   className="h-10 w-full rounded-2xl border border-slate-200 bg-slate-50 px-3 text-sm outline-none transition-colors focus:border-blue-300 focus:bg-white"
@@ -1540,12 +1773,13 @@ export default function ProjectDetail() {
                   ["프로젝트코드", project.project_code || "-"],
                   ["공정", project.process_type],
                   ["발주처", project.client_name || "-"],
-                  ["조립처", project.assembly_vendor || "-"],
+                  ["조립처", assemblyVendors.map((vendor) => `${vendor.organizationName}${vendor.isPrimary ? " (Primary)" : ""}`).join(" · ") || "-"],
                   ["영업자", project.salesperson || "-"],
                   ["현장주소", project.site_address || "-"],
                   ["업무담당자", project.task_manager || "-"],
                   ["시작일", project.start_date || "-"],
                   ["종료일", projectEndDate || "-"],
+                  ["수량", formatProjectQuantity(project.quantity, project.quantity_unit)],
                 ].map(([label, value]) => (
                   <div key={label} className="rounded-2xl bg-slate-50 p-4">
                     <div className="text-xs font-medium text-slate-500">
@@ -1642,15 +1876,15 @@ export default function ProjectDetail() {
         <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h2 className="text-lg font-bold tracking-tight text-slate-950">
-              공정 및 업무
+              조립업체별 공정 및 업무
             </h2>
             <p className="mt-1 text-sm text-slate-500">
-              공정별 담당자, 일정, 진행률과 업무를 관리합니다.
+              조립업체별 배정 수량, 진행률과 업무를 관리합니다.
             </p>
           </div>
           <Button
             variant="primary"
-            onClick={() => setSectionDialog({ mode: "add", source: null, target: null })}
+            onClick={() => setSectionDialog({ mode: "add", source: null, target: null, vendor: null })}
             className="flex items-center justify-center gap-2 rounded-2xl px-4 py-2 text-sm font-medium"
           >
             <Plus size={16} />
@@ -1659,6 +1893,26 @@ export default function ProjectDetail() {
         </div>
 
         <div className="space-y-4">
+        {assemblyVendors.map((vendor) => {
+          const vendorTasks = tasks.filter((task) => task.project_assembly_vendor_id === vendor.id);
+          const vendorProgress = calculateSectionProgress(vendorTasks);
+          const vendorOpen = openVendorIds.has(vendor.id);
+          return (
+          <section key={vendor.id} className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+            <div className="flex flex-col gap-3 bg-slate-100 p-4 lg:flex-row lg:items-center lg:justify-between">
+              <button type="button" className="flex min-w-0 items-center gap-3 text-left" onClick={() => setOpenVendorIds((current) => { const next = new Set(current); if (next.has(vendor.id)) next.delete(vendor.id); else next.add(vendor.id); return next; })}>
+                {vendorOpen ? <ChevronDown size={19} /> : <ChevronRight size={19} />}
+                <span className="truncate text-base font-bold text-slate-950">{vendor.organizationName}</span>
+                {vendor.isPrimary && <Badge variant="info">Primary</Badge>}
+                <span className="whitespace-nowrap text-sm font-semibold text-slate-600">{formatProjectQuantity(vendor.allocatedQuantity, project.quantity_unit)}</span>
+              </button>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-xs text-slate-500">업무 {vendorProgress.completed}/{vendorProgress.total} · {vendorProgress.percentage}%</span>
+                <Button size="sm" variant="secondary" disabled={isUpdating} onClick={() => void editVendorAllocatedQuantity(vendor)}>수량 변경</Button>
+                <Button size="sm" variant="primary" disabled={sections.length === 0} onClick={() => { setSelectedTaskVendorId(vendor.id); setSelectedTaskSectionId(sections[0]?.id ?? null); setShowTaskModal(true); setOpenVendorIds((current) => new Set(current).add(vendor.id)); }}><Plus size={14} /> Task</Button>
+              </div>
+            </div>
+            {vendorOpen && <div className="space-y-3 border-t border-slate-200 p-3">
         {[...sections].sort((a, b) => {
           const aType = processTypes.find((item) => item.code === a.process_type);
           const bType = processTypes.find((item) => item.code === b.process_type);
@@ -1666,11 +1920,19 @@ export default function ProjectDetail() {
             || (aType?.name ?? a.process_type).localeCompare(bType?.name ?? b.process_type, "ko-KR")
             || a.created_at.localeCompare(b.created_at);
         }).map((section) => {
-          const sectionTasks = tasks.filter((task) => task.project_section_id === section.id);
+          const sectionTasks = sortTasksBySchedule(tasks.filter((task) =>
+            task.project_section_id === section.id
+            && task.project_assembly_vendor_id === vendor.id
+          ));
           const sectionProgress = calculateSectionProgress(sectionTasks);
           const computedStatus = getComputedSectionStatus(sectionTasks);
           const processType = processTypes.find((item) => item.code === section.process_type);
           const isOpen = openSectionIds.has(section.id);
+          const vendorTaskManager = sectionTasks.find((task) => task.assignee?.trim())?.assignee ?? "-";
+          const vendorStartDates = sectionTasks.flatMap((task) => task.start_date ? [task.start_date] : []).sort();
+          const vendorDueDates = sectionTasks.flatMap((task) => task.due_date ? [task.due_date] : []).sort();
+          const vendorStartDate = vendorStartDates[0] ?? "-";
+          const vendorDueDate = vendorDueDates[vendorDueDates.length - 1] ?? "-";
           return (
           <section key={section.id} className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
             <div className="flex flex-col gap-3 bg-slate-50 p-4 xl:flex-row xl:items-center xl:justify-between">
@@ -1682,30 +1944,32 @@ export default function ProjectDetail() {
                 <Badge variant={computedStatus === "completed" ? "success" : computedStatus === "in_progress" ? "info" : "default"}>{getProjectStatusLabel(computedStatus)}</Badge>
               </button>
               <div className="grid grid-cols-2 gap-x-5 gap-y-1 text-xs text-slate-600 sm:grid-cols-4">
-                <span>조립처 <b>{section.assembly_vendor || "-"}</b></span><span>담당자 <b>{section.task_manager || "-"}</b></span>
-                <span>수량 <b>{section.quantity ?? "-"}</b></span><span>기간 <b>{section.start_date || "-"} ~ {section.end_date || "-"}</b></span>
+                <span>조립처 <b>{vendor.organizationName}</b></span><span>담당자 <b>{vendorTaskManager}</b></span>
+                <span>수량 <b>{vendor.allocatedQuantity ?? "-"}</b></span><span>기간 <b>{vendorStartDate} ~ {vendorDueDate}</b></span>
               </div>
               <div className="flex items-center gap-2">
                 <div className="w-32"><div className="mb-1 flex justify-between text-[11px] text-slate-500"><span>{sectionProgress.completed}/{sectionProgress.total}</span><b>{sectionProgress.percentage}%</b></div><ProgressBar percent={sectionProgress.percentage} className="h-1.5" /></div>
-                <Button size="sm" variant="secondary" onClick={() => setSectionDialog({ mode: "edit", source: null, target: section })}>수정</Button>
-                <Button size="sm" variant="secondary" onClick={() => setSectionDialog({ mode: "add", source: section, target: null })}>공정 추가</Button>
+                <Button size="sm" variant="secondary" onClick={() => setSectionDialog({ mode: "edit", source: null, target: section, vendor })}>수정</Button>
+                <Button size="sm" variant="secondary" onClick={() => setSectionDialog({ mode: "add", source: section, target: null, vendor })}>공정 추가</Button>
                 <Button size="sm" variant="danger" onClick={() => void prepareDeleteSection(section)}>삭제</Button>
               </div>
             </div>
             {isOpen && <div className="border-t border-slate-200 p-3">
-              <div className="mb-3 flex items-center justify-between text-xs text-slate-500"><span>대기 {sectionProgress.pending} · 진행 {sectionProgress.inProgress} · 완료 {sectionProgress.completed} · 지연 {sectionProgress.delayed}</span><Button size="sm" variant="primary" onClick={() => { setSelectedTaskSectionId(section.id); setShowTaskModal(true); setOpenSectionIds((current) => new Set(current).add(section.id)); }}><Plus size={14} /> 업무 추가</Button></div>
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[1120px] table-fixed text-sm">
-            <thead>
+              <div className="mb-3 flex items-center justify-between text-xs text-slate-500"><span>대기 {sectionProgress.pending} · 진행 {sectionProgress.inProgress} · 완료 {sectionProgress.completed} · 지연 {sectionProgress.delayed}</span><Button size="sm" variant="primary" onClick={() => { setSelectedTaskVendorId(vendor.id); setSelectedTaskSectionId(section.id); setShowTaskModal(true); setOpenSectionIds((current) => new Set(current).add(section.id)); }}><Plus size={14} /> Task</Button></div>
+        <div className="max-h-[60vh] overflow-auto">
+          <table className="w-full min-w-[1420px] table-fixed text-sm">
+            <thead className="sticky top-0 z-20 bg-slate-50">
               <tr className="border-y border-slate-200 bg-slate-50 text-xs font-semibold leading-none text-slate-500">
-                <th className="w-[5%] px-2 py-2.5 text-left">순번</th>
-                <th className="w-[25%] px-2 py-2.5 text-left">업무명</th>
-                <th className="w-[12%] px-2 py-2.5 text-left">업무유형</th>
-                <th className="w-[12%] px-2 py-2.5 text-left">담당자</th>
-                <th className="w-[19%] px-2 py-2.5 text-left">일정</th>
-                <th className="w-[9%] px-2 py-2.5 text-left">상태</th>
-                <th className="w-[8%] px-2 py-2.5 text-left">완료일</th>
-                <th className="w-[10%] px-2 py-2.5 text-left">관리</th>
+                <th className="w-[5%] bg-slate-50 px-2 py-3 text-center">순번</th>
+                <th className="w-[22%] bg-slate-50 px-3 py-3 text-left">업무명</th>
+                <th className="w-[10%] bg-slate-50 px-2 py-3 text-left">업무유형</th>
+                <th className="w-[11%] bg-slate-50 px-2 py-3 text-left">조립업체</th>
+                <th className="w-[11%] bg-slate-50 px-2 py-3 text-left">담당자</th>
+                <th className="w-[14%] bg-slate-50 px-2 py-3 text-left">시작일</th>
+                <th className="w-[14%] bg-slate-50 px-2 py-3 text-left">마감일</th>
+                <th className="w-[8%] bg-slate-50 px-2 py-3 text-left">상태</th>
+                <th className="w-[8%] bg-slate-50 px-2 py-3 text-center">완료일</th>
+                <th className="w-[8%] bg-slate-50 px-2 py-3 text-center">관리</th>
               </tr>
             </thead>
 
@@ -1720,20 +1984,20 @@ export default function ProjectDetail() {
                     onDrop={() => handleTaskDrop(task.id)}
                     className={`border-b border-slate-100 transition-colors ${
                       draggingTaskId === task.id
-                        ? "bg-blue-50 opacity-50"
+                          ? "bg-blue-50 opacity-50"
                         : isTaskCompleted(task.status)
-                          ? "text-slate-500 hover:bg-slate-50"
-                          : "hover:bg-slate-50"
+                          ? "text-slate-400 hover:bg-slate-50/80"
+                          : "hover:bg-blue-50/40"
                     }`}
                   >
-                    <td className="px-2 py-2 align-middle text-xs font-medium text-slate-400">
-                      {task.task_order ?? index + 1}
+                    <td className="h-14 px-2 py-2 text-center align-middle text-xs font-medium text-slate-400">
+                      {index + 1}
                     </td>
-                    <td className="px-2 py-2 align-middle">
+                    <td className="h-14 px-3 py-2 align-middle">
                       <div
                         className={`truncate font-semibold leading-5 ${
                           isTaskCompleted(task.status)
-                            ? "text-slate-500"
+                            ? "text-slate-400"
                             : "text-slate-950"
                         }`}
                         title={task.task_name || "-"}
@@ -1741,12 +2005,24 @@ export default function ProjectDetail() {
                         {task.task_name || "-"}
                       </div>
                     </td>
-                    <td className="px-2 py-2 align-middle">
+                    <td className="h-14 px-2 py-2 align-middle">
                       <div className="truncate text-sm leading-5 text-slate-600" title={task.task_type || "-"}>
                         {task.task_type || "-"}
                       </div>
                     </td>
-                    <td className="px-2 py-2 align-middle">
+                    <td className="h-14 px-2 py-2 align-middle">
+                      <select
+                        value={task.project_assembly_vendor_id ?? ""}
+                        disabled={isUpdating}
+                        onChange={(event) => void updateTaskVendor(task.id, Number(event.target.value))}
+                        className="h-8 w-full rounded-xl border border-slate-200 bg-white px-2 text-sm text-slate-700 outline-none focus:border-blue-300 disabled:bg-slate-100"
+                      >
+                        {assemblyVendors.map((option) => (
+                          <option key={option.id} value={option.id}>{option.organizationName}</option>
+                        ))}
+                      </select>
+                    </td>
+                    <td className="h-14 px-2 py-2 align-middle">
                       <select
                         value={task.assignee || "미배정"}
                         disabled={isUpdating}
@@ -1756,7 +2032,7 @@ export default function ProjectDetail() {
                         onMouseDown={(e) => e.stopPropagation()}
                         className="h-8 w-full rounded-xl border border-slate-200 bg-white px-2 text-sm text-slate-700 outline-none transition-colors focus:border-blue-300 focus:bg-white disabled:bg-slate-100"
                       >
-                        <option value="미배정">미배정</option>
+                        <option value="미배정">미지정</option>
                         {employees.map((employee) => (
                           <option key={employee.id} value={employee.name}>
                             {employee.name}
@@ -1764,29 +2040,35 @@ export default function ProjectDetail() {
                         ))}
                       </select>
                     </td>
-                    <td className="px-2 py-2 align-middle">
-                      <div className="inline-flex max-w-full flex-wrap items-center gap-1.5 rounded-xl border border-slate-200 bg-white p-1">
-                        <input
-                          type="date"
-                          value={task.due_date || ""}
+                    <td className="h-14 px-2 py-2 align-middle">
+                      <DatePicker
+                        value={task.start_date}
+                        disabled={isUpdating}
+                        onSave={(date) => updateTaskStartDate(task.id, date)}
+                        placeholder="시작일 선택"
+                        className="w-full"
+                      />
+                    </td>
+                    <td className="h-14 px-2 py-2 align-middle">
+                      <div className="flex min-w-0 items-center gap-1.5">
+                        <DatePicker
+                          value={task.due_date}
                           disabled={isUpdating}
-                          onChange={(e) =>
-                            updateTaskDueDate(task.id, e.target.value)
-                          }
-                          onMouseDown={(e) => e.stopPropagation()}
-                          className="h-7 w-32 rounded-lg border border-transparent bg-transparent px-1.5 text-sm text-slate-700 outline-none transition-colors focus:border-blue-300 focus:bg-white disabled:text-slate-400"
+                          onSave={(date) => updateTaskDueDate(task.id, date)}
+                          placeholder="마감일 선택"
+                          className="min-w-0 flex-1"
                         />
                         {dueDateBadge && (
                           <Badge
                             variant={dueDateBadge.variant}
-                            className="whitespace-nowrap px-2 py-0.5 font-semibold"
+                            className="shrink-0 whitespace-nowrap px-2 py-0.5 text-[11px] font-semibold"
                           >
                             {dueDateBadge.label}
                           </Badge>
                         )}
                       </div>
                     </td>
-                    <td className="px-2 py-2 align-middle">
+                    <td className="h-14 px-2 py-2 align-middle">
                       <select
                         value={normalizeTaskStatus(task.status) || "pending"}
                         disabled={isUpdating}
@@ -1794,7 +2076,7 @@ export default function ProjectDetail() {
                           updateTaskStatus(task.id, e.target.value)
                         }
                         onMouseDown={(e) => e.stopPropagation()}
-                        className={`h-8 w-full rounded-xl border px-2 text-sm font-medium outline-none transition-colors focus:border-blue-300 focus:bg-white disabled:bg-slate-100 ${getStatusStyle(
+                        className={`h-7 w-full rounded-full border px-2 text-xs font-semibold outline-none transition-colors focus:border-blue-300 focus:bg-white disabled:bg-slate-100 ${getStatusStyle(
                           task.status
                         )}`}
                       >
@@ -1805,16 +2087,16 @@ export default function ProjectDetail() {
                         ))}
                       </select>
                     </td>
-                    <td className="whitespace-nowrap px-2 py-2 align-middle text-xs text-slate-400">
+                    <td className="h-14 whitespace-nowrap px-2 py-2 text-center align-middle text-xs text-slate-400">
                       {task.completed_date || "-"}
                     </td>
-                    <td className="px-2 py-2 align-middle">
-                      <div className="flex flex-nowrap items-center gap-1">
+                    <td className="h-14 px-2 py-2 align-middle">
+                      <div className="flex flex-nowrap items-center justify-center gap-1">
                         <span
                           draggable={!isUpdating}
                           onDragStart={() => setDraggingTaskId(task.id)}
                           onDragEnd={() => setDraggingTaskId(null)}
-                          className="flex h-8 w-8 cursor-grab select-none items-center justify-center rounded-xl border border-transparent bg-transparent text-slate-300 transition-colors hover:border-slate-200 hover:bg-white hover:text-slate-500"
+                          className="flex h-8 w-8 shrink-0 cursor-grab select-none items-center justify-center rounded-xl border border-transparent bg-transparent text-slate-300 transition-colors hover:border-slate-200 hover:bg-white hover:text-slate-500"
                           title="드래그해서 순서 변경"
                         >
                           <GripVertical size={14} />
@@ -1824,7 +2106,7 @@ export default function ProjectDetail() {
                           size="sm"
                           onClick={() => duplicateTask(task)}
                           disabled={isUpdating}
-                          className="rounded-xl border-slate-200 px-2.5 py-1 text-xs font-medium text-blue-600 hover:border-blue-200 hover:bg-blue-50 disabled:text-gray-400"
+                          className="h-8 shrink-0 rounded-xl border-slate-200 px-2 text-xs font-medium text-blue-600 hover:border-blue-200 hover:bg-blue-50 disabled:text-gray-400"
                         >
                           복제
                         </Button>
@@ -1833,7 +2115,7 @@ export default function ProjectDetail() {
                           size="sm"
                           onClick={() => deleteTask(task.id)}
                           disabled={isUpdating}
-                          className="rounded-xl border-red-100 px-2.5 py-1 text-xs font-medium hover:bg-red-50"
+                          className="h-8 shrink-0 rounded-xl border-red-100 px-2 text-xs font-medium hover:bg-red-50"
                         >
                           삭제
                         </Button>
@@ -1845,7 +2127,7 @@ export default function ProjectDetail() {
 
               {sectionTasks.length === 0 && (
                 <tr>
-                  <td colSpan={8} className="p-0">
+                    <td colSpan={10} className="p-0">
                     <EmptyState
                       message="등록된 업무가 없습니다."
                       className="rounded-2xl bg-slate-50 p-8 text-center text-sm text-slate-500"
@@ -1860,10 +2142,21 @@ export default function ProjectDetail() {
           </section>
           );
         })}
+            </div>}
+          </section>
+          );
+        })}
+        {assemblyVendors.length === 0 && <EmptyState message="등록된 조립업체가 없습니다. 프로젝트 수정에서 조립업체를 먼저 등록하세요." />}
         {tasks.some((task) => task.project_section_id == null) && (
           <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
             <b>공정 미지정 레거시 업무 {tasks.filter((task) => task.project_section_id == null).length}건</b>
             <p className="mt-1 text-xs">데이터 보호를 위해 자동 배정하지 않았습니다: {tasks.filter((task) => task.project_section_id == null).map((task) => task.task_name || `업무 #${task.id}`).join(", ")}</p>
+          </div>
+        )}
+        {tasks.some((task) => task.project_assembly_vendor_id == null) && (
+          <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+            <b>조립업체 미지정 레거시 업무 {tasks.filter((task) => task.project_assembly_vendor_id == null).length}건</b>
+            <p className="mt-1 text-xs">조립업체가 없는 프로젝트의 기존 업무는 호환성을 위해 미지정 상태로 유지됩니다.</p>
           </div>
         )}
         {sections.length === 0 && <EmptyState message="등록된 공정이 없습니다." />}
@@ -1942,16 +2235,25 @@ export default function ProjectDetail() {
           mode={sectionDialog.mode}
           processTypes={processTypes.filter((item) => item.is_active && !sections.some((section) => section.process_type === item.code))}
           employees={employees}
+          assemblyVendors={assemblyVendors}
           saving={isSavingSection}
-          initialValue={sectionDialog.mode === "edit" && sectionDialog.target ? {
+          assemblyVendorLocked={sectionDialog.vendor !== null}
+          initialValue={sectionDialog.mode === "edit" && sectionDialog.target && sectionDialog.vendor
+            ? vendorSectionValue(sectionDialog.target, sectionDialog.vendor)
+            : sectionDialog.mode === "edit" && sectionDialog.target ? {
             process_type: sectionDialog.target.process_type,
-            assembly_vendor: sectionDialog.target.assembly_vendor,
+            assembly_vendor: sectionDialog.vendor?.organizationName ?? sectionDialog.target.assembly_vendor,
             task_manager: sectionDialog.target.task_manager,
             quantity: sectionDialog.target.quantity,
             start_date: sectionDialog.target.start_date,
             end_date: sectionDialog.target.end_date,
             memo: sectionDialog.target.memo,
-          } : { ...emptySectionValue(sectionDialog.source), process_type: "" }}
+            targetAssemblyVendorIds: null,
+          } : {
+            ...emptySectionValue(sectionDialog.source),
+            process_type: "",
+            assembly_vendor: sectionDialog.vendor?.organizationName ?? emptySectionValue(sectionDialog.source).assembly_vendor,
+          }}
           onClose={() => setSectionDialog(null)}
           onSubmit={(value) => void saveSection(value)}
         />
@@ -1965,11 +2267,21 @@ export default function ProjectDetail() {
                 업무 추가
               </h2>
               <p className="mt-1 text-sm text-slate-500">
-                {sections.find((section) => section.id === selectedTaskSectionId)?.process_type || "선택 공정"}에 업무명, 유형, 담당자와 일정을 입력합니다.
+                {assemblyVendors.find((vendor) => vendor.id === selectedTaskVendorId)?.organizationName || "선택 업체"}에 업무명, 유형, 담당자와 일정을 입력합니다.
               </p>
             </div>
 
             <div className="space-y-3">
+              <select
+                className="h-10 w-full rounded-2xl border border-slate-200 bg-slate-50 px-3 text-sm outline-none transition-colors focus:border-blue-300 focus:bg-white"
+                value={selectedTaskSectionId ?? ""}
+                onChange={(event) => setSelectedTaskSectionId(event.target.value ? Number(event.target.value) : null)}
+              >
+                <option value="">공정 선택</option>
+                {sections.map((section) => (
+                  <option key={section.id} value={section.id}>{processTypes.find((process) => process.code === section.process_type)?.name ?? section.process_type}</option>
+                ))}
+              </select>
               <input
                 className="h-10 w-full rounded-2xl border border-slate-200 bg-slate-50 px-3 text-sm outline-none transition-colors focus:border-blue-300 focus:bg-white"
                 placeholder="업무명"
@@ -2000,21 +2312,27 @@ export default function ProjectDetail() {
                   </option>
                 ))}
               </select>
-              <input
-                type="date"
-                className="h-10 w-full rounded-2xl border border-slate-200 bg-slate-50 px-3 text-sm outline-none transition-colors focus:border-blue-300 focus:bg-white"
-                value={taskForm.start_date}
-                onChange={(e) =>
-                  setTaskForm({ ...taskForm, start_date: e.target.value })
+              <DatePicker
+                value={taskForm.start_date || null}
+                onSave={(date) =>
+                  setTaskForm((current) => ({
+                    ...current,
+                    start_date: date || "",
+                  }))
                 }
+                placeholder="시작일 선택"
+                className="w-full"
               />
-              <input
-                type="date"
-                className="h-10 w-full rounded-2xl border border-slate-200 bg-slate-50 px-3 text-sm outline-none transition-colors focus:border-blue-300 focus:bg-white"
-                value={taskForm.due_date}
-                onChange={(e) =>
-                  setTaskForm({ ...taskForm, due_date: e.target.value })
+              <DatePicker
+                value={taskForm.due_date || null}
+                onSave={(date) =>
+                  setTaskForm((current) => ({
+                    ...current,
+                    due_date: date || "",
+                  }))
                 }
+                placeholder="마감일 선택"
+                className="w-full"
               />
               <select
                 className="h-10 w-full rounded-2xl border border-slate-200 bg-slate-50 px-3 text-sm outline-none transition-colors focus:border-blue-300 focus:bg-white"
@@ -2034,7 +2352,7 @@ export default function ProjectDetail() {
             <div className="mt-6 flex justify-end gap-3">
               <Button
                 variant="secondary"
-                onClick={() => { setShowTaskModal(false); setSelectedTaskSectionId(null); }}
+                onClick={() => { setShowTaskModal(false); setSelectedTaskVendorId(null); setSelectedTaskSectionId(null); }}
                 disabled={isSavingTask}
                 className="rounded-2xl px-4 py-2 text-sm"
               >

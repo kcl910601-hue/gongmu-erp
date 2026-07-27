@@ -12,6 +12,7 @@ import type {
   ShipmentSearchResult,
   TaskSearchResult,
 } from "@/types/search";
+import { getEmployeeByAuth } from "@/lib/auth";
 
 type ProjectRow = {
   id: number;
@@ -47,20 +48,8 @@ export async function GET(request: Request) {
     return Response.json({ error: "인증이 필요합니다." }, { status: 401 });
   }
 
-  let { data: employee } = await supabase
-    .from("employees")
-    .select("id, role, active, approval_status")
-    .eq("auth_user_id", user.id)
-    .maybeSingle();
-
-  if (!employee && user.email) {
-    const fallback = await supabase
-      .from("employees")
-      .select("id, role, active, approval_status")
-      .eq("email", user.email)
-      .maybeSingle();
-    employee = fallback.data;
-  }
+  const { employee, error: employeeError } = await getEmployeeByAuth(supabase, user);
+  if (employeeError) console.error("search employee lookup error:", employeeError);
 
   if (
     !employee ||
@@ -95,7 +84,7 @@ export async function GET(request: Request) {
     "memo",
   ]);
 
-  const [projectResult, taskResult, shipmentResult, employeeResult] =
+  const [projectResult, taskResult, shipmentResult, employeeResult, vendorResult] =
     await Promise.all([
       supabase
         .from("projects")
@@ -132,13 +121,19 @@ export async function GET(request: Request) {
             )
             .limit(GLOBAL_SEARCH_RESULT_LIMIT)
         : Promise.resolve({ data: [], error: null }),
+      supabase
+        .from("organizations")
+        .select("id")
+        .ilike("name", `%${safeQuery}%`)
+        .eq("is_active", true),
     ]);
 
   const firstError =
     projectResult.error ||
     taskResult.error ||
     shipmentResult.error ||
-    employeeResult.error;
+    employeeResult.error ||
+    vendorResult.error;
 
   if (firstError) {
     console.error("global search failed", {
@@ -152,7 +147,24 @@ export async function GET(request: Request) {
     );
   }
 
-  const directProjects = (projectResult.data ?? []) as ProjectRow[];
+  let directProjects = (projectResult.data ?? []) as ProjectRow[];
+  const matchedVendorIds = (vendorResult.data ?? []).map((vendor) => Number(vendor.id));
+  if (matchedVendorIds.length > 0) {
+    const relationResult = await supabase
+      .from("project_assembly_vendors")
+      .select("project_id")
+      .in("organization_id", matchedVendorIds);
+    if (relationResult.error) return Response.json({ error: "검색 중 오류가 발생했습니다." }, { status: 500 });
+    const vendorProjectIds = [...new Set((relationResult.data ?? []).map((relation) => Number(relation.project_id)))];
+    if (vendorProjectIds.length > 0) {
+      const vendorProjectResult = await supabase
+        .from("projects")
+        .select("id, project_code, project_name, process_type, task_manager, status")
+        .in("id", vendorProjectIds);
+      if (vendorProjectResult.error) return Response.json({ error: "검색 중 오류가 발생했습니다." }, { status: 500 });
+      directProjects = Array.from(new Map([...directProjects, ...((vendorProjectResult.data ?? []) as ProjectRow[])].map((project) => [project.id, project])).values()).slice(0, GLOBAL_SEARCH_RESULT_LIMIT);
+    }
+  }
   let directTasks = taskResult.data ?? [];
   let directShipments = shipmentResult.data ?? [];
   const matchedProjectIds = directProjects.map((project) => project.id);
