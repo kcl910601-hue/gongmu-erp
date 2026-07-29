@@ -1,5 +1,51 @@
 # Gongmu ERP - Project Context
 
+## Sprint 6-2 UAT 상태
+
+테스트 계정 Seed의 평문 비밀번호를 제거하고 `scripts/seed-uat-accounts.mjs`에서 필수 환경변수로만 주입하도록 변경했습니다. 2026-07-29 연결된 Supabase project ref `cropibqvvzpxlnqpkyto`는 Production으로 확인되어 최초 Seed와 실제 UAT는 실행하지 않았습니다.
+
+Sprint 6-3에서 해당 Production 프로젝트에 대한 제한적 UAT가 명시적으로 승인되었습니다. Seed는 이중 승인 플래그와 정확한 project ref, Supabase URL, service role key, 로컬 비밀번호가 모두 있을 때만 허용됩니다.
+
+Sprint 6-4에서 Seed/Cleanup을 Supabase JavaScript Admin API 방식으로 전환했습니다. DB URL과 `auth.users` 직접 SQL 의존성은 제거했습니다. service role 기반 `auth.admin.createUser()` / `deleteUser()`와 PostgREST employees/UAT 데이터 처리만 사용하며, 기존 권한 함수·RLS·Migration은 변경하지 않았습니다.
+
+## 운영 보안 상태
+
+Sprint 5-11D부터 Core 테이블의 authenticated 권한은 RLS 기반 CRUD에 필요한
+권한만 유지합니다. `TRUNCATE`, `REFERENCES`, `TRIGGER`는 ERP 사용자에게 부여하지
+않으며, 특히 RLS를 거치지 않는 `TRUNCATE`는 금지합니다.
+
+## 공식 권한 체계
+
+권한 정책은 다음 순서를 단일 기준으로 사용합니다.
+
+```text
+lib/permissions.ts
+        ↓
+API / Proxy / AppShell
+        ↓
+RPC 권한 함수
+        ↓
+RLS
+```
+
+UI의 버튼 노출만으로 권한을 보장하지 않으며 API, RPC, RLS에서 동일한 역할과
+활성·승인 조건을 다시 검사합니다.
+
+| 역할 | 공식 권한 |
+| --- | --- |
+| Admin | 전체 조회·생성·수정·삭제, 직원 관리, 설정 관리 |
+| Manager | 조회, 프로젝트 생성·수정, 업무·출고 편집, 설정 등록·수정. 삭제 불가 |
+| Staff | 조회, 업무·출고 생성·수정. 프로젝트 생성 및 삭제 불가 |
+| Viewer | 조회 전용 |
+
+모든 역할은 `employees.active = true`와 `approval_status = 'approved'`를 동시에
+충족해야 합니다. 알 수 없는 role은 클라이언트에서 Viewer로 축소하며 DB에서는
+허용하지 않습니다. Login, Authorization API, Proxy, AppShell 세션 변경 및 RLS가
+동일한 기준을 사용합니다.
+
+Core RLS 대상은 `projects`, `tasks`, `shipments`, `activity_logs`이며 상세 정책은
+`docs/DATABASE.md`를 기준으로 합니다.
+
 ## 프로젝트 개요
 
 공무팀 ERP는 공무팀의 실제 업무에서 사용하는 프로젝트, 업무, 출고, 파일 관리 시스템입니다. 현재는 공무팀 운영 안정성을 우선하며, 향후 다른 부서로 확장 가능한 구조를 목표로 합니다.
@@ -113,6 +159,9 @@ DB-2 판단:
 
 ## 최근 구조 메모
 
+- Sprint 6-5부터 내부 직원 가입 정책은 `가입 요청 → 관리자 승인 → 로그인`이며 이메일 인증을 사용하지 않습니다. Supabase Confirm email은 관리자가 수동으로 OFF 상태를 유지합니다.
+- 가입 상태 API는 `linked`, `auth_only_incomplete`, `employee_only_missing_auth`, `not_found`를 구분하며, 승인·활성 상태와 AppShell 가드가 실제 ERP 접근을 결정합니다.
+- 직원 완전 삭제는 서버 전용 Admin API에서만 수행하며 비활성화, 가입 거절과 별도 동작입니다.
 - `project_files` 테이블과 `project-files` private Storage bucket 기반 파일 기능이 추가되었습니다.
 - `assembly_vendor`는 실제 `projects` 컬럼으로 확인되며 프로젝트 등록/수정/목록/상세/Gantt/Search에서 사용합니다.
 - Notification Center는 별도 notifications 테이블 없이 기존 `tasks`, `projects`, `project_files` 기반으로 계산합니다.

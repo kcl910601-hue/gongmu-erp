@@ -188,26 +188,26 @@ export default function Sidebar() {
   return (
     <aside
       className={`fixed left-0 top-0 z-30 flex h-screen flex-col border-r border-slate-200 bg-white text-slate-900 shadow-sm transition-all duration-300 ${
-        isCollapsed ? "w-16" : "w-64"
+        isCollapsed ? "w-14" : "w-52"
       }`}
     >
       <button
         onClick={toggleSidebar}
         title={isCollapsed ? "메뉴 펼치기" : "메뉴 접기"}
-        className="absolute -right-4 top-24 flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 shadow-sm transition hover:border-blue-200 hover:bg-blue-50 hover:text-blue-600"
+        className="absolute -right-3.5 top-20 flex h-7 w-7 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 shadow-sm transition hover:border-blue-200 hover:bg-blue-50 hover:text-blue-600"
       >
         {isCollapsed ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
       </button>
 
-      <div className="border-b border-slate-200 px-4 py-6">
+      <div className="border-b border-slate-200 px-3 py-5">
         <div className={`flex items-center ${isCollapsed ? "justify-center" : "gap-3"}`}>
-          <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-slate-900 text-white shadow-sm">
-            <BarChart3 size={24} />
+          <div className="flex h-9 w-9 items-center justify-center rounded-2xl bg-slate-900 text-white shadow-sm">
+            <BarChart3 size={21} />
           </div>
 
           {!isCollapsed && (
             <div>
-              <h1 className="text-lg font-bold tracking-tight text-slate-950">
+              <h1 className="text-base font-bold tracking-tight text-slate-950">
                 공무팀 ERP
               </h1>
               <p className="mt-1 text-xs font-medium text-slate-500">
@@ -218,7 +218,7 @@ export default function Sidebar() {
         </div>
       </div>
 
-      <nav className="flex-1 space-y-1.5 px-3 py-5">
+      <nav className="flex-1 space-y-1 px-2.5 py-4">
         {menuItems
           .filter((item) => canAccessRoute(employee?.role, item.href))
           .map((item) => {
@@ -230,7 +230,7 @@ export default function Sidebar() {
               key={item.href}
               href={item.href}
               title={isCollapsed ? item.label : undefined}
-              className={`flex items-center rounded-2xl px-3.5 py-2.5 text-sm font-medium transition-colors duration-200 ${
+              className={`flex items-center rounded-xl px-3 py-2 text-sm font-medium transition-colors duration-200 ${
                 isCollapsed ? "justify-center" : "gap-3"
               } ${
                 active
@@ -247,7 +247,7 @@ export default function Sidebar() {
       </nav>
 
       {!isCollapsed && (
-        <div className="border-t border-slate-100 px-3 py-3">
+        <div className="border-t border-slate-100 px-2.5 py-2.5">
           <button
             type="button"
             onClick={() => setIsWorkspaceOpen((current) => !current)}
@@ -263,7 +263,7 @@ export default function Sidebar() {
             />
           </button>
           {isWorkspaceOpen && (
-            <div className="mt-3 max-h-[330px] space-y-4 overflow-y-auto">
+            <div className="mt-2.5 max-h-[330px] space-y-3 overflow-y-auto">
               <SidebarProjectGroup
                 title="즐겨찾기"
                 icon={<Star size={14} className="fill-amber-400 text-amber-500" />}
@@ -285,24 +285,24 @@ export default function Sidebar() {
         </div>
       )}
 
-      <div className="border-t border-slate-200 p-3">
+      <div className="border-t border-slate-200 p-2.5">
         {!isCollapsed ? (
-          <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 shadow-sm">
+          <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3 shadow-sm">
             <p className="truncate text-sm font-semibold text-slate-950">
               {employee?.name || "로그인 사용자"}
             </p>
-            <p className="mt-2 truncate text-xs text-slate-500">
+            <p className="mt-1.5 truncate text-xs text-slate-500">
               {employee?.position || "직책 없음"}
             </p>
             <p className="mt-1 text-xs font-semibold text-blue-600">
               {getRoleLabel(employee?.role || null)}
             </p>
-            <p className="mt-3 truncate text-[11px] text-slate-400">
+            <p className="mt-2 truncate text-[11px] text-slate-400">
               {employee?.email || authEmail || "사용자 정보 없음"}
             </p>
             <button
               onClick={handleLogout}
-              className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-600 transition-colors hover:border-red-200 hover:bg-red-50 hover:text-red-600"
+              className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-600 transition-colors hover:border-red-200 hover:bg-red-50 hover:text-red-600"
             >
               <LogOut size={15} />
               로그아웃

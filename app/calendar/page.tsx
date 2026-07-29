@@ -836,7 +836,7 @@ export default function CalendarPage() {
         </div>
       </div>
 
-      <div className={`grid grid-cols-1 gap-5 ${viewMode === "간트 보기" ? "" : "xl:grid-cols-[minmax(0,1fr)_320px]"}`}>
+      <div className={`grid grid-cols-1 gap-5 ${viewMode === "간트 보기" ? "" : "xl:grid-cols-[minmax(0,1fr)_400px]"}`}>
         <div className="min-w-0">
       {isLoading ? (
         <div className="rounded-2xl border border-slate-200 bg-white p-8 text-center text-sm text-slate-500 shadow-sm">
@@ -1066,7 +1066,7 @@ export default function CalendarPage() {
       )}
         </div>
 
-        <aside className={`rounded-2xl border border-slate-200 bg-white p-5 shadow-sm ${viewMode === "간트 보기" ? "hidden" : ""}`}>
+        <aside className={`min-w-0 overflow-x-hidden rounded-2xl border border-slate-200 bg-white p-5 shadow-sm ${viewMode === "간트 보기" ? "hidden" : ""}`}>
           <div className="mb-5 border-b border-slate-100 pb-4">
             <h2 className="text-lg font-bold tracking-tight text-slate-950">
               {formatKoreanDate(selectedDate)}
@@ -1077,7 +1077,7 @@ export default function CalendarPage() {
             </p>
           </div>
 
-          <div className="mb-5 rounded-2xl bg-slate-50 p-4">
+          <div className="mb-5 min-w-0 rounded-2xl bg-slate-50 p-3.5">
             <div className="mb-3 flex items-center justify-between gap-3">
               <h3 className="text-sm font-semibold text-slate-800">선택 날짜 업무</h3>
               <span className="rounded-full bg-white px-2.5 py-1 text-xs font-medium text-slate-500">
@@ -1086,39 +1086,40 @@ export default function CalendarPage() {
             </div>
 
             {selectedDateTaskItems.length > 0 ? (
-              <div className="max-h-[520px] space-y-2.5 overflow-y-auto pr-1">
+              <div className="max-h-[520px] min-w-0 space-y-2 overflow-x-hidden overflow-y-auto pr-1">
                 {selectedDateTaskItems.map((item) => (
                   <button
                     type="button"
                     key={item.id}
                     onClick={() => openTaskDetailModal(item)}
-                    className="block rounded-2xl border border-slate-200 bg-white p-4 text-sm transition-colors duration-150 hover:border-blue-200 hover:bg-blue-50 hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-100"
+                    className="block w-full min-w-0 overflow-hidden rounded-2xl border border-slate-200 bg-white p-3.5 text-left text-sm transition-colors duration-150 hover:border-blue-200 hover:bg-blue-50 hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-100"
                   >
-                    <div className="truncate text-base font-semibold leading-6 text-slate-950">
+                    <div className="whitespace-normal break-words text-sm font-semibold leading-5 text-slate-950 [overflow-wrap:anywhere]">
                       {item.title}
                     </div>
-                    <div className="mt-1 truncate text-sm font-medium leading-5 text-slate-600">
+                    <div className="mt-1.5 whitespace-normal break-words text-sm font-medium leading-5 text-slate-600 [overflow-wrap:anywhere]">
                       {item.projectName || "-"}
                     </div>
-                    <div className="mt-1 truncate text-xs font-semibold text-blue-600">
-                      조립업체 {item.assemblyVendorName || "미지정"}
-                    </div>
-                    <div className="mt-3 flex flex-wrap items-center gap-1.5">
-                      <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-500">
-                        {item.taskType || getDisplayType(item.type)}
+                    <div className="mt-1.5 whitespace-normal break-words text-xs leading-5 text-slate-500 [overflow-wrap:anywhere]">
+                      담당자 {item.assignee}
+                      <span className="mx-1 text-slate-300">|</span>
+                      <span className="font-semibold text-blue-600">
+                        조립업체 {item.assemblyVendorName || "미지정"}
                       </span>
-                      <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-500">
-                        담당 {item.assignee}
+                    </div>
+                    <div className="mt-2.5 flex min-w-0 flex-wrap items-center gap-1">
+                      <span className="max-w-full whitespace-normal break-words rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium leading-5 text-slate-500 [overflow-wrap:anywhere]">
+                        {item.taskType || getDisplayType(item.type)}
                       </span>
                       <Badge
                         variant={getTaskStatusVariant(item.status)}
-                        className="px-2.5 py-1 text-xs font-medium"
+                        className="px-2 py-0.5 text-[11px] font-medium"
                       >
                         {getTaskStatusLabel(item.status)}
                       </Badge>
                       <Badge
                         variant={getTaskDueVariant(item)}
-                        className="px-2.5 py-1 text-xs font-medium"
+                        className="px-2 py-0.5 text-[11px] font-medium"
                       >
                         {getTaskDueLabel(item)}
                       </Badge>

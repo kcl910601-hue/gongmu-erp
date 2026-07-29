@@ -1,0 +1,19 @@
+
+> gongmu-erp2@0.1.0 dev
+> next dev
+
+⚠ Port 3000 is in use by process 384, using available port 3001 instead.
+▲ Next.js 16.2.9 (Turbopack)
+- Local:         http://localhost:3001
+- Network:       http://100.68.227.97:3001
+- Environments: .env.local
+✓ Ready in 591ms
+⨯ Another next dev server is already running.
+
+- Local:        http://localhost:3000
+- PID:          384
+- Dir:          C:\Users\user\Desktop\ERP개발\gongmu-erp2
+- Log:          .next\dev\logs\next-development.log
+
+Run taskkill /PID 384 /F to stop it.
+[?25h

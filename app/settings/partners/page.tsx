@@ -1,7 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { Plus, RefreshCw } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Plus, RefreshCw, Trash2 } from "lucide-react";
+import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
+import { usePermission } from "@/hooks/usePermission";
+import type { SettingsItemActionResult } from "@/lib/settings-deletion";
+import { toast } from "@/lib/toast";
 
 type Partner = {
   id: number;
@@ -23,6 +27,16 @@ export default function PartnerOrganizationsPage() {
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
+  const [showInactive, setShowInactive] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<Partner | null>(null);
+  const [deletePlan, setDeletePlan] = useState<SettingsItemActionResult | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const { role } = usePermission();
+  const canDelete = role === "admin";
+  const visiblePartners = useMemo(
+    () => showInactive ? partners : partners.filter((partner) => partner.is_active),
+    [partners, showInactive]
+  );
 
   const loadPartners = useCallback(async () => {
     setLoading(true);
@@ -123,11 +137,79 @@ export default function PartnerOrganizationsPage() {
     }
   }
 
+  async function requestDelete(partner: Partner, execute: boolean) {
+    const response = await fetch("/api/partner-organizations", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: partner.id, execute }),
+    });
+    const result = (await response.json()) as Partial<SettingsItemActionResult> & { error?: string };
+    if (!response.ok) throw new Error(result.error || "협력업체 삭제 요청에 실패했습니다.");
+    if (typeof result.success !== "boolean" || !result.action) {
+      throw new Error("협력업체 삭제 결과가 올바르지 않습니다.");
+    }
+    return {
+      success: result.success,
+      action: result.action,
+      message: result.message || "협력업체를 처리했습니다.",
+      referenceCount: result.referenceCount || 0,
+    } satisfies SettingsItemActionResult;
+  }
+
+  async function prepareDelete(partner: Partner) {
+    if (!canDelete || deleting) return;
+    setDeleting(true);
+    try {
+      const result = await requestDelete(partner, false);
+      if (!result.success || result.action === "blocked") {
+        toast.error(result.message);
+        return;
+      }
+      setDeleteTarget(partner);
+      setDeletePlan(result);
+    } catch (error) {
+      console.error("partner delete inspection error:", error);
+      toast.error("삭제하지 못했습니다. 잠시 후 다시 시도해주세요.");
+    } finally {
+      setDeleting(false);
+    }
+  }
+
+  async function confirmDelete() {
+    if (!deleteTarget || !deletePlan || deleting) return;
+    const target = deleteTarget;
+    setDeleting(true);
+    try {
+      const result = await requestDelete(target, true);
+      if (!result.success || result.action === "blocked") {
+        toast.error(result.message);
+        return;
+      }
+      if (result.action === "deleted") {
+        setPartners((current) => current.filter((partner) => partner.id !== target.id));
+        toast.success(`"${target.name}"이 삭제되었습니다.`);
+      } else {
+        setPartners((current) => current.map((partner) => partner.id === target.id ? { ...partner, is_active: false } : partner));
+        toast.success(`"${target.name}"이 기존 기록에 사용 중이어서 비활성화되었습니다.`);
+      }
+      setDeleteTarget(null);
+      setDeletePlan(null);
+    } catch (error) {
+      console.error("partner delete error:", error);
+      toast.error("삭제하지 못했습니다. 잠시 후 다시 시도해주세요.");
+    } finally {
+      setDeleting(false);
+    }
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-sm text-slate-500">프로젝트 조립업체 선택에 사용할 협력업체를 관리합니다.</p>
-        <button type="button" onClick={() => void loadPartners()} className="flex items-center gap-2 rounded-xl border border-slate-300 px-4 py-2 text-sm font-semibold hover:bg-slate-50"><RefreshCw size={15} />새로고침</button>
+        <div className="flex flex-wrap items-center gap-3">
+          <label className="flex items-center gap-2 text-sm text-slate-600"><input type="checkbox" checked={showInactive} onChange={(event) => setShowInactive(event.target.checked)} />비활성 포함</label>
+          <button type="button" onClick={() => void loadPartners()} className="flex items-center gap-2 rounded-xl border border-slate-300 px-4 py-2 text-sm font-semibold hover:bg-slate-50"><RefreshCw size={15} />새로고침</button>
+        </div>
       </div>
 
       {errorMessage && <p className="rounded-xl bg-red-50 p-3 text-sm text-red-700">{errorMessage}</p>}
@@ -148,7 +230,7 @@ export default function PartnerOrganizationsPage() {
             <table className="w-full min-w-[680px] text-left text-sm">
               <thead className="bg-slate-100 text-slate-600"><tr><th className="px-4 py-3">순서</th><th className="px-4 py-3">협력업체명</th><th className="px-4 py-3">상태</th><th className="px-4 py-3 text-right">관리</th></tr></thead>
               <tbody>
-                {partners.map((partner) => (
+                {visiblePartners.map((partner) => (
                   <tr key={partner.id} className="border-t border-slate-200 transition-colors hover:bg-slate-50">
                     <td className="px-4 py-3">{editingId === partner.id ? <input type="number" min={0} value={editingSortOrder} onChange={(event) => setEditingSortOrder(Number(event.target.value))} className="w-20 rounded-lg border px-2 py-1.5" /> : partner.sort_order}</td>
                     <td className="px-4 py-3 font-medium">{editingId === partner.id ? <input value={editingName} onChange={(event) => setEditingName(event.target.value)} className="w-full rounded-lg border px-3 py-1.5" /> : partner.name}</td>
@@ -169,16 +251,35 @@ export default function PartnerOrganizationsPage() {
                       {editingId === partner.id ? <>
                         <button type="button" disabled={saving} onClick={() => void savePartner(partner)} className="mr-2 rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white">저장</button>
                         <button type="button" onClick={() => setEditingId(null)} className="rounded-lg border px-3 py-1.5 text-xs">취소</button>
-                      </> : <button type="button" onClick={() => { setEditingId(partner.id); setEditingName(partner.name); setEditingSortOrder(partner.sort_order); }} className="rounded-lg border px-3 py-1.5 text-xs">수정</button>}
+                      </> : <div className="flex justify-end gap-2">
+                        <button type="button" onClick={() => { setEditingId(partner.id); setEditingName(partner.name); setEditingSortOrder(partner.sort_order); }} className="rounded-lg border px-3 py-1.5 text-xs">수정</button>
+                        {canDelete && <button type="button" title="협력업체 삭제" aria-label={`${partner.name} 삭제`} disabled={deleting} onClick={() => void prepareDelete(partner)} className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 text-slate-400 transition-colors hover:border-red-200 hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-50"><Trash2 size={15} /></button>}
+                      </div>}
                     </td>
                   </tr>
                 ))}
-                {partners.length === 0 && <tr><td colSpan={4} className="px-4 py-10 text-center text-slate-400">등록된 협력업체가 없습니다.</td></tr>}
+                {visiblePartners.length === 0 && <tr><td colSpan={4} className="px-4 py-10 text-center text-slate-400">표시할 협력업체가 없습니다.</td></tr>}
               </tbody>
             </table>
           </div>
         )}
       </section>
+      <ConfirmDialog
+        open={deleteTarget !== null && deletePlan !== null}
+        title={deletePlan?.action === "deactivated" ? "협력업체 비활성화" : "협력업체 삭제"}
+        description={deletePlan?.action === "deactivated"
+          ? `"${deleteTarget?.name || "협력업체"}"은 기존 프로젝트 또는 출고 기록에서 사용 중입니다.\n완전 삭제할 수 없어 비활성화 처리됩니다.\n기존 프로젝트와 PDF 기록은 유지됩니다.`
+          : `"${deleteTarget?.name || "협력업체"}" 항목을 삭제하시겠습니까?\n삭제한 데이터는 복구할 수 없습니다.`}
+        confirmLabel={deletePlan?.action === "deactivated" ? "비활성화" : "삭제"}
+        danger
+        isPending={deleting}
+        onConfirm={() => void confirmDelete()}
+        onClose={() => {
+          if (deleting) return;
+          setDeleteTarget(null);
+          setDeletePlan(null);
+        }}
+      />
     </div>
   );
 }

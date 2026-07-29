@@ -71,6 +71,8 @@ export type NotificationItem = {
   projectName: string;
   actor?: string | null;
   statusLabel?: string | null;
+  isRead: boolean;
+  readAt: string | null;
 };
 
 export type NotificationSummary = {
@@ -87,6 +89,42 @@ type LoadNotificationSummaryResult = {
 };
 
 const DEFAULT_LIMIT = 30;
+export const NOTIFICATION_READ_EVENT = "notification-read-state-change";
+
+type NotificationReadRow = {
+  notification_id: string;
+  read_at: string | null;
+};
+
+export function notifyNotificationReadStateChanged(notificationIds: string[]) {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new CustomEvent<string[]>(NOTIFICATION_READ_EVENT, {
+    detail: notificationIds,
+  }));
+}
+
+export async function markNotificationsRead(
+  notificationIds: string[],
+  currentEmployee: CurrentEmployee
+) {
+  const uniqueIds = [...new Set(notificationIds)];
+  if (uniqueIds.length === 0) return { error: null, readAt: new Date().toISOString() };
+  if (!currentEmployee.auth_user_id) {
+    return { error: new Error("로그인 사용자 정보를 확인할 수 없습니다."), readAt: null };
+  }
+
+  const readAt = new Date().toISOString();
+  const { error } = await supabase.from("notification_reads").upsert(
+    uniqueIds.map((notificationId) => ({
+      auth_user_id: currentEmployee.auth_user_id,
+      notification_id: notificationId,
+      is_read: true,
+      read_at: readAt,
+    })),
+    { onConflict: "auth_user_id,notification_id" }
+  );
+  return { error, readAt: error ? null : readAt };
+}
 
 function formatDateInput(date: Date) {
   const year = date.getFullYear();
@@ -194,6 +232,8 @@ export function calculateNotificationSummary({
         projectName,
         actor: task.assignee,
         statusLabel: task.status,
+        isRead: false,
+        readAt: null,
       }];
     }
 
@@ -211,6 +251,8 @@ export function calculateNotificationSummary({
         projectName,
         actor: task.assignee,
         statusLabel: task.status,
+        isRead: false,
+        readAt: null,
       }];
     }
 
@@ -228,6 +270,8 @@ export function calculateNotificationSummary({
         projectName,
         actor: task.assignee,
         statusLabel: task.status,
+        isRead: false,
+        readAt: null,
       }];
     }
 
@@ -255,6 +299,8 @@ export function calculateNotificationSummary({
         projectName: getProjectName(projects, shipment.project_id),
         actor: shipment.driver_name,
         statusLabel: shipment.status,
+        isRead: false,
+        readAt: null,
       }];
     }
   );
@@ -271,6 +317,8 @@ export function calculateNotificationSummary({
         priority: 1,
         severity: "danger",
         projectName: "가입 승인 대기",
+        isRead: false,
+        readAt: null,
       }))
     : [];
 
@@ -288,6 +336,8 @@ export function calculateNotificationSummary({
       severity: "info",
       projectName: getProjectName(projects, activity.project_id),
       actor: activity.employee_name,
+      isRead: false,
+      readAt: null,
     }));
 
   const allItems = [
@@ -408,8 +458,7 @@ export async function loadNotificationSummary(
     : { data: [], error: null };
   if (projectResult.error) return { data: null, error: projectResult.error };
 
-  return {
-    data: calculateNotificationSummary({
+  const summary = calculateNotificationSummary({
       tasks: (taskResult.data ?? []) as NotificationTask[],
       projects: (projectResult.data ?? []) as NotificationProject[],
       shipments: (shipmentResult.data ?? []) as NotificationShipment[],
@@ -417,7 +466,28 @@ export async function loadNotificationSummary(
       activities: (activityResult.data ?? []) as ActivityRow[],
       currentEmployee,
       limit,
-    }),
+    });
+  const notificationIds = summary.items.map((item) => item.id);
+  const readResult = notificationIds.length === 0
+    ? { data: [], error: null }
+    : await supabase
+        .from("notification_reads")
+        .select("notification_id, read_at")
+        .in("notification_id", notificationIds);
+  if (readResult.error) return { data: null, error: readResult.error };
+
+  const readById = new Map(
+    ((readResult.data ?? []) as NotificationReadRow[]).map((row) => [row.notification_id, row.read_at])
+  );
+  summary.items = summary.items.map((item) => ({
+    ...item,
+    isRead: readById.has(item.id),
+    readAt: readById.get(item.id) ?? null,
+  }));
+  summary.unreadCount = summary.items.filter((item) => !item.isRead).length;
+
+  return {
+    data: summary,
     error: null,
   };
 }

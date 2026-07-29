@@ -1,5 +1,23 @@
 # CHANGELOG
 
+## Sprint 5-11D Security Grant Hardening
+
+- 운영 DB에서 Core 테이블의 `authenticated` 역할에 `TRUNCATE`, `REFERENCES`, `TRIGGER` 권한이 남아 있음을 실제 확인
+- Core RLS와 정상 CRUD grants는 유지하면서 불필요한 세 table-level 권한을 운영 DB에서 회수
+- 긴급 복원용 rollback SQL과 `pg_class`, table grants, `pg_policies` 검증 SQL 추가
+- 적용 후 네 테이블에서 세 권한이 모두 false이고 기존 14개 Core 정책이 유지됨을 검증
+- 운영 적용 및 검증 결과를 `DATABASE.md`, `OPERATIONS.md`와 동기화
+
+## Sprint 5-11B Core RLS 통합 및 문서 동기화
+
+- `projects`, `tasks`, `shipments`, `activity_logs`의 기존 운영 정책을 migration 적용 시 백업한 뒤 ERP 역할 기반 정책으로 통합
+- Core RLS를 `is_approved_erp_user()`, `can_manage_projects()`, `can_edit_tasks()`, `is_approved_admin()` 기준으로 통일
+- Viewer 조회 전용, Staff 업무·출고 편집, Manager 프로젝트 관리, Admin 삭제 권한으로 정리
+- SECURITY DEFINER `delete_project_task()`의 삭제 권한을 Admin 전용으로 강화
+- 운영 적용 후 정책과 grants를 확인할 수 있는 검증 SQL 추가
+- `DATABASE.md`, `PROJECT_CONTEXT.md`, `ROADMAP.md`를 최신 권한 정책과 동기화
+- 운영 `pg_policies` 직접 조회는 DB 연결 정보 부재로 수행하지 못했으며, 적용 시 백업 및 검증 SQL로 실제 차이를 확인하도록 구성
+
 ## Sprint DB-2 Foreign Key Audit & Integrity
 
 -   실제 CSV 기준 FK가 `project_files.project_id -> projects.id` 1개뿐임을 재확인
@@ -133,3 +151,32 @@
 -   components/ui/Button.tsx 추가
 -   Dashboard 및 Project Detail 일부 UI 컴포넌트 전환
 -   Project Detail 한글 문자열 복구
+# Sprint 6-2
+
+- UAT Seed의 평문 비밀번호 제거 및 환경변수 주입 방식 적용
+- 운영 project ref 일치와 환경정보 누락 시 Seed를 차단하는 `scripts/seed-uat-accounts.mjs` 추가
+- Pending/Rejected 계정을 active 상태로 맞추고 승인 상태에서 차단되도록 Seed/Verification 기준 정정
+- 연결된 Supabase가 Production으로 확인되어 Seed 및 실제 역할별 UAT는 BLOCKED로 기록
+
+# Sprint 6-3
+
+- 정확한 Production project ref와 명시적 승인 플래그가 있을 때만 동작하는 Seed 예외 추가
+- Seed `--dry-run` preflight와 `[UAT]` 계정 식별 규칙 추가
+- 별도 승인 플래그 및 dry-run을 요구하는 UAT Cleanup 도구 추가
+- DB URL과 UAT 비밀번호가 없어 실제 Seed/Verification/UAT는 BLOCKED로 기록
+
+# Sprint 6-4
+
+- UAT Seed/Cleanup의 DB URL, `psql`, `auth.users` 직접 SQL 의존성 제거
+- Supabase JavaScript Admin API `createUser()` / `deleteUser()` 방식으로 전환
+- Seed 전체 사전 중복 검사, 실패 시 생성 계정 보상 삭제, 실행 후 Verification 추가
+- Cleanup dry-run과 `[UAT]` 데이터 → employees → Auth 삭제 및 잔존 계정 검증 유지
+- Seed/Cleanup SQL 제거, 읽기 전용 Verification SQL 유지
+
+# Sprint 6-5
+
+- 내부 ERP 가입 흐름을 `가입 요청 → 관리자 승인 → 로그인`으로 단순화하고 이메일 인증 의존성 제거
+- 가입 전 Auth/employees 조합과 승인·활성 상태를 구분하는 상태 API 및 사용자 안내 추가
+- 가입 성공 직후 세션 종료와 로그인/AppShell의 승인 대기·거절·비활성·직원 정보 없음 차단 보강
+- 관리자 승인 시 Auth 존재·이메일·연결 상태를 검증하고 불완전 계정을 가입 요청 목록에 표시
+- 직원 비활성화와 서버 전용 Admin API 기반 완전 삭제를 분리하고 삭제 전후 잔존 상태 검증 추가

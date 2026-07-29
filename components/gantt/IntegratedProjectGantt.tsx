@@ -2002,6 +2002,18 @@ export function IntegratedProjectGantt({
     () => buildGroupedView(rows, viewType, collapsedViewGroups),
     [collapsedViewGroups, rows, viewType]
   );
+  const projectRowBackgrounds = useMemo(() => {
+    const backgrounds = new Map<string, string>();
+    let projectIndex = 0;
+
+    displayItems.forEach((item) => {
+      if (item.kind !== "row") return;
+      backgrounds.set(item.row.rowKey, projectIndex % 2 === 0 ? "bg-[#FAFAFA]" : "bg-white");
+      projectIndex += 1;
+    });
+
+    return backgrounds;
+  }, [displayItems]);
 
   function changeViewType(nextViewType: GanttViewType) {
     if (
@@ -2771,10 +2783,10 @@ export function IntegratedProjectGantt({
                     if (node) projectRowRefs.current.set(row.project.id, node);
                     else projectRowRefs.current.delete(row.project.id);
                   }}
-                  className={`grid grid-cols-[minmax(0,1fr)_90px_70px] items-center gap-3 border-b border-slate-100 px-4 transition-colors last:border-b-0 ${
+                  className={`grid grid-cols-[minmax(0,1fr)_90px_70px] items-center gap-3 border-b border-t-2 border-b-slate-200 border-t-slate-300 px-4 transition-colors ${
                     highlightedProjectId === row.project.id
                       ? "bg-amber-100"
-                      : "bg-white"
+                      : projectRowBackgrounds.get(row.rowKey)
                   }`}
                   style={{ height: row.rowHeight }}
                 >
@@ -2930,13 +2942,13 @@ export function IntegratedProjectGantt({
                   {timelineColumns.map((column, index) => (
                     <div
                       key={column.key}
-                      className={`absolute top-0 h-full border-r ${
+                      className={`pointer-events-none absolute top-0 z-[1] h-full border-r ${
                         column.date === null
                           ? "border-slate-200 bg-slate-100/80"
                           : column.date === today
                             ? "border-l-2 border-l-blue-500 border-r-slate-100 bg-blue-50/20"
                           : isWeekend(column.date)
-                            ? "border-slate-100 bg-slate-50/70"
+                            ? "border-slate-200 bg-[#F5F9FF]/80"
                             : "border-slate-100"
                       }`}
                       style={{
@@ -2976,7 +2988,7 @@ export function IntegratedProjectGantt({
                         const memoDate = getTimelineColumnAtOffset(event.clientX - bounds.left)?.column.date;
                         if (memoDate) openProjectMemo(row.project, memoDate);
                       }}
-                      className="relative border-b border-slate-100 transition-colors duration-150 last:border-b-0"
+                      className={`relative border-b border-t-2 border-b-slate-200 border-t-slate-300 transition-colors duration-150 ${projectRowBackgrounds.get(row.rowKey)}`}
                       style={{ height: row.rowHeight }}
                     >
                       {projectMemos

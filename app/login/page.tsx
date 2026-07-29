@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useState, useSyncExternalStore } from "react";
 import { supabase } from "@/lib/supabase";
 import { logActivity } from "@/lib/activity";
 
@@ -11,6 +11,19 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
+  const redirectedStatus = useSyncExternalStore(
+    () => () => undefined,
+    () => new URLSearchParams(window.location.search).get("status"),
+    () => null
+  );
+  const statusMessages: Record<string, string> = {
+    pending: "관리자 승인 대기 중입니다.",
+    rejected: "가입 요청이 승인되지 않았습니다. 관리자에게 문의하세요.",
+    missing_employee: "가입 정보가 불완전합니다. 관리자에게 문의하세요.",
+    inactive: "비활성화된 계정입니다. 관리자에게 문의하세요.",
+    authorization_error: "로그인 권한을 확인하지 못했습니다. 관리자에게 문의하세요.",
+  };
+  const visibleErrorMessage = errorMessage || statusMessages[redirectedStatus ?? ""] || "";
 
   async function handleLogin() {
   if (!email.trim()) {
@@ -98,9 +111,9 @@ export default function LoginPage() {
           {loading ? "로그인 중..." : "로그인"}
         </button>
 
-        {errorMessage && (
+        {visibleErrorMessage && (
           <p className="mt-4 rounded-xl bg-red-50 p-3 text-sm text-red-700">
-            {errorMessage}
+            {visibleErrorMessage}
           </p>
         )}
 

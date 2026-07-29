@@ -1,5 +1,6 @@
 import { createSupabaseServerClient } from "@/lib/supabase-server";
 import { getEmployeeByAuth } from "@/lib/auth";
+import { isAuthorizedEmployee } from "@/lib/permissions";
 import {
   createSupabaseAdminClient,
   findAuthUserByEmail,
@@ -13,9 +14,7 @@ async function requireAdmin() {
   const result = await getEmployeeByAuth(client, user);
   return {
     client,
-    authorized: result.employee?.role === "admin" &&
-      result.employee.active !== false &&
-      result.employee.approval_status === "approved",
+    authorized: result.employee?.role === "admin" && isAuthorizedEmployee(result.employee),
   };
 }
 

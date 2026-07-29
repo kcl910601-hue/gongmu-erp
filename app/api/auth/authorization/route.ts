@@ -1,5 +1,6 @@
 import { createSupabaseServerClient } from "@/lib/supabase-server";
 import { getEmployeeByAuth } from "@/lib/auth";
+import { getEmployeeAuthorizationStatus } from "@/lib/permissions";
 
 export async function GET() {
   const supabase = await createSupabaseServerClient();
@@ -18,20 +19,9 @@ export async function GET() {
   }
   const employee = employeeResult.employee;
 
-  if (!employee) {
-    return Response.json({ status: "missing_employee" }, { status: 403 });
-  }
-
-  if (employee.approval_status === "rejected") {
-    return Response.json({ status: "rejected" }, { status: 403 });
-  }
-
-  if (employee.approval_status !== "approved") {
-    return Response.json({ status: "pending" }, { status: 403 });
-  }
-
-  if (employee.active === false) {
-    return Response.json({ status: "inactive" }, { status: 403 });
+  const status = getEmployeeAuthorizationStatus(employee);
+  if (status !== "approved" || !employee) {
+    return Response.json({ status }, { status: 403 });
   }
 
   return Response.json({ status: "approved", role: employee.role });

@@ -6,7 +6,9 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "seed:uat": "node scripts/seed-uat-accounts.mjs",
+    "cleanup:uat": "node scripts/cleanup-uat-accounts.mjs"
   },
   "dependencies": {
     "@radix-ui/react-popover": "^1.1.21",

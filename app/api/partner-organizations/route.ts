@@ -1,5 +1,6 @@
 import { createSupabaseServerClient } from "@/lib/supabase-server";
 import { getEmployeeByAuth } from "@/lib/auth";
+import { hasPermission, isAuthorizedEmployee } from "@/lib/permissions";
 
 type PartnerPayload = {
   id?: unknown;
@@ -8,18 +9,16 @@ type PartnerPayload = {
   is_active?: unknown;
 };
 
-async function getAdminContext() {
+async function getSettingsContext() {
   const supabase = await createSupabaseServerClient();
   const authResult = await supabase.auth.getUser();
   console.log("partner organizations auth result:", authResult);
   const { data: { user } } = authResult;
-  if (!user) return { supabase, admin: null, partnerCategoryId: null };
+  if (!user) return { supabase, employee: null, partnerCategoryId: null };
 
   const employeeResult = await getEmployeeByAuth(supabase, user);
   console.log("partner organizations employee query result:", employeeResult);
-  const admin = employeeResult.employee?.role === "admin" &&
-    employeeResult.employee.active !== false &&
-    employeeResult.employee.approval_status === "approved"
+  const employee = isAuthorizedEmployee(employeeResult.employee)
     ? employeeResult.employee
     : null;
 
@@ -30,7 +29,7 @@ async function getAdminContext() {
     .maybeSingle();
   console.log("partner organizations category query result:", categoryResult);
 
-  return { supabase, admin, partnerCategoryId: categoryResult.data?.id ?? null };
+  return { supabase, employee, partnerCategoryId: categoryResult.data?.id ?? null };
 }
 
 function parseSortOrder(value: unknown) {
@@ -51,8 +50,8 @@ function errorResponse(error: unknown, status = 500) {
 
 export async function GET() {
   try {
-    const { supabase, admin, partnerCategoryId } = await getAdminContext();
-    if (!admin) return Response.json({ error: "관리자 권한이 필요합니다." }, { status: 403 });
+    const { supabase, employee, partnerCategoryId } = await getSettingsContext();
+    if (!employee || !hasPermission(employee.role, "manage_settings")) return Response.json({ error: "설정 관리 권한이 필요합니다." }, { status: 403 });
     if (!partnerCategoryId) return Response.json({ error: "협력업체 카테고리를 찾을 수 없습니다." }, { status: 500 });
 
     const { data, error } = await supabase
@@ -73,8 +72,8 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
-    const { supabase, admin, partnerCategoryId } = await getAdminContext();
-    if (!admin) return Response.json({ error: "관리자 권한이 필요합니다." }, { status: 403 });
+    const { supabase, employee, partnerCategoryId } = await getSettingsContext();
+    if (!employee || !hasPermission(employee.role, "manage_settings")) return Response.json({ error: "설정 관리 권한이 필요합니다." }, { status: 403 });
     if (!partnerCategoryId) return Response.json({ error: "협력업체 카테고리를 찾을 수 없습니다." }, { status: 500 });
 
     const body = (await request.json()) as PartnerPayload;
@@ -98,8 +97,8 @@ export async function POST(request: Request) {
 
 export async function PATCH(request: Request) {
   try {
-    const { supabase, admin, partnerCategoryId } = await getAdminContext();
-    if (!admin) return Response.json({ error: "관리자 권한이 필요합니다." }, { status: 403 });
+    const { supabase, employee, partnerCategoryId } = await getSettingsContext();
+    if (!employee || !hasPermission(employee.role, "manage_settings")) return Response.json({ error: "설정 관리 권한이 필요합니다." }, { status: 403 });
     if (!partnerCategoryId) return Response.json({ error: "협력업체 카테고리를 찾을 수 없습니다." }, { status: 500 });
 
     const body = (await request.json()) as PartnerPayload;
@@ -123,6 +122,31 @@ export async function PATCH(request: Request) {
     return Response.json({ partner: data });
   } catch (error) {
     console.error("partner organization PATCH exception:", error);
+    return errorResponse(error);
+  }
+}
+
+export async function DELETE(request: Request) {
+  try {
+    const { supabase, employee } = await getSettingsContext();
+    if (!employee || employee.role !== "admin") return Response.json({ error: "관리자 권한이 필요합니다." }, { status: 403 });
+
+    const body = (await request.json()) as { id?: unknown; execute?: unknown };
+    const id = typeof body.id === "number" ? body.id : Number(body.id);
+    if (!Number.isInteger(id) || typeof body.execute !== "boolean") {
+      return Response.json({ error: "협력업체 삭제 요청이 올바르지 않습니다." }, { status: 400 });
+    }
+
+    const { data, error } = await supabase.rpc("manage_settings_item", {
+      p_entity: "partner",
+      p_target_id: id,
+      p_execute: body.execute,
+    });
+
+    if (error) return errorResponse(error, error.code === "42501" ? 403 : 500);
+    return Response.json(data);
+  } catch (error) {
+    console.error("partner organization DELETE exception:", error);
     return errorResponse(error);
   }
 }

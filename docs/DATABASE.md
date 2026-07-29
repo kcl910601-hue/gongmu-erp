@@ -1,6 +1,71 @@
 # ERP Database v1
 
-이 문서는 프로젝트 루트의 `db_schema_columns.csv`, `db_foreign_keys.csv`와 로컬 migration 파일을 기준으로 작성합니다. 원격 Supabase DB는 직접 변경하지 않았으며, 존재하지 않는 테이블이나 컬럼은 임의로 추가해 문서화하지 않습니다.
+## Sprint 5-11D Core Table Grants
+
+운영 확인 결과 `authenticated`에 남아 있던 `TRUNCATE`, `REFERENCES`, `TRIGGER`
+권한을 `20260730110000_harden_core_table_grants.sql`로 회수했습니다.
+
+| 테이블 | 유지하는 grants | 회수한 grants |
+| --- | --- | --- |
+| `projects` | SELECT, INSERT, UPDATE, DELETE | TRUNCATE, REFERENCES, TRIGGER |
+| `tasks` | SELECT, INSERT, UPDATE, DELETE | TRUNCATE, REFERENCES, TRIGGER |
+| `shipments` | SELECT, INSERT, UPDATE, DELETE | TRUNCATE, REFERENCES, TRIGGER |
+| `activity_logs` | SELECT, INSERT | TRUNCATE, REFERENCES, TRIGGER |
+
+CRUD table grant는 RLS 정책 실행에 필요한 기반 권한이며 실제 행 접근은 ERP 권한
+함수가 결정합니다. `TRUNCATE`는 RLS가 적용되지 않으므로 authenticated에 부여하지
+않습니다. rollback SQL은 이전 운영 상태 재현이 반드시 필요한 비상 상황에서만
+사용합니다.
+
+운영 적용 후 `pg_class`에서 네 테이블의 RLS enabled 상태를 재확인했고,
+`has_table_privilege()` 기준 세 권한은 모두 false입니다. 기존 Core RLS 정책 14개도
+변경 없이 유지됐습니다.
+
+## Sprint 5-11B 권한 함수 및 Core RLS
+
+공식 DB 권한 판정은 `employees.auth_user_id = auth.uid()`, `active = true`,
+`approval_status = 'approved'`를 공통 전제조건으로 사용합니다.
+
+| 함수 | 허용 대상 | 용도 |
+| --- | --- | --- |
+| `has_erp_role(text[])` | 전달된 역할 목록의 활성·승인 사용자 | 모든 DB 권한 함수의 공통 기반 |
+| `is_approved_erp_user()` | Admin, Manager, Staff, Viewer | ERP 데이터 조회 |
+| `can_manage_projects()` | Admin, Manager | 프로젝트 생성·수정 |
+| `can_edit_tasks()` | Admin, Manager, Staff | 업무와 출고 생성·수정, 활동 로그 기록 |
+| `can_manage_settings()` | Admin, Manager | 설정 데이터 등록·수정 |
+| `is_approved_admin()` | Admin | 삭제 및 관리자 전용 작업 |
+
+알 수 없는 역할, 비활성 사용자, 승인 대기 및 승인 거절 사용자는 위 함수에서
+모두 권한이 없는 것으로 처리합니다.
+
+### Core 테이블 RLS
+
+모든 정책은 `authenticated` role 대상의 PERMISSIVE 정책이며, 실제 허용 여부는
+ERP 권한 함수가 결정합니다.
+
+| 테이블 | SELECT | INSERT | UPDATE | DELETE |
+| --- | --- | --- | --- | --- |
+| `projects` | 승인된 ERP 사용자 | Admin/Manager | Admin/Manager | Admin |
+| `tasks` | 승인된 ERP 사용자 | Admin/Manager/Staff | Admin/Manager/Staff | Admin |
+| `shipments` | 승인된 ERP 사용자 | Admin/Manager/Staff | Admin/Manager/Staff | Admin |
+| `activity_logs` | 승인된 ERP 사용자 | Admin/Manager/Staff | 금지 | 금지 |
+
+`20260730100000_unify_core_rls.sql`은 적용 직전 네 테이블의 `pg_policies`
+내용을 `rls_policy_backups`에 `captured_for = 'sprint-5-11b'`로 보존한 후
+정책을 교체합니다. 백업 테이블은 `anon`, `authenticated`에 공개하지 않습니다.
+
+`delete_project_task()`는 SECURITY DEFINER 함수이므로 테이블 RLS와 별개로
+함수 내부에서 `is_approved_admin()`을 검사합니다.
+
+운영 적용 후에는
+`supabase/verification/20260730101000_verify_core_rls.sql`을 실행해 정책 이름,
+USING, WITH CHECK, 대상 role, permissive 여부, table grants 및 백업 내용을 확인합니다.
+
+Sprint 5-11C/5-11D 운영 확인에서 실제 `pg_policies`, table grants와 RLS 상태를
+조회했습니다. Core 정책 14개와 권한 함수가 운영 DB에 적용되어 있으며, 정책 교체
+전 상태는 `rls_policy_backups`와 운영 검증 결과를 기준으로 추적합니다.
+
+이 문서는 프로젝트 루트의 `db_schema_columns.csv`, `db_foreign_keys.csv`, migration과 운영 검증 결과를 기준으로 작성합니다. 존재하지 않는 테이블이나 컬럼은 임의로 추가해 문서화하지 않습니다.
 
 ## 1. Database Overview
 

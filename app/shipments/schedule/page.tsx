@@ -6,6 +6,7 @@ import { ShipmentSchedulePreview } from "@/components/shipments/ShipmentSchedule
 import { Button } from "@/components/ui/Button";
 import { supabase } from "@/lib/supabase";
 import { printShipmentSchedulePdf, type ShipmentScheduleItem, type ShipmentScheduleOptions } from "@/lib/shipment-schedule-pdf";
+import { resolveShipmentQuantity } from "@/lib/shipment-quantity";
 
 type VendorRelation = {
   id: number;
@@ -21,12 +22,14 @@ type TaskRow = {
   task_type: string | null;
   status: string | null;
   due_date: string | null;
+  quantity: number | null;
   project_assembly_vendor_id: number | null;
 };
 
 type ProjectRow = {
   id: number;
   project_name: string | null;
+  quantity: number | null;
   quantity_unit: string | null;
   memo: string | null;
 };
@@ -158,11 +161,11 @@ export default function ShipmentSchedulePage() {
     const [projectsResult, tasksResult] = await Promise.all([
       supabase
         .from("projects")
-        .select("id, project_name, quantity_unit, memo")
+        .select("id, project_name, quantity, quantity_unit, memo")
         .in("id", projectIds),
       supabase
         .from("tasks")
-        .select("id, task_name, task_type, status, due_date, project_assembly_vendor_id")
+        .select("id, task_name, task_type, status, due_date, quantity, project_assembly_vendor_id")
         .ilike("task_type", "%출고%")
         .gte("due_date", monthStart)
         .lt("due_date", nextMonthStart)
@@ -184,6 +187,7 @@ export default function ShipmentSchedulePage() {
       task_type: task.task_type,
       status: task.status,
       due_date: task.due_date,
+      quantity: task.quantity,
       project_assembly_vendor_id: task.project_assembly_vendor_id,
     })));
     const relationIdSet = new Set(relationIds);
@@ -205,6 +209,7 @@ export default function ShipmentSchedulePage() {
         task_type: task.task_type,
         status: task.status,
         due_date: task.due_date,
+        quantity: task.quantity,
         project_assembly_vendor_id: task.project_assembly_vendor_id,
       })),
       nullVendorTaskIds: monthlyShipmentTasks
@@ -229,7 +234,7 @@ export default function ShipmentSchedulePage() {
         shipmentDate: task.due_date?.slice(0, 10) ?? "",
         projectName: project?.project_name || "현장명 없음",
         taskName: task.task_name || "출고",
-        quantity: assignment?.allocatedQuantity ?? null,
+        quantity: resolveShipmentQuantity(task.quantity, project?.quantity),
         quantityUnit: project?.quantity_unit ?? null,
         memo: project?.memo ?? null,
       };

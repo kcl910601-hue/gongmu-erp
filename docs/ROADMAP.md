@@ -1,5 +1,15 @@
 # 개발 로드맵
 
+## Sprint 진행 현황
+
+- [x] Sprint 5-11A: UI → API → RPC → RLS 권한 및 인증 기준 통합
+- [x] Sprint 5-11B: Core RLS 통합 migration 및 권한 문서 동기화
+- [ ] Sprint 5-12: 협력업체 Active 통합
+  - Quick Create 비활성 업체 제외
+  - PDF 업체 선택 비활성 업체 제외
+  - Project Filter 정책 정리
+  - 공통 Active 조회 함수 적용
+
 ## v0.9 (현재)
 
 -   로그인

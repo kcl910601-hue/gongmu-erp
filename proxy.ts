@@ -1,7 +1,7 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 import { getEmployeeByAuth } from "@/lib/auth";
-import { canAccessRoute } from "@/lib/permissions";
+import { canAccessRoute, isAuthorizedEmployee } from "@/lib/permissions";
 
 const PUBLIC_PATHS = ["/login", "/signup"];
 
@@ -41,10 +41,7 @@ export async function proxy(request: NextRequest) {
 
   const { employee } = await getEmployeeByAuth(supabase, user);
 
-  const isApproved =
-    employee?.approval_status === "approved" && employee.active !== false;
-
-  if (!isApproved && !isPublic) {
+  if (!isAuthorizedEmployee(employee)) {
     const redirectResponse = NextResponse.redirect(new URL("/login", request.url));
     response.cookies.getAll().forEach((cookie) =>
       redirectResponse.cookies.set(cookie.name, cookie.value)

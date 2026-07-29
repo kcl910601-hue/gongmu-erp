@@ -24,6 +24,7 @@ type ActivityTimelineProps = {
   compact?: boolean;
   historyOnly?: boolean;
   defaultHistoryFilter?: HistoryFilter;
+  onCountChange?: (count: number) => void;
 };
 
 function getActivityIconStyle(activityType: string) {
@@ -72,6 +73,7 @@ export default function ActivityTimeline({
   compact = false,
   historyOnly = false,
   defaultHistoryFilter = "all",
+  onCountChange,
 }: ActivityTimelineProps) {
   const [activities, setActivities] = useState<ActivityLog[]>([]);
   const [expandedIds, setExpandedIds] = useState<Set<number>>(() => new Set());
@@ -119,6 +121,10 @@ export default function ActivityTimeline({
         .slice(0, limit),
     [activities, historyFilter, historyOnly, limit]
   );
+
+  useEffect(() => {
+    onCountChange?.(visibleActivities.length);
+  }, [onCountChange, visibleActivities.length]);
 
   if (loading) {
     return <p className="py-6 text-center text-sm text-slate-400">불러오는 중...</p>;

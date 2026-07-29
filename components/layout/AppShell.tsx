@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 
 import { usePathname, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { getEmployeeByAuth, type CurrentEmployee } from "@/lib/auth";
-import { hasPermission } from "@/lib/permissions";
+import { getEmployeeAuthorizationStatus, hasPermission, isAuthorizedEmployee } from "@/lib/permissions";
 import { AppShellUserProvider } from "@/contexts/AppShellUserContext";
 import Header from "./Header";
 import Sidebar from "./Sidebar";
@@ -64,6 +64,16 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       setAuthEmail(session.user.email ?? null);
       const result = await getEmployeeByAuth(supabase, session.user);
       if (!isMounted) return;
+      if (result.error || !isAuthorizedEmployee(result.employee)) {
+        const authorizationStatus = result.error ? "authorization_error" : getEmployeeAuthorizationStatus(result.employee);
+        setEmployee(null);
+        setAuthUserId(null);
+        setAuthEmail(null);
+        setIsUserLoading(false);
+        await supabase.auth.signOut();
+        if (isMounted) router.replace(`/login?status=${authorizationStatus}`);
+        return;
+      }
       setEmployee(result.employee);
       setIsUserLoading(false);
     }
@@ -127,7 +137,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       <Sidebar />
       <main
         className={`min-h-screen flex-1 bg-slate-50 transition-all duration-300 ${
-          isCollapsed ? "ml-16" : "ml-64"
+          isCollapsed ? "ml-14" : "ml-52"
         }`}
       >
         <Header onSearchClick={openSearch} />

@@ -1,8 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { Trash2 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
+import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
+import { usePermission } from "@/hooks/usePermission";
 import { getActiveProcessTypes, normalizeProcessTypeCode } from "@/lib/process-types";
+import { manageSettingsItem } from "@/lib/settings-deletion";
+import { toast } from "@/lib/toast";
 
 type TaskTemplate = {
   id: number;
@@ -22,6 +27,10 @@ export default function SettingsPage() {
   const [taskType, setTaskType] = useState("발주");
   const [taskOrder, setTaskOrder] = useState(1);
   const [isSaving, setIsSaving] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<TaskTemplate | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const { role } = usePermission();
+  const canDelete = role === "admin";
 
   const loadTemplates = useCallback(async function loadTemplates() {
     if (!selectedProcess) {
@@ -100,6 +109,45 @@ export default function SettingsPage() {
    setTaskName("");
 
     loadTemplates();
+  }
+
+  async function prepareDelete(template: TaskTemplate) {
+    if (!canDelete || isDeleting) return;
+    setIsDeleting(true);
+    try {
+      const result = await manageSettingsItem("task_template", template.id, false);
+      if (!result.success || result.action === "blocked") {
+        toast.error(result.message);
+        return;
+      }
+      setDeleteTarget(template);
+    } catch (error) {
+      console.error("task template delete inspection error:", error);
+      toast.error("삭제하지 못했습니다. 잠시 후 다시 시도해주세요.");
+    } finally {
+      setIsDeleting(false);
+    }
+  }
+
+  async function confirmDelete() {
+    if (!deleteTarget || isDeleting) return;
+    const target = deleteTarget;
+    setIsDeleting(true);
+    try {
+      const result = await manageSettingsItem("task_template", target.id, true);
+      if (!result.success || result.action !== "deleted") {
+        toast.error(result.message || "삭제하지 못했습니다. 잠시 후 다시 시도해주세요.");
+        return;
+      }
+      setTemplates((current) => current.filter((template) => template.id !== target.id));
+      toast.success(`"${target.task_name || "업무 템플릿"}"이 삭제되었습니다.`);
+      setDeleteTarget(null);
+    } catch (error) {
+      console.error("task template delete error:", error);
+      toast.error("삭제하지 못했습니다. 잠시 후 다시 시도해주세요.");
+    } finally {
+      setIsDeleting(false);
+    }
   }
 
   return (
@@ -197,6 +245,7 @@ export default function SettingsPage() {
                 <th className="p-3 text-left">업무명</th>
                 <th className="p-3 text-left">업무유형</th>
                 <th className="p-3 text-left">생성일</th>
+                {canDelete && <th className="p-3 text-right">관리</th>}
               </tr>
             </thead>
 
@@ -213,12 +262,26 @@ export default function SettingsPage() {
                       ? template.created_at.slice(0, 10)
                       : "-"}
                   </td>
+                  {canDelete && (
+                    <td className="p-3 text-right">
+                      <button
+                        type="button"
+                        title="업무 템플릿 삭제"
+                        aria-label={`${template.task_name || "업무 템플릿"} 삭제`}
+                        disabled={isDeleting}
+                        onClick={() => void prepareDelete(template)}
+                        className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 text-slate-400 transition-colors hover:border-red-200 hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        <Trash2 size={15} />
+                      </button>
+                    </td>
+                  )}
                 </tr>
               ))}
 
               {templates.length === 0 && (
                 <tr>
-                  <td colSpan={4} className="p-8 text-center text-slate-500">
+                  <td colSpan={canDelete ? 5 : 4} className="p-8 text-center text-slate-500">
                     등록된 업무 템플릿이 없습니다.
                   </td>
                 </tr>
@@ -227,6 +290,19 @@ export default function SettingsPage() {
           </table>
         )}
       </div>
+      <ConfirmDialog
+        open={deleteTarget !== null}
+        title="업무 템플릿 삭제"
+        description={`"${deleteTarget?.task_name || "업무 템플릿"}" 항목을 삭제하시겠습니까?\n삭제한 데이터는 복구할 수 없습니다.\n기존 프로젝트에 생성된 업무는 유지됩니다.`}
+        confirmLabel="삭제"
+        danger
+        isPending={isDeleting}
+        onConfirm={() => void confirmDelete()}
+        onClose={() => {
+          if (isDeleting) return;
+          setDeleteTarget(null);
+        }}
+      />
     </div>
   );
 }

@@ -29,8 +29,38 @@ export default function SignupPage() {
     }
 
     setLoading(true);
+    const normalizedEmail = email.trim().toLowerCase();
+    const statusResponse = await fetch("/api/signup/status", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: normalizedEmail }),
+    });
+    const statusResult = (await statusResponse.json()) as { status?: string; approvalStatus?: string; active?: boolean; error?: string };
+    if (!statusResponse.ok) {
+      setLoading(false);
+      setErrorMessage(statusResult.error ?? "가입 상태를 확인하지 못했습니다.");
+      return;
+    }
+    const statusMessages: Record<string, string> = {
+      auth_only_incomplete: "가입 정보가 불완전합니다. 관리자에게 문의하세요.",
+      employee_only_missing_auth: "인증 계정 연결이 필요합니다. 관리자에게 문의하세요.",
+    };
+    if (statusResult.status === "linked") {
+      setLoading(false);
+      if (statusResult.approvalStatus === "pending") setErrorMessage("이미 가입 요청이 접수되어 승인 대기 중입니다.");
+      else if (statusResult.approvalStatus === "rejected") setErrorMessage("가입 요청이 거절된 계정입니다. 관리자에게 문의하세요.");
+      else if (statusResult.active === false) setErrorMessage("비활성화된 계정입니다. 관리자에게 문의하세요.");
+      else setErrorMessage("이미 가입된 계정입니다. 로그인해 주세요.");
+      return;
+    }
+    if (statusResult.status !== "not_found") {
+      setLoading(false);
+      setErrorMessage(statusMessages[statusResult.status ?? ""] ?? "가입 상태를 확인할 수 없습니다. 관리자에게 문의하세요.");
+      return;
+    }
+
     const { data, error } = await supabase.auth.signUp({
-      email: email.trim().toLowerCase(),
+      email: normalizedEmail,
       password,
       options: { data: { name: name.trim() } },
     });
@@ -40,17 +70,27 @@ export default function SignupPage() {
       const isDuplicate =
         data.user?.identities?.length === 0 ||
         error?.message.toLowerCase().includes("already");
-      setErrorMessage(
-        isDuplicate
-          ? "이미 가입되었거나 승인 대기 중인 이메일입니다."
-          : "가입 요청을 처리하지 못했습니다. 입력 정보를 확인해주세요."
-      );
+      if (isDuplicate) {
+        const retryResponse = await fetch("/api/signup/status", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email: normalizedEmail }),
+        });
+        const retryResult = (await retryResponse.json()) as { status?: string; approvalStatus?: string };
+        if (retryResult.status === "linked" && retryResult.approvalStatus === "pending") {
+          setErrorMessage("이미 가입 요청이 접수되어 승인 대기 중입니다.");
+        } else {
+          setErrorMessage(statusMessages[retryResult.status ?? ""] ?? "이미 등록된 이메일입니다. 관리자에게 문의하세요.");
+        }
+      } else {
+        setErrorMessage("가입 요청을 처리하지 못했습니다. 입력 정보를 확인해주세요.");
+      }
       return;
     }
 
     await supabase.auth.signOut();
     setMessage(
-      "가입 요청이 접수되었습니다. 관리자 승인 후 로그인할 수 있습니다."
+      "가입 요청이 완료되었습니다. 관리자 승인 후 로그인할 수 있습니다."
     );
     setPassword("");
     setPasswordConfirm("");

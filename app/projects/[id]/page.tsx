@@ -1,8 +1,8 @@
 ﻿"use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
-import { ChevronDown, ChevronRight, GripVertical, Plus, Star } from "lucide-react";
+import { ChevronDown, ChevronRight, GripVertical, NotebookPen, Plus, Star } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { addActivity } from "@/lib/activity";
 import {
@@ -23,6 +23,7 @@ import { Button } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ProgressBar } from "@/components/ui/ProgressBar";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
+import { CollapsibleSection } from "@/components/ui/CollapsibleSection";
 import { DatePicker } from "@/components/common/DatePicker";
 import { ProjectFiles } from "@/components/files/ProjectFiles";
 import ActivityTimeline from "@/components/activity/ActivityTimeline";
@@ -39,9 +40,12 @@ import {
 import { toast } from "@/lib/toast";
 import { getProjectEntryOptions } from "@/lib/project-master-data";
 import { AssemblyVendorMultiSelect } from "@/components/projects/AssemblyVendorMultiSelect";
+import { TaskNotesDrawer, type TaskNote, type TaskNoteSummary } from "@/components/projects/TaskNotesDrawer";
+import { getCurrentEmployee } from "@/lib/auth";
 import { getProjectAssemblyVendors, updateProjectAssemblyVendorQuantity, updateProjectWithVendors } from "@/lib/project-assembly-vendors";
 import { formatProjectQuantity, parseProjectQuantity } from "@/lib/project-quantity";
 import { PROJECT_SELECT_FIELDS } from "@/lib/projects";
+import { getShipmentQuantitySummary, isShipmentQuantityTask, resolveShipmentQuantity } from "@/lib/shipment-quantity";
 import { assignTaskOrdersByCurrentSequence, persistRecalculatedTaskOrders, sortTasksBySchedule } from "@/lib/task-ordering";
 import type { ProcessType } from "@/types/process-type";
 import type { ProjectAssemblyVendor, ProjectSection } from "@/types/project-section";
@@ -82,6 +86,7 @@ type Task = {
   task_order: number | null;
   task_type: string | null;
   task_name: string | null;
+  quantity: number | null;
   assignee: string | null;
   status: string | null;
   start_date: string | null;
@@ -102,6 +107,13 @@ type Employee = {
 };
 
 const statusList = ["pending", "in_progress", "completed"];
+const taskNotePreviewTimeFormatter = new Intl.DateTimeFormat("ko-KR", {
+  month: "2-digit",
+  day: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+  hour12: false,
+});
 
 export default function ProjectDetail() {
   const params = useParams();
@@ -138,6 +150,14 @@ export default function ProjectDetail() {
   const [showTaskModal, setShowTaskModal] = useState(false);
   const [isSavingTask, setIsSavingTask] = useState(false);
   const [draggingTaskId, setDraggingTaskId] = useState<number | null>(null);
+  const [taskQuantityDrafts, setTaskQuantityDrafts] = useState<Record<number, string>>({});
+  const [taskNoteSummaries, setTaskNoteSummaries] = useState<Map<number, TaskNoteSummary>>(new Map());
+  const [noteTask, setNoteTask] = useState<Task | null>(null);
+  const [isRecentActivityOpen, setIsRecentActivityOpen] = useState(false);
+  const [isChangeHistoryOpen, setIsChangeHistoryOpen] = useState(false);
+  const [isTimelineOpen, setIsTimelineOpen] = useState(false);
+  const [recentActivityCount, setRecentActivityCount] = useState(0);
+  const [changeHistoryCount, setChangeHistoryCount] = useState(0);
   const [favoriteUserScope, setFavoriteUserScope] = useState<string | null>(null);
   const [isFavorite, setIsFavorite] = useState(false);
 
@@ -163,7 +183,21 @@ export default function ProjectDetail() {
     start_date: "",
     due_date: "",
     status: "pending",
+    note: "",
+    quantity: "",
   });
+
+  const shipmentQuantitySummary = useMemo(() => getShipmentQuantitySummary({
+    projectQuantity: project?.quantity ?? null,
+    tasks,
+  }), [project?.quantity, tasks]);
+
+  const newTaskInputQuantity = taskForm.quantity.trim() === "" ? null : Number(taskForm.quantity);
+  const newTaskShipmentSummary = useMemo(() => getShipmentQuantitySummary({
+    projectQuantity: project?.quantity ?? null,
+    tasks,
+    inputQuantity: Number.isFinite(newTaskInputQuantity) ? newTaskInputQuantity : null,
+  }), [newTaskInputQuantity, project?.quantity, tasks]);
 
 
   const loadProject = useCallback(async function loadProject() {
@@ -216,8 +250,40 @@ export default function ProjectDetail() {
       return;
     }
 
-    setTasks((taskData || []) as unknown as Task[]);
+    const loadedTasks = (taskData || []) as unknown as Task[];
+    setTasks(loadedTasks);
     setOpenVendorIds(new Set(vendorResult.data.map((vendor) => vendor.id)));
+    setTaskNoteSummaries(new Map());
+
+    if (loadedTasks.length > 0) {
+      const { data: noteData, error: noteError } = await supabase
+        .from("task_notes")
+        .select("id, task_id, note, created_at, created_by, created_by_name")
+        .in("task_id", loadedTasks.map((task) => task.id))
+        .order("created_at", { ascending: false });
+
+      if (noteError) {
+        console.error("task note count load error:", noteError.message);
+      } else {
+        const summaries = new Map<number, TaskNoteSummary>();
+        (noteData ?? []).forEach((note) => {
+          const taskId = Number(note.task_id);
+          const current = summaries.get(taskId);
+          summaries.set(taskId, {
+            count: (current?.count ?? 0) + 1,
+            latestNote: current?.latestNote ?? {
+              id: String(note.id),
+              note: String(note.note),
+              createdAt: String(note.created_at),
+              createdByName: note.created_by_name ? String(note.created_by_name) : null,
+            },
+          });
+        });
+        setTaskNoteSummaries(summaries);
+      }
+    } else {
+      setTaskNoteSummaries(new Map());
+    }
 
     const [sectionResult, processTypeResult, entryOptionResult] = await Promise.all([
       getProjectSections(Number(projectId)),
@@ -254,6 +320,15 @@ export default function ProjectDetail() {
       active: true,
     })));
   }, [projectId]);
+
+  const handleTaskNoteSummaryChange = useCallback((taskId: number, summary: TaskNoteSummary) => {
+    setTaskNoteSummaries((current) => {
+      const next = new Map(current);
+      if (summary.count > 0) next.set(taskId, summary);
+      else next.delete(taskId);
+      return next;
+    });
+  }, []);
 
   useEffect(() => {
     if (!projectId) return;
@@ -344,7 +419,7 @@ export default function ProjectDetail() {
   }
 
   function isShipmentTask(task: Task) {
-    return (task.task_type || "").includes("출고");
+    return isShipmentQuantityTask(task);
   }
 
   function getNextShipmentTask(completedTask: Task, candidateTasks: Task[]) {
@@ -444,7 +519,7 @@ export default function ProjectDetail() {
         task_id: task.id,
         site_name: project.project_name,
         item_name: task.task_name || "출고항목",
-        quantity: null,
+        quantity: resolveShipmentQuantity(task.quantity, project.quantity),
         shipment_date: status === "출고완료" ? today : null,
         vehicle_number: null,
         driver_name: null,
@@ -752,6 +827,7 @@ export default function ProjectDetail() {
           task_order: currentIndex + 2,
           task_name: `${task.task_name || "업무"}(복사본)`,
           task_type: task.task_type,
+          quantity: task.quantity,
           assignee: task.assignee,
           status: "pending",
           start_date: task.start_date,
@@ -803,6 +879,24 @@ export default function ProjectDetail() {
       return;
     }
 
+    const isShipment = taskForm.task_type.includes("출고");
+    const normalizedQuantity = taskForm.quantity.trim();
+    const taskQuantity = normalizedQuantity === "" ? null : Number(normalizedQuantity);
+    if (isShipment && taskQuantity !== null && (!Number.isInteger(taskQuantity) || taskQuantity <= 0)) {
+      toast.warning("출고 수량은 0보다 큰 정수로 입력하세요.");
+      return;
+    }
+    if (isShipment && taskQuantity !== null && newTaskShipmentSummary.projectQuantity === null) {
+      toast.warning("프로젝트 전체 수량을 먼저 확인해주세요.");
+      return;
+    }
+    if (isShipment && taskQuantity !== null && newTaskShipmentSummary.isExceeded) {
+      toast.error(
+        `프로젝트 수량을 초과했습니다. 기존 출고 예정 ${formatProjectQuantity(newTaskShipmentSummary.existingShipmentTotal, project.quantity_unit)}, 현재 입력 ${formatProjectQuantity(taskQuantity, project.quantity_unit)}, 초과 ${formatProjectQuantity(newTaskShipmentSummary.exceededQuantity, project.quantity_unit)}, 최대 입력 가능 ${formatProjectQuantity(newTaskShipmentSummary.maxInputQuantity, project.quantity_unit)}`
+      );
+      return;
+    }
+
     setIsSavingTask(true);
 
     const sectionTasks = tasks.filter((task) =>
@@ -829,6 +923,7 @@ export default function ProjectDetail() {
           task_order: maxOrder + 1,
           task_name: taskForm.task_name.trim(),
           task_type: taskForm.task_type.trim(),
+          quantity: isShipment ? taskQuantity : null,
           assignee: savedAssignee,
           status: taskForm.status,
           start_date: taskForm.start_date || null,
@@ -856,6 +951,44 @@ export default function ProjectDetail() {
     }
     const nextTasks = orderResult.data;
 
+    const normalizedNote = taskForm.note.trim();
+    if (normalizedNote) {
+      const employee = await getCurrentEmployee();
+      const { data: noteData, error: noteError } = await supabase
+        .from("task_notes")
+        .insert({
+          task_id: data.id,
+          note: normalizedNote,
+          created_by_name: employee?.name ?? null,
+        })
+        .select("id, task_id, note, created_at, created_by, updated_at, created_by_name")
+        .single();
+
+      if (noteError) {
+        toast.error(`업무는 생성되었지만 메모를 저장하지 못했습니다. ${noteError.message}`);
+      } else {
+        const createdNote = noteData as TaskNote;
+        handleTaskNoteSummaryChange(data.id, {
+          count: 1,
+          latestNote: {
+            id: createdNote.id,
+            note: createdNote.note,
+            createdAt: createdNote.created_at,
+            createdByName: createdNote.created_by_name,
+          },
+        });
+        void addActivity({
+          type: "task_note_create",
+          title: "업무 메모 등록",
+          description: `${data.task_name || "업무"} 업무에 메모를 등록했습니다.`,
+          projectId: project.id,
+          targetType: "task",
+          targetId: data.id,
+          metadata: { taskNoteId: createdNote.id },
+        });
+      }
+    }
+
     await updateProjectStatus(nextTasks);
 
     setTasks(nextTasks);
@@ -875,12 +1008,78 @@ export default function ProjectDetail() {
       start_date: "",
       due_date: "",
       status: "pending",
+      note: "",
+      quantity: "",
     });
     setShowTaskModal(false);
     setOpenSectionIds((current) => new Set(current).add(selectedTaskSectionId));
     setSelectedTaskVendorId(null);
     setSelectedTaskSectionId(null);
     setIsSavingTask(false);
+  }
+
+  async function updateTaskQuantity(task: Task, rawQuantity: string) {
+    if (isUpdating || !isShipmentTask(task)) return;
+
+    const normalizedQuantity = rawQuantity.trim();
+    const quantity = normalizedQuantity === "" ? null : Number(normalizedQuantity);
+    if (quantity !== null && (!Number.isInteger(quantity) || quantity <= 0)) {
+      toast.warning("출고 수량은 0보다 큰 정수로 입력하세요.");
+      return;
+    }
+    const summary = getShipmentQuantitySummary({
+      projectQuantity: project?.quantity ?? null,
+      tasks,
+      editingTaskId: task.id,
+      inputQuantity: quantity,
+    });
+    if (quantity !== null && summary.projectQuantity === null) {
+      toast.warning("프로젝트 전체 수량을 먼저 확인해주세요.");
+      return;
+    }
+    if (quantity !== null && summary.isExceeded) {
+      toast.error(
+        `프로젝트 수량을 초과했습니다. 기존 출고 예정 ${formatProjectQuantity(summary.existingShipmentTotal, project?.quantity_unit)}, 현재 입력 ${formatProjectQuantity(quantity, project?.quantity_unit)}, 예상 출고 합계 ${formatProjectQuantity(summary.expectedShipmentTotal, project?.quantity_unit)}, 초과 ${formatProjectQuantity(summary.exceededQuantity, project?.quantity_unit)}, 최대 입력 가능 ${formatProjectQuantity(summary.maxInputQuantity, project?.quantity_unit)}`
+      );
+      return;
+    }
+    if (task.quantity === quantity) return;
+
+    setIsUpdating(true);
+    const { error } = await supabase
+      .from("tasks")
+      .update({ quantity })
+      .eq("id", task.id);
+
+    if (error) {
+      toast.error(error.message);
+      setIsUpdating(false);
+      return;
+    }
+
+    const updatedTask = { ...task, quantity };
+    setTasks((current) => current.map((item) => item.id === task.id ? updatedTask : item));
+    setTaskQuantityDrafts((current) => {
+      const next = { ...current };
+      delete next[task.id];
+      return next;
+    });
+    const changes = createAuditChanges(
+      task as unknown as Record<string, unknown>,
+      updatedTask as unknown as Record<string, unknown>,
+      TASK_AUDIT_FIELDS
+    );
+    recordTaskChange(updatedTask);
+    await addActivity({
+      type: "task_update",
+      title: `업무 수정 · ${changes.length}개 항목 변경`,
+      description: `${updatedTask.task_name || "업무"} 출고 수량을 변경했습니다.`,
+      projectId: updatedTask.project_id,
+      targetType: "task",
+      targetId: updatedTask.id,
+      metadata: { changes },
+    });
+    setIsUpdating(false);
   }
 
   async function updateTaskAssignee(taskId: number, newAssignee: string) {
@@ -1892,6 +2091,38 @@ export default function ProjectDetail() {
           </Button>
         </div>
 
+        <div className={`mb-4 rounded-2xl border px-4 py-3 text-sm ${
+          shipmentQuantitySummary.isExceeded
+            ? "border-red-200 bg-red-50 text-red-700"
+            : shipmentQuantitySummary.remainingQuantity !== null
+              && shipmentQuantitySummary.projectQuantity !== null
+              && shipmentQuantitySummary.remainingQuantity > 0
+              && shipmentQuantitySummary.remainingQuantity <= shipmentQuantitySummary.projectQuantity * 0.1
+              ? "border-amber-200 bg-amber-50 text-amber-700"
+              : "border-slate-200 bg-slate-50 text-slate-600"
+        }`}>
+          <div className="font-semibold">
+            출고 예정 {formatProjectQuantity(shipmentQuantitySummary.existingShipmentTotal, project.quantity_unit)} / {formatProjectQuantity(project.quantity, project.quantity_unit)}
+            {shipmentQuantitySummary.remainingQuantity !== null && !shipmentQuantitySummary.isExceeded
+              ? ` · 잔여 ${formatProjectQuantity(Math.max(0, shipmentQuantitySummary.remainingQuantity), project.quantity_unit)}`
+              : ""}
+            {shipmentQuantitySummary.isExceeded
+              ? ` · 초과 ${formatProjectQuantity(shipmentQuantitySummary.exceededQuantity, project.quantity_unit)}`
+              : ""}
+          </div>
+          {shipmentQuantitySummary.projectQuantity !== null
+            && shipmentQuantitySummary.remainingQuantity === 0
+            && <p className="mt-1 text-xs">전체 수량이 출고 예정으로 배정되었습니다.</p>}
+          {shipmentQuantitySummary.hasBlankShipmentTask && shipmentQuantitySummary.hasQuantityShipmentTask && (
+            <p className="mt-1 text-xs text-amber-700">
+              수량이 비어 있는 출고 업무가 있습니다. 해당 업무는 전체 수량으로 출고될 수 있으니 확인해주세요.
+            </p>
+          )}
+          {shipmentQuantitySummary.projectQuantity === null && (
+            <p className="mt-1 text-xs text-amber-700">프로젝트 전체 수량이 없어 출고 예정 수량을 검증할 수 없습니다.</p>
+          )}
+        </div>
+
         <div className="space-y-4">
         {assemblyVendors.map((vendor) => {
           const vendorTasks = tasks.filter((task) => task.project_assembly_vendor_id === vendor.id);
@@ -1976,6 +2207,18 @@ export default function ProjectDetail() {
             <tbody>
               {sectionTasks.map((task, index) => {
                 const dueDateBadge = getDueDateBadge(task);
+                const noteSummary = taskNoteSummaries.get(task.id);
+                const latestNote = noteSummary?.latestNote ?? null;
+                const quantityDraft = taskQuantityDrafts[task.id] ?? task.quantity?.toString() ?? "";
+                const parsedQuantityDraft = quantityDraft.trim() === "" ? null : Number(quantityDraft);
+                const isQuantityDraftInvalid = parsedQuantityDraft !== null
+                  && (!Number.isInteger(parsedQuantityDraft) || parsedQuantityDraft <= 0);
+                const taskShipmentSummary = getShipmentQuantitySummary({
+                  projectQuantity: project.quantity,
+                  tasks,
+                  editingTaskId: task.id,
+                  inputQuantity: Number.isFinite(parsedQuantityDraft) ? parsedQuantityDraft : null,
+                });
 
                 return (
                   <tr
@@ -1993,22 +2236,97 @@ export default function ProjectDetail() {
                     <td className="h-14 px-2 py-2 text-center align-middle text-xs font-medium text-slate-400">
                       {index + 1}
                     </td>
-                    <td className="h-14 px-3 py-2 align-middle">
-                      <div
-                        className={`truncate font-semibold leading-5 ${
-                          isTaskCompleted(task.status)
-                            ? "text-slate-400"
-                            : "text-slate-950"
-                        }`}
-                        title={task.task_name || "-"}
-                      >
-                        {task.task_name || "-"}
+                    <td className="h-16 px-3 py-2 align-middle">
+                      <div className="flex min-w-0 items-center gap-2">
+                        <div
+                          className={`min-w-0 flex-1 truncate font-semibold leading-5 ${
+                            isTaskCompleted(task.status)
+                              ? "text-slate-400"
+                              : "text-slate-950"
+                          }`}
+                          title={task.task_name || "-"}
+                        >
+                          {task.task_name || "-"}
+                        </div>
+                        <button
+                          type="button"
+                          aria-label={`${task.task_name || "업무"} 메모 열기`}
+                          title="업무 메모"
+                          onClick={() => setNoteTask(task)}
+                          className={`flex h-7 shrink-0 items-center gap-1 rounded-lg px-1.5 text-xs font-semibold transition-colors hover:bg-blue-50 ${
+                            (noteSummary?.count ?? 0) > 0 ? "text-blue-600" : "text-slate-400"
+                          }`}
+                        >
+                          <NotebookPen size={15} />
+                          {(noteSummary?.count ?? 0) > 0 && <span>{noteSummary?.count}</span>}
+                        </button>
                       </div>
+                      <button
+                        type="button"
+                        onClick={() => setNoteTask(task)}
+                        aria-label={`${task.task_name || "업무"} 최근 메모 열기`}
+                        title={latestNote?.note || "메모 작성..."}
+                        className={`mt-1 block w-full truncate text-left text-xs leading-4 transition-colors hover:text-blue-600 ${latestNote ? "text-slate-500" : "text-slate-400"}`}
+                      >
+                        {latestNote ? (
+                          <>
+                            <span>{latestNote.note}</span>
+                            <span className="hidden xl:inline"> · {latestNote.createdByName || "작성자 미확인"} · {taskNotePreviewTimeFormatter.format(new Date(latestNote.createdAt))}</span>
+                          </>
+                        ) : "메모 작성..."}
+                      </button>
                     </td>
                     <td className="h-14 px-2 py-2 align-middle">
                       <div className="truncate text-sm leading-5 text-slate-600" title={task.task_type || "-"}>
                         {task.task_type || "-"}
                       </div>
+                      {isShipmentTask(task) && (
+                        <div className="mt-1 flex items-center gap-1">
+                          <input
+                            type="number"
+                            min="1"
+                            step="1"
+                            max={taskShipmentSummary.maxInputQuantity ?? undefined}
+                            inputMode="numeric"
+                            value={quantityDraft}
+                            disabled={isUpdating}
+                            aria-label={`${task.task_name || "업무"} 출고 수량`}
+                            placeholder="비워두면 전체 수량"
+                            onKeyDown={(event) => {
+                              if (event.key === "Enter") event.currentTarget.blur();
+                            }}
+                            onChange={(event) => setTaskQuantityDrafts((current) => ({
+                              ...current,
+                              [task.id]: event.target.value,
+                            }))}
+                            onBlur={(event) => {
+                              const rawQuantity = event.currentTarget.value;
+                              const parsedQuantity = rawQuantity.trim() === "" ? null : Number(rawQuantity);
+                              if (parsedQuantity !== null && (!Number.isInteger(parsedQuantity) || parsedQuantity <= 0)) return;
+                              void updateTaskQuantity(task, rawQuantity);
+                            }}
+                            className={`h-7 min-w-0 w-full rounded-lg border bg-white px-2 text-xs outline-none placeholder:text-[10px] placeholder:text-slate-400 disabled:bg-slate-100 ${
+                              isQuantityDraftInvalid || taskShipmentSummary.isExceeded
+                                ? "border-red-300 text-red-700 focus:border-red-400"
+                                : "border-slate-200 text-slate-700 focus:border-blue-300"
+                            }`}
+                          />
+                          {project.quantity_unit && (
+                            <span className="shrink-0 text-[10px] text-slate-400">{project.quantity_unit}</span>
+                          )}
+                        </div>
+                      )}
+                      {isShipmentTask(task) && (
+                        <p className={`mt-1 text-[10px] ${
+                          isQuantityDraftInvalid || taskShipmentSummary.isExceeded ? "text-red-600" : "text-slate-400"
+                        }`}>
+                          {isQuantityDraftInvalid
+                            ? "0보다 큰 정수만 입력"
+                            : taskShipmentSummary.isExceeded
+                              ? `초과 ${formatProjectQuantity(taskShipmentSummary.exceededQuantity, project.quantity_unit)} · 저장 불가`
+                              : `최대 ${formatProjectQuantity(taskShipmentSummary.maxInputQuantity, project.quantity_unit)} · 입력 후 잔여 ${formatProjectQuantity(taskShipmentSummary.remainingQuantity, project.quantity_unit)}`}
+                        </p>
+                      )}
                     </td>
                     <td className="h-14 px-2 py-2 align-middle">
                       <select
@@ -2165,54 +2483,42 @@ export default function ProjectDetail() {
 
       <ProjectFiles projectId={projectId} />
 
-      <section
+      <CollapsibleSection
         id="project-activity"
-        className="mb-6 scroll-mt-24 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"
+        title="최근 활동"
+        count={recentActivityCount}
+        open={isRecentActivityOpen}
+        onToggle={() => setIsRecentActivityOpen((current) => !current)}
       >
-        <div className="mb-3">
-          <h2 className="text-lg font-bold tracking-tight text-slate-950">
-            최근 활동
-          </h2>
-          <p className="mt-1 text-sm text-slate-500">
-            이 프로젝트의 최신 활동 10건입니다.
-          </p>
-        </div>
-        <ActivityTimeline limit={10} projectId={Number(projectId)} />
-      </section>
+        <p className="mb-3 text-sm text-slate-500">이 프로젝트의 최신 활동 10건입니다.</p>
+        <ActivityTimeline limit={10} projectId={Number(projectId)} onCountChange={setRecentActivityCount} />
+      </CollapsibleSection>
 
-      <section
+      <CollapsibleSection
         id="project-history"
-        className="mb-6 scroll-mt-24 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"
+        title="변경 이력"
+        count={changeHistoryCount}
+        open={isChangeHistoryOpen}
+        onToggle={() => setIsChangeHistoryOpen((current) => !current)}
       >
-        <div className="mb-3">
-          <h2 className="text-lg font-bold tracking-tight text-slate-950">
-            변경 이력
-          </h2>
-          <p className="mt-1 text-sm text-slate-500">
-            실제 값이 변경된 프로젝트, 업무 및 출고 이력입니다.
-          </p>
-        </div>
+        <p className="mb-3 text-sm text-slate-500">실제 값이 변경된 프로젝트, 업무 및 출고 이력입니다.</p>
         <ActivityTimeline
           limit={30}
           projectId={Number(projectId)}
           historyOnly
+          onCountChange={setChangeHistoryCount}
         />
-      </section>
+      </CollapsibleSection>
 
-      <section
+      <CollapsibleSection
         id="project-timeline"
-        className="mb-6 scroll-mt-24 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"
+        title="타임라인"
+        open={isTimelineOpen}
+        onToggle={() => setIsTimelineOpen((current) => !current)}
       >
-        <div className="mb-4">
-          <h2 className="text-lg font-bold tracking-tight text-slate-950">
-            Project Timeline
-          </h2>
-          <p className="mt-1 text-sm text-slate-500">
-            프로젝트 생성부터 완료까지의 핵심 이벤트를 시간순으로 확인합니다.
-          </p>
-        </div>
+        <p className="mb-4 text-sm text-slate-500">프로젝트 생성부터 완료까지의 핵심 이벤트를 시간순으로 확인합니다.</p>
         <ProjectTimeline projectId={Number(projectId)} />
-      </section>
+      </CollapsibleSection>
 
       <ConfirmDialog
         open={sectionPendingDelete !== null}
@@ -2295,9 +2601,61 @@ export default function ProjectDetail() {
                 placeholder="업무유형"
                 value={taskForm.task_type}
                 onChange={(e) =>
-                  setTaskForm({ ...taskForm, task_type: e.target.value })
+                  setTaskForm({
+                    ...taskForm,
+                    task_type: e.target.value,
+                    quantity: e.target.value.includes("출고") ? taskForm.quantity : "",
+                  })
                 }
               />
+              {taskForm.task_type.includes("출고") && (
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
+                  <div className="mb-2 grid grid-cols-2 gap-x-3 gap-y-1 text-xs text-slate-600">
+                    <span>프로젝트 수량</span>
+                    <span className="text-right font-medium">{formatProjectQuantity(project.quantity, project.quantity_unit)}</span>
+                    <span>기존 출고 예정</span>
+                    <span className="text-right font-medium">{formatProjectQuantity(newTaskShipmentSummary.existingShipmentTotal, project.quantity_unit)}</span>
+                    <span>최대 입력 가능</span>
+                    <span className="text-right font-medium">{formatProjectQuantity(newTaskShipmentSummary.maxInputQuantity, project.quantity_unit)}</span>
+                    <span>예상 출고 합계</span>
+                    <span className="text-right font-medium">{formatProjectQuantity(newTaskShipmentSummary.expectedShipmentTotal, project.quantity_unit)}</span>
+                    <span>{newTaskShipmentSummary.isExceeded ? "초과 수량" : "입력 후 잔여"}</span>
+                    <span className={`text-right font-semibold ${newTaskShipmentSummary.isExceeded ? "text-red-600" : "text-slate-700"}`}>
+                      {formatProjectQuantity(
+                        newTaskShipmentSummary.isExceeded
+                          ? newTaskShipmentSummary.exceededQuantity
+                          : newTaskShipmentSummary.remainingQuantity,
+                        project.quantity_unit
+                      )}
+                    </span>
+                  </div>
+                  <input
+                    type="number"
+                    min="1"
+                    step="1"
+                    max={newTaskShipmentSummary.maxInputQuantity ?? undefined}
+                    inputMode="numeric"
+                    className={`h-10 w-full rounded-xl border bg-white px-3 text-sm outline-none transition-colors ${
+                      newTaskShipmentSummary.isExceeded
+                        ? "border-red-300 text-red-700 focus:border-red-400"
+                        : "border-slate-200 focus:border-blue-300"
+                    }`}
+                    placeholder="비워두면 전체 수량"
+                    value={taskForm.quantity}
+                    onChange={(event) => setTaskForm({ ...taskForm, quantity: event.target.value })}
+                  />
+                  {newTaskShipmentSummary.isExceeded && (
+                    <p className="mt-2 text-xs font-medium text-red-600">프로젝트 수량을 초과했습니다. 출고 수량을 확인해주세요.</p>
+                  )}
+                  {newTaskShipmentSummary.projectQuantity !== null
+                    && newTaskShipmentSummary.remainingQuantity === 0
+                    && !newTaskShipmentSummary.isExceeded
+                    && <p className="mt-2 text-xs text-blue-600">전체 수량이 출고 예정으로 배정되었습니다.</p>}
+                  {newTaskShipmentSummary.hasBlankShipmentTask && newTaskShipmentSummary.hasQuantityShipmentTask && (
+                    <p className="mt-2 text-xs text-amber-700">수량이 비어 있는 출고 업무는 전체 수량으로 출고될 수 있으니 확인해주세요.</p>
+                  )}
+                </div>
+              )}
               <select
                 className="h-10 w-full rounded-2xl border border-slate-200 bg-slate-50 px-3 text-sm outline-none transition-colors focus:border-blue-300 focus:bg-white"
                 value={taskForm.assignee || "미배정"}
@@ -2347,6 +2705,12 @@ export default function ProjectDetail() {
                   </option>
                 ))}
               </select>
+              <textarea
+                className="min-h-20 w-full resize-y rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm outline-none transition-colors focus:border-blue-300 focus:bg-white"
+                placeholder="업무 메모 (선택)"
+                value={taskForm.note}
+                onChange={(event) => setTaskForm({ ...taskForm, note: event.target.value })}
+              />
             </div>
 
             <div className="mt-6 flex justify-end gap-3">
@@ -2361,7 +2725,17 @@ export default function ProjectDetail() {
               <Button
                 variant="primary"
                 onClick={addTask}
-                disabled={isSavingTask}
+                disabled={isSavingTask || (
+                  taskForm.task_type.includes("출고")
+                  && taskForm.quantity.trim() !== ""
+                  && (
+                    newTaskInputQuantity === null
+                    || !Number.isInteger(newTaskInputQuantity)
+                    || newTaskInputQuantity <= 0
+                    || newTaskShipmentSummary.projectQuantity === null
+                    || newTaskShipmentSummary.isExceeded
+                  )
+                )}
                 className="rounded-2xl px-4 py-2 text-sm"
               >
                 {isSavingTask ? "저장 중..." : "저장"}
@@ -2369,6 +2743,15 @@ export default function ProjectDetail() {
             </div>
           </div>
         </div>
+      )}
+      {noteTask && (
+        <TaskNotesDrawer
+          taskId={noteTask.id}
+          taskName={noteTask.task_name || "업무명 없음"}
+          projectId={noteTask.project_id}
+          onClose={() => setNoteTask(null)}
+          onSummaryChange={handleTaskNoteSummaryChange}
+        />
       )}
     </div>
   );

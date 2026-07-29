@@ -112,6 +112,7 @@ export const PROJECT_AUDIT_FIELDS: AuditFieldDefinition[] = [
 ];
 
 export const TASK_AUDIT_FIELDS: AuditFieldDefinition[] = [
+  { field: "quantity", label: "출고 수량", type: "number" },
   { field: "task_name", label: "업무명" },
   { field: "task_type", label: "업무 유형" },
   { field: "assignee", label: "담당자" },

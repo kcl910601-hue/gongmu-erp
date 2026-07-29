@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { createPortal } from "react-dom";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -8,6 +9,8 @@ import {
   Bell,
   Calendar,
   Clock,
+  Check,
+  CheckCheck,
   FolderKanban,
   RefreshCw,
   Truck,
@@ -20,12 +23,16 @@ import { Badge, type BadgeVariant } from "@/components/ui/Badge";
 import { EmptyState } from "@/components/ui/EmptyState";
 import {
   loadNotificationSummary,
+  markNotificationsRead,
+  NOTIFICATION_READ_EVENT,
+  notifyNotificationReadStateChanged,
   type NotificationCategory,
   type NotificationItem,
   type NotificationSummary,
 } from "@/lib/notifications";
 import { formatActivityTime } from "@/lib/activity";
 import { useAppShellUser } from "@/contexts/AppShellUserContext";
+import { toast } from "@/lib/toast";
 
 type NotificationFilter = "all" | NotificationCategory;
 
@@ -110,20 +117,29 @@ function NotificationIcon({ item }: { item: NotificationItem }) {
 export function NotificationRow({
   item,
   onSelect,
-  isRead,
+  onMarkRead,
+  isMarkingRead = false,
 }: {
   item: NotificationItem;
-  onSelect: () => void;
-  isRead: boolean;
+  onSelect: () => void | Promise<void>;
+  onMarkRead?: () => void | Promise<void>;
+  isMarkingRead?: boolean;
 }) {
+  const router = useRouter();
   return (
-    <Link
-      href={item.href}
-      onClick={onSelect}
-      className={`block rounded-2xl border p-3.5 text-left transition-colors hover:border-blue-200 hover:bg-blue-50 focus:outline-none focus:ring-2 focus:ring-blue-100 ${
-        isRead ? "border-slate-200 bg-slate-50" : "border-blue-100 bg-white"
-      }`}
-    >
+    <div className={`relative rounded-2xl border transition-colors hover:border-blue-200 hover:bg-blue-50 ${
+      item.isRead ? "border-slate-200 bg-slate-50" : "border-blue-100 bg-blue-50/40"
+    }`}>
+      <Link
+        href={item.href}
+        onClick={async (event) => {
+          if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+          event.preventDefault();
+          await onSelect();
+          router.push(item.href);
+        }}
+        className="block p-3.5 pr-12 text-left focus:outline-none focus:ring-2 focus:ring-blue-100"
+      >
       <div className="flex items-start gap-3">
         <NotificationIcon item={item} />
 
@@ -135,9 +151,9 @@ export function NotificationRow({
             >
               {item.title}
             </Badge>
-            {!isRead && <span className="h-2 w-2 rounded-full bg-blue-600" />}
+            {!item.isRead && <span className="h-2 w-2 rounded-full bg-blue-600" />}
           </div>
-          <p className="truncate text-sm font-semibold text-slate-900">
+          <p className={`truncate text-sm text-slate-900 ${item.isRead ? "font-medium" : "font-bold"}`}>
             {item.description}
           </p>
           <p className="mt-1 truncate text-sm text-slate-700">
@@ -151,10 +167,24 @@ export function NotificationRow({
                 : formatDisplayDate(item.date)}
             </span>
             {item.statusLabel ? <span>{item.statusLabel}</span> : null}
+            {item.isRead && item.readAt ? <span>읽음 {formatActivityTime(item.readAt)}</span> : null}
           </div>
         </div>
       </div>
-    </Link>
+      </Link>
+      {!item.isRead && onMarkRead ? (
+        <button
+          type="button"
+          onClick={() => void onMarkRead()}
+          disabled={isMarkingRead}
+          aria-label={`${item.description} 읽음 처리`}
+          title="읽음 처리"
+          className="absolute right-3 top-3 flex h-8 w-8 items-center justify-center rounded-xl border border-blue-100 bg-white text-blue-600 hover:bg-blue-50 disabled:opacity-50"
+        >
+          <Check size={15} />
+        </button>
+      ) : null}
+    </div>
   );
 }
 
@@ -165,7 +195,9 @@ export default function NotificationCenter() {
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
   const [activeFilter, setActiveFilter] = useState<NotificationFilter>("all");
-  const [readIds, setReadIds] = useState<Set<string>>(() => new Set());
+  const [showUnreadOnly, setShowUnreadOnly] = useState(false);
+  const [markingIds, setMarkingIds] = useState<Set<string>>(() => new Set());
+  const [isMarkingAll, setIsMarkingAll] = useState(false);
   const requestInFlightRef = useRef(false);
   const hasLoadedRef = useRef(false);
 
@@ -218,15 +250,70 @@ export default function NotificationCenter() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [isOpen]);
 
+  const applyReadState = useCallback((notificationIds: string[], readAt: string) => {
+    const idSet = new Set(notificationIds);
+    setSummary((current) => current ? {
+      ...current,
+      items: current.items.map((item) => idSet.has(item.id) ? { ...item, isRead: true, readAt } : item),
+      unreadCount: current.items.filter((item) => !idSet.has(item.id) && !item.isRead).length,
+    } : current);
+  }, []);
+
+  useEffect(() => {
+    function handleReadState(event: Event) {
+      const notificationIds = (event as CustomEvent<string[]>).detail ?? [];
+      applyReadState(notificationIds, new Date().toISOString());
+    }
+    window.addEventListener(NOTIFICATION_READ_EVENT, handleReadState);
+    return () => window.removeEventListener(NOTIFICATION_READ_EVENT, handleReadState);
+  }, [applyReadState]);
+
+  const markRead = useCallback(async (notificationIds: string[]) => {
+    if (!employee || notificationIds.length === 0) return false;
+    const previousSummary = summary;
+    const optimisticReadAt = new Date().toISOString();
+    applyReadState(notificationIds, optimisticReadAt);
+    const { error, readAt } = await markNotificationsRead(notificationIds, employee);
+    if (error || !readAt) {
+      setSummary(previousSummary);
+      toast.error("알림 읽음 처리에 실패했습니다.");
+      return false;
+    }
+    notifyNotificationReadStateChanged(notificationIds);
+    return true;
+  }, [applyReadState, employee, summary]);
+
+  async function markOneRead(item: NotificationItem) {
+    if (item.isRead || markingIds.has(item.id)) return;
+    setMarkingIds((current) => new Set(current).add(item.id));
+    await markRead([item.id]);
+    setMarkingIds((current) => {
+      const next = new Set(current);
+      next.delete(item.id);
+      return next;
+    });
+  }
+
+  async function markAllRead() {
+    if (!summary || isMarkingAll) return;
+    const unreadIds = summary.items.filter((item) => !item.isRead).map((item) => item.id);
+    if (unreadIds.length === 0) return;
+    setIsMarkingAll(true);
+    const succeeded = await markRead(unreadIds);
+    if (succeeded) toast.success("모든 알림을 읽음 처리했습니다.");
+    setIsMarkingAll(false);
+  }
+
   const filteredItems = useMemo(() => {
     if (!summary) return [];
-    if (activeFilter === "all") return summary.items;
-
-    return summary.items.filter((item) => item.category === activeFilter);
-  }, [activeFilter, summary]);
+    const categoryItems = activeFilter === "all"
+      ? summary.items
+      : summary.items.filter((item) => item.category === activeFilter);
+    return showUnreadOnly ? categoryItems.filter((item) => !item.isRead) : categoryItems;
+  }, [activeFilter, showUnreadOnly, summary]);
 
   const unreadCount =
-    summary?.items.filter((item) => !readIds.has(item.id)).length || 0;
+    summary?.items.filter((item) => !item.isRead).length || 0;
   const badgeLabel = getBadgeLabel(unreadCount);
 
   return (
@@ -308,6 +395,26 @@ export default function NotificationCenter() {
                   </button>
                 ))}
               </div>
+              <div className="mt-3 flex items-center justify-between gap-3">
+                <label className="flex cursor-pointer items-center gap-2 text-xs font-medium text-slate-600">
+                  <input
+                    type="checkbox"
+                    checked={showUnreadOnly}
+                    onChange={(event) => setShowUnreadOnly(event.target.checked)}
+                    className="h-4 w-4 rounded border-slate-300 text-blue-600"
+                  />
+                  읽지 않은 알림만
+                </label>
+                <button
+                  type="button"
+                  onClick={() => void markAllRead()}
+                  disabled={unreadCount === 0 || isMarkingAll}
+                  className="flex items-center gap-1.5 rounded-xl px-2.5 py-1.5 text-xs font-semibold text-blue-600 hover:bg-blue-50 disabled:text-slate-300 disabled:hover:bg-transparent"
+                >
+                  <CheckCheck size={14} />
+                  {isMarkingAll ? "처리 중..." : "모두 읽음"}
+                </button>
+              </div>
             </div>
 
             <div className="flex-1 overflow-y-auto p-4">
@@ -324,13 +431,10 @@ export default function NotificationCenter() {
                     <NotificationRow
                       key={item.id}
                       item={item}
-                      isRead={readIds.has(item.id)}
-                      onSelect={() => {
-                        setReadIds((current) => {
-                          const next = new Set(current);
-                          next.add(item.id);
-                          return next;
-                        });
+                      isMarkingRead={markingIds.has(item.id)}
+                      onMarkRead={() => markOneRead(item)}
+                      onSelect={async () => {
+                        if (!item.isRead) await markOneRead(item);
                         setIsOpen(false);
                       }}
                     />
@@ -343,7 +447,7 @@ export default function NotificationCenter() {
                 </div>
               ) : (
                 <EmptyState
-                  title={getEmptyMessage(activeFilter)}
+                  title={showUnreadOnly ? "읽지 않은 알림이 없습니다." : getEmptyMessage(activeFilter)}
                   className="rounded-2xl border border-slate-200 bg-white p-8 text-center text-sm text-slate-500"
                 />
               )}
