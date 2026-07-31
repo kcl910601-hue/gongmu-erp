@@ -1,0 +1,5 @@
+{
+  "crons": [
+    { "path": "/api/cron/lme-sync", "schedule": "10 0 * * *" }
+  ]
+}

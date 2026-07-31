@@ -19,6 +19,7 @@ import {
   MoreHorizontal,
   Megaphone,
   Settings,
+  Sigma,
   Star,
   Clock3,
   Truck,
@@ -98,6 +99,7 @@ export default function Sidebar() {
   const [favoriteProjects, setFavoriteProjects] = useState<FavoriteProject[]>([]);
   const [recentItems, setRecentItems] = useState<RecentWorkspaceItem[]>([]);
   const [isWorkspaceOpen, setIsWorkspaceOpen] = useState(false);
+  const [isStatisticsOpen, setIsStatisticsOpen] = useState(() => pathname.startsWith("/statistics"));
   const [favoriteDueCounts, setFavoriteDueCounts] = useState<
     Record<number, number>
   >({});
@@ -243,6 +245,24 @@ export default function Sidebar() {
             </Link>
           );
         })}
+
+        {isCollapsed ? (
+          <Link href="/statistics/lme" title="통계 · LME 시세" className={`flex items-center justify-center rounded-xl px-3 py-2 text-sm font-medium ${pathname.startsWith("/statistics") ? "border border-slate-200 bg-slate-950 text-white shadow-sm" : "text-slate-600 hover:bg-slate-100"}`}><Sigma size={18}/></Link>
+        ) : (
+          <div>
+            <button type="button" onClick={() => setIsStatisticsOpen((current) => !current)} aria-expanded={isStatisticsOpen} className={`flex w-full items-center justify-between rounded-xl px-3 py-2 text-sm font-medium ${pathname.startsWith("/statistics") ? "bg-slate-100 text-slate-950" : "text-slate-600 hover:bg-slate-100"}`}><span className="flex items-center gap-3"><Sigma size={18}/>통계</span><ChevronDown size={14} className={`transition-transform ${isStatisticsOpen ? "rotate-180" : ""}`}/></button>
+            {isStatisticsOpen && <div className="ml-5 mt-1 space-y-0.5 border-l border-slate-200 pl-3">
+              <span className="block px-2 py-1.5 text-xs text-slate-400">대시보드 <small>(향후)</small></span>
+              <Link href="/statistics/lme" className={`block rounded-lg px-2 py-1.5 text-xs font-semibold ${pathname === "/statistics/lme" ? "bg-blue-50 text-blue-700" : "text-slate-600 hover:bg-slate-100"}`}>LME 시세</Link>
+              <Link href="/statistics/cost-analysis" className={`block rounded-lg px-2 py-1.5 text-xs font-semibold ${pathname === "/statistics/cost-analysis" ? "bg-blue-50 text-blue-700" : "text-slate-600 hover:bg-slate-100"}`}>원가 분석</Link>
+              <Link href="/statistics/project-contracts" className={`block rounded-lg px-2 py-1.5 text-xs font-semibold ${pathname === "/statistics/project-contracts" ? "bg-blue-50 text-blue-700" : "text-slate-600 hover:bg-slate-100"}`}>프로젝트 계약관리</Link>
+              <Link href="/statistics/project-profit" className={`block rounded-lg px-2 py-1.5 text-xs font-semibold ${pathname === "/statistics/project-profit" ? "bg-blue-50 text-blue-700" : "text-slate-600 hover:bg-slate-100"}`}>프로젝트 손익 분석</Link>
+              <Link href="/statistics/project-costs" className={`block rounded-lg px-2 py-1.5 text-xs font-semibold ${pathname === "/statistics/project-costs" ? "bg-blue-50 text-blue-700" : "text-slate-600 hover:bg-slate-100"}`}>프로젝트 비용관리</Link>
+              <Link href="/statistics/project-margin" className={`block rounded-lg px-2 py-1.5 text-xs font-semibold ${pathname === "/statistics/project-margin" ? "bg-blue-50 text-blue-700" : "text-slate-600 hover:bg-slate-100"}`}>프로젝트 마진 분석</Link>
+              {["프로젝트 분석", "AS 분석", "리포트"].map((label) => <span key={label} className="block px-2 py-1.5 text-xs text-slate-400">{label} <small>(향후)</small></span>)}
+            </div>}
+          </div>
+        )}
 
       </nav>
 

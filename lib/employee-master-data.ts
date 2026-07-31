@@ -1,4 +1,5 @@
 import { supabase } from "@/lib/supabase";
+import type { PartnerType } from "@/lib/partners";
 
 export type EmployeeMasterOption = {
   id: number;
@@ -14,7 +15,8 @@ export type EmployeeOrganizationOption = {
 };
 
 async function getActiveOrganizationsByCategory(
-  categoryCode: "headquarters" | "partner"
+  categoryCode: "headquarters" | "partner",
+  partnerType?: PartnerType
 ): Promise<{
   data: EmployeeOrganizationOption[];
   error: string | null;
@@ -29,11 +31,13 @@ async function getActiveOrganizationsByCategory(
     return { data: [], error: categoryResult.error?.message ?? "조직 카테고리를 찾을 수 없습니다." };
   }
 
-  const organizationResult = await supabase
+  let organizationQuery = supabase
     .from("organizations")
     .select("id, name")
     .eq("category_id", categoryResult.data.id)
-    .eq("is_active", true)
+    .eq("is_active", true);
+  if (partnerType) organizationQuery = organizationQuery.eq("partner_type", partnerType);
+  const organizationResult = await organizationQuery
     .order("sort_order", { ascending: true })
     .order("name", { ascending: true });
 
@@ -59,8 +63,8 @@ export async function getEmployeeOrganizations() {
   };
 }
 
-export function getPartnerOrganizations() {
-  return getActiveOrganizationsByCategory("partner");
+export function getPartnerOrganizations(partnerType: PartnerType = "assembly") {
+  return getActiveOrganizationsByCategory("partner", partnerType);
 }
 
 export async function getActiveEmployeeOptionsByFunction(

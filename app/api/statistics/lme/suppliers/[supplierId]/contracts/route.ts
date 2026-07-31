@@ -1,0 +1,3 @@
+import { queryRawMaterialContracts } from "@/lib/raw-material-contracts-server";
+import { getLmeContext } from "@/lib/lme-server";
+export async function GET(_request:Request,{params}:{params:Promise<{supplierId:string}>}){const {supplierId}=await params;const {supabase,employee}=await getLmeContext();if(!employee)return Response.json({error:"승인된 사용자만 조회할 수 있습니다."},{status:403});const query=new URLSearchParams({supplier:supplierId});const result=await queryRawMaterialContracts(supabase,query);if(result.error)return Response.json({error:result.error.message},{status:500});return Response.json({contracts:result.data});}

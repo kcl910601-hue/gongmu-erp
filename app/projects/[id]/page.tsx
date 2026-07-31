@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
-import { ChevronDown, ChevronRight, GripVertical, NotebookPen, Plus, Star } from "lucide-react";
+import { ChevronDown, ChevronRight, Copy, GripVertical, NotebookPen, Plus, Star, Trash2 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { addActivity } from "@/lib/activity";
 import {
@@ -1708,9 +1708,9 @@ export default function ProjectDetail() {
   const isProjectInfoExpanded = isProjectInfoOpen || isEditingProject;
 
   return (
-    <div className="min-h-screen bg-slate-50 px-6 py-7 text-slate-900 lg:px-8">
-      <div className="mb-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-        <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
+    <div className="min-h-screen bg-slate-50 px-4 py-5 text-slate-900 lg:px-5">
+      <div className="mb-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+        <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
           <div className="min-w-0">
             <div className="mb-3 flex flex-wrap items-center gap-2">
               <Badge variant="default" className="text-sm font-medium">
@@ -1747,7 +1747,7 @@ export default function ProjectDetail() {
               </button>
             </div>
 
-            <h1 className="truncate text-3xl font-bold tracking-tight text-slate-950">
+            <h1 className="truncate text-2xl font-bold tracking-tight text-slate-950">
               {project.project_name}
             </h1>
             <p className="mt-2 text-sm leading-6 text-slate-500">
@@ -1757,7 +1757,7 @@ export default function ProjectDetail() {
             </p>
           </div>
 
-          <div className="w-full rounded-2xl border border-slate-200 bg-slate-50 p-4 xl:w-72">
+          <div className="w-full rounded-2xl border border-slate-200 bg-slate-50 p-3 xl:w-64">
             <div className="mb-2 flex items-center justify-between">
               <span className="text-xs font-medium text-slate-500">진행률</span>
               <span className="text-xl font-bold tracking-tight text-blue-600">
@@ -2123,14 +2123,14 @@ export default function ProjectDetail() {
           )}
         </div>
 
-        <div className="space-y-4">
+        <div className="space-y-3">
         {assemblyVendors.map((vendor) => {
           const vendorTasks = tasks.filter((task) => task.project_assembly_vendor_id === vendor.id);
           const vendorProgress = calculateSectionProgress(vendorTasks);
           const vendorOpen = openVendorIds.has(vendor.id);
           return (
           <section key={vendor.id} className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-            <div className="flex flex-col gap-3 bg-slate-100 p-4 lg:flex-row lg:items-center lg:justify-between">
+            <div className="flex flex-col gap-2.5 bg-slate-100 p-3 lg:flex-row lg:items-center lg:justify-between">
               <button type="button" className="flex min-w-0 items-center gap-3 text-left" onClick={() => setOpenVendorIds((current) => { const next = new Set(current); if (next.has(vendor.id)) next.delete(vendor.id); else next.add(vendor.id); return next; })}>
                 {vendorOpen ? <ChevronDown size={19} /> : <ChevronRight size={19} />}
                 <span className="truncate text-base font-bold text-slate-950">{vendor.organizationName}</span>
@@ -2166,7 +2166,7 @@ export default function ProjectDetail() {
           const vendorDueDate = vendorDueDates[vendorDueDates.length - 1] ?? "-";
           return (
           <section key={section.id} className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
-            <div className="flex flex-col gap-3 bg-slate-50 p-4 xl:flex-row xl:items-center xl:justify-between">
+            <div className="flex flex-col gap-2.5 bg-slate-50 p-3 xl:flex-row xl:items-center xl:justify-between">
               <button type="button" className="flex min-w-0 flex-1 items-center gap-3 text-left" onClick={() => setOpenSectionIds((current) => { const next = new Set(current); if (next.has(section.id)) next.delete(section.id); else next.add(section.id); return next; })}>
                 {isOpen ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
                 <span className="h-3 w-3 rounded-full" style={{ backgroundColor: processType?.color ?? "#64748b" }} />
@@ -2187,20 +2187,20 @@ export default function ProjectDetail() {
             </div>
             {isOpen && <div className="border-t border-slate-200 p-3">
               <div className="mb-3 flex items-center justify-between text-xs text-slate-500"><span>대기 {sectionProgress.pending} · 진행 {sectionProgress.inProgress} · 완료 {sectionProgress.completed} · 지연 {sectionProgress.delayed}</span><Button size="sm" variant="primary" onClick={() => { setSelectedTaskVendorId(vendor.id); setSelectedTaskSectionId(section.id); setShowTaskModal(true); setOpenSectionIds((current) => new Set(current).add(section.id)); }}><Plus size={14} /> Task</Button></div>
-        <div className="max-h-[60vh] overflow-auto">
-          <table className="w-full min-w-[1420px] table-fixed text-sm">
+        <div className="max-h-[65vh] overflow-auto">
+          <table className="w-full min-w-[1280px] table-fixed text-sm">
             <thead className="sticky top-0 z-20 bg-slate-50">
               <tr className="border-y border-slate-200 bg-slate-50 text-xs font-semibold leading-none text-slate-500">
-                <th className="w-[5%] bg-slate-50 px-2 py-3 text-center">순번</th>
-                <th className="w-[22%] bg-slate-50 px-3 py-3 text-left">업무명</th>
-                <th className="w-[10%] bg-slate-50 px-2 py-3 text-left">업무유형</th>
-                <th className="w-[11%] bg-slate-50 px-2 py-3 text-left">조립업체</th>
-                <th className="w-[11%] bg-slate-50 px-2 py-3 text-left">담당자</th>
-                <th className="w-[14%] bg-slate-50 px-2 py-3 text-left">시작일</th>
-                <th className="w-[14%] bg-slate-50 px-2 py-3 text-left">마감일</th>
-                <th className="w-[8%] bg-slate-50 px-2 py-3 text-left">상태</th>
-                <th className="w-[8%] bg-slate-50 px-2 py-3 text-center">완료일</th>
-                <th className="w-[8%] bg-slate-50 px-2 py-3 text-center">관리</th>
+                <th className="w-[4%] bg-slate-50 px-2 py-2 text-center">순번</th>
+                <th className="w-[18%] bg-slate-50 px-2.5 py-2 text-left">업무명</th>
+                <th className="w-[8%] bg-slate-50 px-2 py-2 text-left">업무유형</th>
+                <th className="w-[10%] bg-slate-50 px-2 py-2 text-left">조립업체</th>
+                <th className="w-[9%] bg-slate-50 px-2 py-2 text-left">담당자</th>
+                <th className="w-[14%] bg-slate-50 px-2 py-2 text-left">시작일</th>
+                <th className="w-[16%] bg-slate-50 px-2 py-2 text-left">마감일</th>
+                <th className="w-[7%] bg-slate-50 px-2 py-2 text-left">상태</th>
+                <th className="w-[7%] bg-slate-50 px-2 py-2 text-center">완료일</th>
+                <th className="w-[7%] bg-slate-50 px-2 py-2 text-center">관리</th>
               </tr>
             </thead>
 
@@ -2233,10 +2233,10 @@ export default function ProjectDetail() {
                           : "hover:bg-blue-50/40"
                     }`}
                   >
-                    <td className="h-14 px-2 py-2 text-center align-middle text-xs font-medium text-slate-400">
+                    <td className="h-12 px-2 py-1.5 text-center align-middle text-xs font-medium text-slate-400">
                       {index + 1}
                     </td>
-                    <td className="h-16 px-3 py-2 align-middle">
+                    <td className="h-14 px-2.5 py-1.5 align-middle">
                       <div className="flex min-w-0 items-center gap-2">
                         <div
                           className={`min-w-0 flex-1 truncate font-semibold leading-5 ${
@@ -2276,7 +2276,7 @@ export default function ProjectDetail() {
                         ) : "메모 작성..."}
                       </button>
                     </td>
-                    <td className="h-14 px-2 py-2 align-middle">
+                    <td className="h-12 px-2 py-1.5 align-middle">
                       <div className="truncate text-sm leading-5 text-slate-600" title={task.task_type || "-"}>
                         {task.task_type || "-"}
                       </div>
@@ -2333,7 +2333,7 @@ export default function ProjectDetail() {
                         value={task.project_assembly_vendor_id ?? ""}
                         disabled={isUpdating}
                         onChange={(event) => void updateTaskVendor(task.id, Number(event.target.value))}
-                        className="h-8 w-full rounded-xl border border-slate-200 bg-white px-2 text-sm text-slate-700 outline-none focus:border-blue-300 disabled:bg-slate-100"
+                        className="h-7 w-full rounded-lg border border-slate-200 bg-white px-2 text-xs text-slate-700 outline-none focus:border-blue-300 disabled:bg-slate-100"
                       >
                         {assemblyVendors.map((option) => (
                           <option key={option.id} value={option.id}>{option.organizationName}</option>
@@ -2348,7 +2348,7 @@ export default function ProjectDetail() {
                           updateTaskAssignee(task.id, e.target.value)
                         }
                         onMouseDown={(e) => e.stopPropagation()}
-                        className="h-8 w-full rounded-xl border border-slate-200 bg-white px-2 text-sm text-slate-700 outline-none transition-colors focus:border-blue-300 focus:bg-white disabled:bg-slate-100"
+                        className="h-7 w-full rounded-lg border border-slate-200 bg-white px-2 text-xs text-slate-700 outline-none transition-colors focus:border-blue-300 focus:bg-white disabled:bg-slate-100"
                       >
                         <option value="미배정">미지정</option>
                         {employees.map((employee) => (
@@ -2408,35 +2408,37 @@ export default function ProjectDetail() {
                     <td className="h-14 whitespace-nowrap px-2 py-2 text-center align-middle text-xs text-slate-400">
                       {task.completed_date || "-"}
                     </td>
-                    <td className="h-14 px-2 py-2 align-middle">
+                    <td className="h-12 px-1 py-1.5 align-middle">
                       <div className="flex flex-nowrap items-center justify-center gap-1">
                         <span
                           draggable={!isUpdating}
                           onDragStart={() => setDraggingTaskId(task.id)}
                           onDragEnd={() => setDraggingTaskId(null)}
-                          className="flex h-8 w-8 shrink-0 cursor-grab select-none items-center justify-center rounded-xl border border-transparent bg-transparent text-slate-300 transition-colors hover:border-slate-200 hover:bg-white hover:text-slate-500"
+                          className="flex h-6 w-6 shrink-0 cursor-grab select-none items-center justify-center rounded-md border border-transparent bg-transparent text-slate-300 transition-colors hover:border-slate-200 hover:bg-white hover:text-slate-500"
                           title="드래그해서 순서 변경"
                         >
                           <GripVertical size={14} />
                         </span>
-                        <Button
-                          variant="secondary"
-                          size="sm"
+                        <button
+                          type="button"
                           onClick={() => duplicateTask(task)}
                           disabled={isUpdating}
-                          className="h-8 shrink-0 rounded-xl border-slate-200 px-2 text-xs font-medium text-blue-600 hover:border-blue-200 hover:bg-blue-50 disabled:text-gray-400"
+                          aria-label={`${task.task_name || "업무"} 복제`}
+                          title="업무 복제"
+                          className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-slate-200 bg-slate-50 text-blue-600 hover:border-blue-200 hover:bg-blue-50 disabled:text-slate-300"
                         >
-                          복제
-                        </Button>
-                        <Button
-                          variant="danger"
-                          size="sm"
+                          <Copy size={13} />
+                        </button>
+                        <button
+                          type="button"
                           onClick={() => deleteTask(task.id)}
                           disabled={isUpdating}
-                          className="h-8 shrink-0 rounded-xl border-red-100 px-2 text-xs font-medium hover:bg-red-50"
+                          aria-label={`${task.task_name || "업무"} 삭제`}
+                          title="업무 삭제"
+                          className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-red-200 bg-red-50 text-red-600 hover:bg-red-100 disabled:text-red-300"
                         >
-                          삭제
-                        </Button>
+                          <Trash2 size={13} />
+                        </button>
                       </div>
                     </td>
                   </tr>

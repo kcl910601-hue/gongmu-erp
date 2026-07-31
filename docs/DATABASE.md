@@ -1,5 +1,13 @@
 # ERP Database v1
 
+## Sprint 7C LME 일별 자동 동기화
+
+`20260731140000_add_lme_daily_sync.sql`은 기존 `lme_market_prices`의 월·회차 수기 이력을 보존하면서 일별 현물 행을 함께 저장하도록 호환 확장합니다. 자동 행은 `price_type=spot`, `currency=USD`, `unit=metric_ton`이며 `(reference_date, material_code, price_type) where price_type='spot'` 부분 unique index를 사용합니다. 협회 원천에 환율이 없으므로 환율과 국내환산가는 nullable이며 0이나 임의값을 저장하지 않습니다. 기존 수기 행의 월·회차 unique 제약과 불변 trigger는 유지됩니다.
+
+`lme_sync_runs`는 최초/증분 모드, 실행 주체, 처리 건수, conflict와 실패 메시지를 기록합니다. `status='running'` 부분 unique index가 동시 실행을 차단합니다. 기존 확정 가격은 자동 UPDATE/DELETE하지 않습니다.
+
+Market Data Engine 리팩토링은 Service Layer만 분리하며 migration이나 범용 market data 테이블을 추가하지 않습니다. Repository는 계속 기존 `lme_market_prices`와 `lme_sync_runs`를 사용합니다.
+
 ## Sprint 5-11D Core Table Grants
 
 운영 확인 결과 `authenticated`에 남아 있던 `TRUNCATE`, `REFERENCES`, `TRIGGER`

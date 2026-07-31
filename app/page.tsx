@@ -13,6 +13,7 @@ import {
   FolderKanban,
   Search,
   Truck,
+  TrendingUp,
   User,
   UserCheck,
   Users,
@@ -41,6 +42,8 @@ import {
   isTaskInProgress,
   isTaskPending,
 } from "@/lib/status";
+import { formatNumber } from "@/lib/lme";
+import type { LmeMarketPrice } from "@/lib/lme-market";
 
 const DASHBOARD_ACTIVITY_EXPANDED_KEY =
   "erp-dashboard-activity-expanded";
@@ -216,6 +219,7 @@ export default function Home() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [shipments, setShipments] = useState<MorningBriefShipment[]>([]);
   const [recentProjects, setRecentProjects] = useState<ProjectWithProgress[]>([]);
+  const [latestLme, setLatestLme] = useState<LmeMarketPrice | null>(null);
   const [searchText, setSearchText] = useState("");
   const [isLoading, setIsLoading] = useState(true);
   const currentUserName = currentEmployee?.name ?? "";
@@ -404,6 +408,14 @@ export default function Home() {
     setProjects(loadedProjects);
     setTasks(loadedTasks);
     setShipments(shipmentData || []);
+
+    try {
+      const lmeResponse = await fetch("/api/statistics/lme/market/latest?material=AL", { cache: "no-store" });
+      const lmeResult = await lmeResponse.json() as { latest?: LmeMarketPrice | null };
+      if (lmeResponse.ok) setLatestLme(lmeResult.latest ?? null);
+    } catch (error) {
+      console.error("dashboard LME summary load error:", error);
+    }
 
     const projectsWithProgress = loadedProjects.slice(0, 10).map((project) => {
       const projectTasks = loadedTasks.filter(
@@ -1114,7 +1126,7 @@ export default function Home() {
       ) : (
         <>
           <MyWorkspaceRecent />
-          <div className="mb-3 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+          <div className="mb-3 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
             <Link
               href="/projects"
               role="button"
@@ -1233,6 +1245,10 @@ export default function Home() {
                 완료 {completedTasks}건 / 전체 {totalTasks}건
               </p>
             </div>
+            <Link href="/statistics/lme" className="group kpi-enter relative h-24 rounded-2xl border border-slate-300 bg-white p-4 shadow-sm transition-all hover:-translate-y-0.5 hover:border-blue-400 hover:shadow-md">
+              <div className="flex items-start justify-between"><div><p className="text-xs font-medium text-slate-500">오늘 LME</p><p className="mt-0.5 text-xl font-bold tracking-tight text-slate-950">{latestLme ? formatNumber(latestLme.lme_al_usd_per_ton, 1) : "-"} <span className="text-[10px] font-medium text-slate-400">USD/ton</span></p></div><div className="flex h-9 w-9 items-center justify-center rounded-xl bg-indigo-50 text-indigo-600"><TrendingUp size={18}/></div></div>
+              <p className="mt-1 text-[11px] font-semibold text-slate-400">Market History 최신값 · {latestLme?.reference_date ?? "미등록"}</p>
+            </Link>
           </div>
 
           <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">

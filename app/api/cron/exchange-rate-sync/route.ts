@@ -1,0 +1,2 @@
+import{runExchangeRateSync}from"@/lib/market-data/exchange-rate-sync-server";
+export async function GET(request:Request){if(request.headers.get("authorization")!==`Bearer ${process.env.CRON_SECRET}`||!process.env.CRON_SECRET)return Response.json({error:"Cron 인증 실패"},{status:401});if(process.env.EXCHANGE_RATE_CRON_ENABLED!=="true")return Response.json({error:"환율 Cron이 비활성화되어 있습니다."},{status:503});const result=await runExchangeRateSync({mode:"incremental",triggerSource:"cron",userId:null,userName:"Vercel Cron"});return Response.json(result,{status:result.success?200:502});}

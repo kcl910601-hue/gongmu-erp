@@ -1,12 +1,14 @@
 import { createSupabaseServerClient } from "@/lib/supabase-server";
 import { getEmployeeByAuth } from "@/lib/auth";
 import { hasPermission, isAuthorizedEmployee } from "@/lib/permissions";
+import { isPartnerType } from "@/lib/partners";
 
 type PartnerPayload = {
   id?: unknown;
   name?: unknown;
   sort_order?: unknown;
   is_active?: unknown;
+  partner_type?: unknown;
 };
 
 async function getSettingsContext() {
@@ -48,16 +50,19 @@ function errorResponse(error: unknown, status = 500) {
   return Response.json({ error: message, details: error }, { status });
 }
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
     const { supabase, employee, partnerCategoryId } = await getSettingsContext();
     if (!employee || !hasPermission(employee.role, "manage_settings")) return Response.json({ error: "설정 관리 권한이 필요합니다." }, { status: 403 });
     if (!partnerCategoryId) return Response.json({ error: "협력업체 카테고리를 찾을 수 없습니다." }, { status: 500 });
 
-    const { data, error } = await supabase
+    const requestedType = new URL(request.url).searchParams.get("partner_type");
+    let query = supabase
       .from("organizations")
-      .select("id, name, sort_order, is_active, created_at, updated_at")
-      .eq("category_id", partnerCategoryId)
+      .select("id, name, partner_type, sort_order, is_active, created_at, updated_at")
+      .eq("category_id", partnerCategoryId);
+    if (requestedType && isPartnerType(requestedType)) query = query.eq("partner_type", requestedType);
+    const { data, error } = await query
       .order("sort_order", { ascending: true })
       .order("name", { ascending: true });
     console.log("partner organizations select result:", { data, error });
@@ -78,12 +83,12 @@ export async function POST(request: Request) {
 
     const body = (await request.json()) as PartnerPayload;
     const name = typeof body.name === "string" ? body.name.trim() : "";
-    if (!name) return Response.json({ error: "협력업체명을 입력해주세요." }, { status: 400 });
+    if (!name || !isPartnerType(body.partner_type)) return Response.json({ error: "협력업체명과 타입을 확인해주세요." }, { status: 400 });
 
     const { data, error } = await supabase
       .from("organizations")
-      .insert({ category_id: partnerCategoryId, name, function_code: "partner", sort_order: parseSortOrder(body.sort_order), is_active: true })
-      .select("id, name, sort_order, is_active, created_at, updated_at")
+      .insert({ category_id: partnerCategoryId, name, function_code: "partner", partner_type: body.partner_type, sort_order: parseSortOrder(body.sort_order), is_active: true })
+      .select("id, name, partner_type, sort_order, is_active, created_at, updated_at")
       .single();
     console.log("partner organization insert result:", { data, error });
 
@@ -104,16 +109,16 @@ export async function PATCH(request: Request) {
     const body = (await request.json()) as PartnerPayload;
     const id = typeof body.id === "number" ? body.id : Number(body.id);
     const name = typeof body.name === "string" ? body.name.trim() : "";
-    if (!Number.isInteger(id) || !name || typeof body.is_active !== "boolean") {
+    if (!Number.isInteger(id) || !name || typeof body.is_active !== "boolean" || !isPartnerType(body.partner_type)) {
       return Response.json({ error: "협력업체 정보가 올바르지 않습니다." }, { status: 400 });
     }
 
     const { data, error } = await supabase
       .from("organizations")
-      .update({ name, sort_order: parseSortOrder(body.sort_order), is_active: body.is_active, updated_at: new Date().toISOString() })
+      .update({ name, partner_type: body.partner_type, sort_order: parseSortOrder(body.sort_order), is_active: body.is_active, updated_at: new Date().toISOString() })
       .eq("id", id)
       .eq("category_id", partnerCategoryId)
-      .select("id, name, sort_order, is_active, created_at, updated_at")
+      .select("id, name, partner_type, sort_order, is_active, created_at, updated_at")
       .maybeSingle();
     console.log("partner organization update result:", { data, error });
 

@@ -6,10 +6,12 @@ import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { usePermission } from "@/hooks/usePermission";
 import type { SettingsItemActionResult } from "@/lib/settings-deletion";
 import { toast } from "@/lib/toast";
+import { PARTNER_TYPE_LABELS, PARTNER_TYPES, type PartnerType } from "@/lib/partners";
 
 type Partner = {
   id: number;
   name: string;
+  partner_type: PartnerType;
   sort_order: number;
   is_active: boolean;
   created_at: string;
@@ -20,6 +22,8 @@ export default function PartnerOrganizationsPage() {
   const [partners, setPartners] = useState<Partner[]>([]);
   const [name, setName] = useState("");
   const [sortOrder, setSortOrder] = useState(0);
+  const [partnerType, setPartnerType] = useState<PartnerType>("assembly");
+  const [typeFilter, setTypeFilter] = useState<PartnerType | "all">("all");
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editingName, setEditingName] = useState("");
   const [editingSortOrder, setEditingSortOrder] = useState(0);
@@ -34,8 +38,8 @@ export default function PartnerOrganizationsPage() {
   const { role } = usePermission();
   const canDelete = role === "admin";
   const visiblePartners = useMemo(
-    () => showInactive ? partners : partners.filter((partner) => partner.is_active),
-    [partners, showInactive]
+    () => partners.filter((partner) => (showInactive || partner.is_active) && (typeFilter === "all" || partner.partner_type === typeFilter)),
+    [partners, showInactive, typeFilter]
   );
 
   const loadPartners = useCallback(async () => {
@@ -71,7 +75,7 @@ export default function PartnerOrganizationsPage() {
       const response = await fetch("/api/partner-organizations", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: name.trim(), sort_order: sortOrder }),
+        body: JSON.stringify({ name: name.trim(), partner_type: partnerType, sort_order: sortOrder }),
       });
       const result = (await response.json()) as { error?: string };
       if (!response.ok) {
@@ -96,7 +100,7 @@ export default function PartnerOrganizationsPage() {
       const response = await fetch("/api/partner-organizations", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: partner.id, name: editingName.trim(), sort_order: editingSortOrder, is_active: active }),
+        body: JSON.stringify({ id: partner.id, name: editingName.trim(), partner_type: partner.partner_type, sort_order: editingSortOrder, is_active: active }),
       });
       const result = (await response.json()) as { error?: string };
       if (!response.ok) {
@@ -123,7 +127,7 @@ export default function PartnerOrganizationsPage() {
       const response = await fetch("/api/partner-organizations", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: partner.id, name: partner.name, sort_order: partner.sort_order, is_active: !partner.is_active }),
+        body: JSON.stringify({ id: partner.id, name: partner.name, partner_type: partner.partner_type, sort_order: partner.sort_order, is_active: !partner.is_active }),
       });
       const result = (await response.json()) as { error?: string };
       if (!response.ok) {
@@ -205,8 +209,9 @@ export default function PartnerOrganizationsPage() {
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <p className="text-sm text-slate-500">프로젝트 조립업체 선택에 사용할 협력업체를 관리합니다.</p>
+        <p className="text-sm text-slate-500">프로젝트 조립처와 LME·원자재 계약 구매처를 관리합니다.</p>
         <div className="flex flex-wrap items-center gap-3">
+          <select value={typeFilter} onChange={(event) => setTypeFilter(event.target.value as PartnerType | "all")} className="rounded-xl border border-slate-300 px-3 py-2 text-sm"><option value="all">전체 타입</option>{PARTNER_TYPES.map((type) => <option key={type} value={type}>{PARTNER_TYPE_LABELS[type]}</option>)}</select>
           <label className="flex items-center gap-2 text-sm text-slate-600"><input type="checkbox" checked={showInactive} onChange={(event) => setShowInactive(event.target.checked)} />비활성 포함</label>
           <button type="button" onClick={() => void loadPartners()} className="flex items-center gap-2 rounded-xl border border-slate-300 px-4 py-2 text-sm font-semibold hover:bg-slate-50"><RefreshCw size={15} />새로고침</button>
         </div>
@@ -219,6 +224,7 @@ export default function PartnerOrganizationsPage() {
         <h2 className="text-lg font-semibold">협력업체 추가</h2>
         <div className="mt-4 flex flex-wrap gap-3">
           <input value={name} onChange={(event) => setName(event.target.value)} placeholder="협력업체명" className="min-w-64 flex-1 rounded-xl border border-slate-300 px-4 py-2.5 text-sm" />
+          <select value={partnerType} onChange={(event) => setPartnerType(event.target.value as PartnerType)} className="rounded-xl border border-slate-300 px-4 py-2.5 text-sm">{PARTNER_TYPES.map((type) => <option key={type} value={type}>{PARTNER_TYPE_LABELS[type]}</option>)}</select>
           <input type="number" min={0} value={sortOrder} onChange={(event) => setSortOrder(Number(event.target.value))} aria-label="정렬 순서" className="w-28 rounded-xl border border-slate-300 px-4 py-2.5 text-sm" />
           <button type="button" disabled={saving || !name.trim()} onClick={() => void addPartner()} className="flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white disabled:bg-slate-400"><Plus size={16} />추가</button>
         </div>
@@ -228,12 +234,13 @@ export default function PartnerOrganizationsPage() {
         {loading ? <p className="p-10 text-center text-sm text-slate-500">불러오는 중...</p> : (
           <div className="overflow-x-auto">
             <table className="w-full min-w-[680px] text-left text-sm">
-              <thead className="bg-slate-100 text-slate-600"><tr><th className="px-4 py-3">순서</th><th className="px-4 py-3">협력업체명</th><th className="px-4 py-3">상태</th><th className="px-4 py-3 text-right">관리</th></tr></thead>
+              <thead className="bg-slate-100 text-slate-600"><tr><th className="px-4 py-3">순서</th><th className="px-4 py-3">협력업체명</th><th className="px-4 py-3">타입</th><th className="px-4 py-3">상태</th><th className="px-4 py-3 text-right">관리</th></tr></thead>
               <tbody>
                 {visiblePartners.map((partner) => (
                   <tr key={partner.id} className="border-t border-slate-200 transition-colors hover:bg-slate-50">
                     <td className="px-4 py-3">{editingId === partner.id ? <input type="number" min={0} value={editingSortOrder} onChange={(event) => setEditingSortOrder(Number(event.target.value))} className="w-20 rounded-lg border px-2 py-1.5" /> : partner.sort_order}</td>
                     <td className="px-4 py-3 font-medium">{editingId === partner.id ? <input value={editingName} onChange={(event) => setEditingName(event.target.value)} className="w-full rounded-lg border px-3 py-1.5" /> : partner.name}</td>
+                    <td className="px-4 py-3"><span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold">{PARTNER_TYPE_LABELS[partner.partner_type]}</span></td>
                     <td className="px-4 py-3">
                       <button
                         type="button"
@@ -258,7 +265,7 @@ export default function PartnerOrganizationsPage() {
                     </td>
                   </tr>
                 ))}
-                {visiblePartners.length === 0 && <tr><td colSpan={4} className="px-4 py-10 text-center text-slate-400">표시할 협력업체가 없습니다.</td></tr>}
+                {visiblePartners.length === 0 && <tr><td colSpan={5} className="px-4 py-10 text-center text-slate-400">표시할 협력업체가 없습니다.</td></tr>}
               </tbody>
             </table>
           </div>

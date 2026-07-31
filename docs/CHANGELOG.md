@@ -180,3 +180,12 @@
 - 가입 성공 직후 세션 종료와 로그인/AppShell의 승인 대기·거절·비활성·직원 정보 없음 차단 보강
 - 관리자 승인 시 Auth 존재·이메일·연결 상태를 검증하고 불완전 계정을 가입 요청 목록에 표시
 - 직원 비활성화와 서버 전용 Admin API 기반 완전 삭제를 분리하고 삭제 전후 잔존 상태 검증 추가
+# Sprint 7C - LME Auto Sync Engine
+
+- 한국비철금속협회 HTML의 일자·Al·현물 US$/톤 구조를 검증하는 parser와 fixture unit test를 추가했습니다.
+- 2024-01-01 최초 이력 및 최신일 이후 증분 동기화, 중복 skip, 가격 conflict 보존, 동시 실행 차단을 추가했습니다.
+- 관리자 동기화 API·상태 UI와 하루 1회 Vercel Cron 진입점을 추가했습니다.
+- 계약 기준일 이하에서 가장 가까운 실제 저장 거래일을 조회하는 reference API를 추가했습니다.
+- 기존 수기·CSV 기능과 확정 가격 불변 정책을 유지하며 환율은 임의 생성하지 않습니다.
+- LME 전용 동기화 내부를 Market Data Provider, Sync Orchestrator, Repository로 분리했습니다.
+- 향후 환율 Provider용 타입과 누락·유효성 상태를 구분하는 국내환산 계산 서비스를 추가했습니다. 환율 수집은 포함하지 않습니다.

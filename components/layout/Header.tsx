@@ -22,6 +22,7 @@ const pageTitles: Record<string, string> = {
   "/schedule": "일정",
   "/notices": "공지사항",
   "/notifications": "알림",
+  "/statistics/lme": "LME 시세",
   "/settings": "설정",
   "/settings/templates": "업무 템플릿 관리",
   "/settings/employees": "직원 관리",
@@ -91,17 +92,17 @@ export default function Header({ onSearchClick }: HeaderProps) {
 
   return (
     <>
-      <header className="relative z-40 border-b border-slate-200 bg-white/80 px-6 py-3 backdrop-blur">
+      <header className="relative z-40 border-b border-slate-200 bg-white/80 px-5 py-2 backdrop-blur">
         <div className="flex items-center justify-between">
           <div>
             <p className="text-xs font-semibold uppercase text-slate-400">
               Gongmu ERP
             </p>
-            <h2 className="mt-1 text-lg font-bold text-slate-900">
+            <h2 className="mt-0.5 text-base font-bold text-slate-900">
               {getPageTitle(pathname)}
             </h2>
           </div>
-          <div className="flex items-center gap-2.5">
+          <div className="flex items-center gap-2">
             <FocusPanelButton />
             <button
               type="button"
@@ -112,7 +113,7 @@ export default function Header({ onSearchClick }: HeaderProps) {
                 setStayOnPage(false);
                 setIsQuickCreateOpen(true);
               }}
-              className="flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 bg-slate-50 text-slate-600 transition-colors hover:bg-white focus:outline-none focus:ring-2 focus:ring-blue-100"
+              className="flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 bg-slate-50 text-slate-600 transition-colors hover:bg-white focus:outline-none focus:ring-2 focus:ring-blue-100"
             >
               <Plus size={18} />
             </button>
@@ -120,7 +121,7 @@ export default function Header({ onSearchClick }: HeaderProps) {
               type="button"
               aria-label="최근 항목"
               onClick={() => setIsRecentOpen(true)}
-              className="flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 bg-slate-50 text-slate-600 transition-colors hover:bg-white focus:outline-none focus:ring-2 focus:ring-blue-100"
+              className="flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 bg-slate-50 text-slate-600 transition-colors hover:bg-white focus:outline-none focus:ring-2 focus:ring-blue-100"
             >
               <Clock size={18} />
             </button>
@@ -129,7 +130,7 @@ export default function Header({ onSearchClick }: HeaderProps) {
               aria-label={`${getPageTitle(pathname)} 새로고침`}
               title="새로고침"
               onClick={() => window.location.reload()}
-              className="flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 bg-slate-50 text-slate-600 transition-colors hover:bg-white focus:outline-none focus:ring-2 focus:ring-blue-100"
+              className="flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 bg-slate-50 text-slate-600 transition-colors hover:bg-white focus:outline-none focus:ring-2 focus:ring-blue-100"
             >
               <RefreshCw size={18} />
             </button>
@@ -137,7 +138,7 @@ export default function Header({ onSearchClick }: HeaderProps) {
             <button
               type="button"
               onClick={onSearchClick}
-              className="flex h-9 items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-2.5 text-sm font-medium text-slate-600 transition-colors hover:bg-white focus:outline-none focus:ring-2 focus:ring-blue-100"
+              className="flex h-8 items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-2.5 text-sm font-medium text-slate-600 transition-colors hover:bg-white focus:outline-none focus:ring-2 focus:ring-blue-100"
             >
               <Search size={16} className="text-slate-400" />
               검색

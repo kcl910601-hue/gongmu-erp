@@ -1,5 +1,11 @@
 # Gongmu ERP - Project Context
 
+## Sprint 7C LME Auto Sync
+
+한국비철금속협회 공개 HTML에서 Al 현물 USD/ton을 서버가 저빈도로 수집하는 구조를 추가했습니다. 최초 동기화는 2024-01-01까지 순차 탐색하고, 증분 동기화는 DB 최신일에서 중단합니다. 기존 가격은 덮어쓰지 않으며 가격 차이는 conflict로 기록합니다. 협회가 환율을 제공하지 않으므로 자동수집 행에는 환율·국내환산가를 만들지 않습니다. 자세한 운영 조건은 `docs/LME_SYNC.md`를 기준으로 합니다.
+
+내부 LME Sync는 Market Data Provider, 공통 Sync Orchestrator, LME Repository로 분리했습니다. 현재 활성 Provider는 LME만이며 환율은 타입과 계산 결과 체계만 준비되어 있습니다. 기존 API·UI·DB 경로는 유지됩니다.
+
 ## Sprint 6-2 UAT 상태
 
 테스트 계정 Seed의 평문 비밀번호를 제거하고 `scripts/seed-uat-accounts.mjs`에서 필수 환경변수로만 주입하도록 변경했습니다. 2026-07-29 연결된 Supabase project ref `cropibqvvzpxlnqpkyto`는 Production으로 확인되어 최초 Seed와 실제 UAT는 실행하지 않았습니다.

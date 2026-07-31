@@ -43,9 +43,7 @@ function toDateValue(date: Date) {
 
 function toDisplayValue(value: string) {
   const date = parseDateInput(value);
-  return date
-    ? `${toDateValue(date)} (${format(date, "EEE", { locale: ko })})`
-    : value;
+  return date ? toDateValue(date) : value;
 }
 
 export function DatePicker({
@@ -122,11 +120,11 @@ export function DatePicker({
   return (
     <div className={`relative min-w-0 ${className}`}>
       <div
-        className={`flex h-10 items-center rounded-xl border bg-white transition-colors focus-within:ring-2 focus-within:ring-blue-100 ${
+        className={`flex h-9 items-center rounded-lg border bg-white transition-colors focus-within:ring-2 focus-within:ring-blue-100 ${
           error ? "border-red-400" : "border-slate-200 focus-within:border-blue-400"
         }`}
       >
-        <CalendarDays className="ml-3 h-4 w-4 shrink-0 text-slate-400" />
+        <CalendarDays className="ml-2 h-3.5 w-3.5 shrink-0 text-slate-400" />
         <input
           id={id}
           name={name}
@@ -165,7 +163,7 @@ export function DatePicker({
               event.currentTarget.blur();
             }
           }}
-          className="min-w-0 flex-1 bg-transparent px-2 text-sm text-slate-700 outline-none placeholder:text-slate-400 disabled:cursor-not-allowed disabled:text-slate-400"
+          className="min-w-0 flex-1 bg-transparent px-1.5 text-xs text-slate-700 outline-none placeholder:text-slate-400 disabled:cursor-not-allowed disabled:text-slate-400"
         />
         {savedValue && (
           <button
@@ -178,7 +176,7 @@ export function DatePicker({
               setEditingValue("");
               void saveDate(null);
             }}
-            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-slate-400 hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-40"
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-slate-400 hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-40"
           >
             <Trash2 className="h-4 w-4" />
           </button>
@@ -191,7 +189,7 @@ export function DatePicker({
               aria-label="달력 열기"
               title="달력 열기"
               onMouseDown={(event) => event.preventDefault()}
-              className="mr-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
+              className="mr-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-slate-500 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
             >
               <CalendarDays className="h-4 w-4" />
             </button>
