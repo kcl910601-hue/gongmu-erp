@@ -1,6 +1,47 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { buildMarketSummary, type LmeMarketPrice, type MarketAverage } from "@/lib/lme-market";
 
+const EXCHANGE_RATE_TYPE = "usd_krw_deal_base_rate";
+
+type ExchangeRateRow = { reference_date: string; rate: number };
+
+async function attachExchangeRates(supabase: SupabaseClient, records: LmeMarketPrice[]) {
+  if (records.length === 0) return { data: records, error: null };
+  const dates = records.map((record) => record.reference_date).sort();
+  const firstDate = dates[0];
+  const lastDate = dates.at(-1) ?? firstDate;
+  const [rangeResult, previousResult] = await Promise.all([
+    supabase.from("exchange_rates").select("reference_date,rate")
+      .eq("base_currency", "USD").eq("quote_currency", "KRW").eq("rate_type", EXCHANGE_RATE_TYPE)
+      .gte("reference_date", firstDate).lte("reference_date", lastDate).order("reference_date", { ascending: true }),
+    supabase.from("exchange_rates").select("reference_date,rate")
+      .eq("base_currency", "USD").eq("quote_currency", "KRW").eq("rate_type", EXCHANGE_RATE_TYPE)
+      .lt("reference_date", firstDate).order("reference_date", { ascending: false }).limit(1).maybeSingle(),
+  ]);
+  if (rangeResult.error) return { data: null, error: rangeResult.error };
+  if (previousResult.error) return { data: null, error: previousResult.error };
+  const rates = [
+    ...(previousResult.data ? [previousResult.data] : []),
+    ...(rangeResult.data ?? []),
+  ] as ExchangeRateRow[];
+  rates.sort((a, b) => a.reference_date.localeCompare(b.reference_date));
+  const enriched = records.map((record) => {
+    let nearest: ExchangeRateRow | undefined;
+    for (const rate of rates) {
+      if (rate.reference_date > record.reference_date) break;
+      nearest = rate;
+    }
+    if (!nearest) return record;
+    const exchangeRate = Number(nearest.rate);
+    return {
+      ...record,
+      exchange_rate_krw_per_usd: exchangeRate,
+      domestic_lme_krw_per_kg: record.lme_al_usd_per_ton * exchangeRate / 1000,
+    };
+  });
+  return { data: enriched, error: null };
+}
+
 export async function getLatestLmeMarket(supabase: SupabaseClient, materialCode = "AL") {
   return supabase.from("lme_market_prices").select("*").eq("material_code", materialCode).not("domestic_lme_krw_per_kg", "is", null).order("reference_date", { ascending: false }).order("round", { ascending: false }).order("created_at", { ascending: false }).limit(1).maybeSingle();
 }
@@ -29,9 +70,13 @@ export async function getMarketDataset(supabase: SupabaseClient, params: URLSear
   const ascending = params.get("sort") === "oldest";
   const { data, error } = await query.order("reference_date", { ascending }).order("round", { ascending });
   if (error) return { data: null, error };
-  const records = (data ?? []) as LmeMarketPrice[];
+  const recordsResult = await attachExchangeRates(supabase, (data ?? []) as LmeMarketPrice[]);
+  if (recordsResult.error || !recordsResult.data) return { data: null, error: recordsResult.error };
+  const records = recordsResult.data;
   const { data: analysisData, error: analysisError } = await supabase.from("lme_market_prices").select("*").eq("material_code", material).order("reference_date", { ascending: false }).limit(30);
   if (analysisError) return { data: null, error: analysisError };
+  const analysisResult = await attachExchangeRates(supabase, (analysisData ?? []) as LmeMarketPrice[]);
+  if (analysisResult.error || !analysisResult.data) return { data: null, error: analysisResult.error };
   const { data: cache, error: cacheError } = await supabase.from("lme_market_kpi_cache").select("average_1m, sample_count_1m, average_3m, sample_count_3m, average_6m, sample_count_6m").eq("material_code", material).maybeSingle();
   if (cacheError) return { data: null, error: cacheError };
   const cachedAverages: MarketAverage[] | undefined = cache ? [
@@ -39,5 +84,5 @@ export async function getMarketDataset(supabase: SupabaseClient, params: URLSear
     { months: 3, value: cache.average_3m, sampleCount: cache.sample_count_3m },
     { months: 6, value: cache.average_6m, sampleCount: cache.sample_count_6m },
   ] : undefined;
-  return { data: { records, summary: buildMarketSummary((analysisData ?? []) as LmeMarketPrice[], cachedAverages) }, error: null };
+  return { data: { records, summary: buildMarketSummary(analysisResult.data, cachedAverages) }, error: null };
 }
