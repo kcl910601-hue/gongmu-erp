@@ -3,9 +3,13 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   CalendarDays,
+  CheckSquare,
   ChevronLeft,
   ChevronRight,
+  Pin,
+  Plus,
   RefreshCw,
+  StickyNote,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { recordRecentTask } from "@/lib/recent";
@@ -26,6 +30,8 @@ import {
 } from "@/lib/status";
 import { PROJECT_SELECT_FIELDS } from "@/lib/projects";
 import { persistRecalculatedTaskOrders } from "@/lib/task-ordering";
+import { getCalendarMonthRange, normalizeCalendarSourceFilter, PERSONAL_NOTES_CHANGED_EVENT, dispatchPersonalNotesChanged, openNoteEditor, selectPersonalNotesForCalendar, type CalendarSourceFilter, type PersonalNote, type PersonalNoteColor } from "@/lib/personal-notes";
+import { toast } from "@/lib/toast";
 
 type Project = IntegratedProject & {
   completion_due_date: string | null;
@@ -191,6 +197,15 @@ function buildWeekSegments(
 const quickFilters: QuickFilter[] = ["전체", "내 업무", "지연", "오늘", "이번 주"];
 const typeList = ["전체", "업무일정"];
 const viewList = ["달력 보기", "타임라인 보기", "간트 보기"];
+const CALENDAR_SOURCE_FILTER_KEY = "calendar-source-filter";
+const sourceFilters: { value: CalendarSourceFilter; label: string }[] = [{ value: "all", label: "전체" }, { value: "company", label: "회사 일정" }, { value: "personal", label: "나의 일정" }];
+const personalNoteColorClass: Record<PersonalNoteColor, string> = {
+  default: "border-slate-300 bg-slate-100 text-slate-700",
+  yellow: "border-amber-300 bg-amber-100 text-amber-800",
+  green: "border-emerald-300 bg-emerald-100 text-emerald-800",
+  red: "border-red-300 bg-red-100 text-red-800",
+  blue: "border-blue-300 bg-blue-100 text-blue-800",
+};
 
 export default function CalendarPage() {
   const { can } = usePermission();
@@ -221,6 +236,7 @@ export default function CalendarPage() {
   const [items, setItems] = useState<CalendarItem[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
+  const [personalNotes, setPersonalNotes] = useState<PersonalNote[]>([]);
   const [selectedTask, setSelectedTask] = useState<GanttTaskDetail | null>(null);
   const [quickFilter, setQuickFilter] = useState<QuickFilter>("전체");
   const [showCompleted, setShowCompleted] = useState(false);
@@ -229,6 +245,7 @@ export default function CalendarPage() {
   const [typeFilter, setTypeFilter] = useState("전체");
   const [assigneeFilter, setAssigneeFilter] = useState("전체");
   const [viewMode, setViewMode] = useState("달력 보기");
+  const [sourceFilter, setSourceFilter] = useState<CalendarSourceFilter>("all");
   const [currentMonth, setCurrentMonth] = useState(() =>
     getLocalMonthValue()
   );
@@ -243,11 +260,30 @@ export default function CalendarPage() {
         "view"
       );
       if (requestedView === "gantt") setViewMode("간트 보기");
+      const storedSource = normalizeCalendarSourceFilter(window.localStorage.getItem(CALENDAR_SOURCE_FILTER_KEY));
+      setSourceFilter(storedSource);
+      if (storedSource === "personal") setViewMode("달력 보기");
     }, 0);
     void loadCalendar();
     void loadCurrentAssignee();
     return () => window.clearTimeout(timer);
   }, []);
+
+  useEffect(() => {
+    let active = true;
+    async function loadPersonalNotes() {
+      const { start: dueStart, end: dueEnd } = getCalendarMonthRange(currentMonth);
+      const response = await fetch(`/api/personal-notes?dueStart=${dueStart}&dueEnd=${dueEnd}`, { cache: "no-store" });
+      const result = await response.json() as { notes?: PersonalNote[]; error?: string };
+      if (!active) return;
+      if (!response.ok) { toast.error(result.error ?? "개인 일정을 불러오지 못했습니다."); return; }
+      setPersonalNotes(selectPersonalNotesForCalendar(result.notes ?? [], dueStart, dueEnd));
+    }
+    function handleChanged() { void loadPersonalNotes(); }
+    const timer = window.setTimeout(() => void loadPersonalNotes(), 0);
+    window.addEventListener(PERSONAL_NOTES_CHANGED_EVENT, handleChanged);
+    return () => { active = false; window.clearTimeout(timer); window.removeEventListener(PERSONAL_NOTES_CHANGED_EVENT, handleChanged); };
+  }, [currentMonth]);
 
   async function loadCurrentAssignee() {
     const {
@@ -671,11 +707,15 @@ export default function CalendarPage() {
   }
 
   const calendarDays = getCalendarDays();
+  const showCompanySchedule = sourceFilter !== "personal";
+  const showPersonalSchedule = sourceFilter !== "company";
+  const visibleCompanyCount = showCompanySchedule ? currentViewItems.length : 0;
+  const visiblePersonalCount = showPersonalSchedule ? personalNotes.length : 0;
   const calendarWeekLayouts = buildWeekSegments(
-    calendarVisibleItems,
+    showCompanySchedule ? calendarVisibleItems : [],
     splitMonthIntoWeeks(calendarDays)
   );
-  const selectedDateTaskItems = calendarVisibleItems
+  const selectedDateTaskItems = (showCompanySchedule ? calendarVisibleItems : [])
     .filter((item) =>
       isTaskCalendarItem(item) &&
       (item.startDate && item.endDate
@@ -690,6 +730,23 @@ export default function CalendarPage() {
 
       return a.title.localeCompare(b.title);
     });
+  const personalNotesByDate = useMemo(() => {
+    const grouped = new Map<string, PersonalNote[]>();
+    for (const note of personalNotes) {
+      if (!note.due_date) continue;
+      grouped.set(note.due_date, [...(grouped.get(note.due_date) ?? []), note]);
+    }
+    return grouped;
+  }, [personalNotes]);
+  const selectedDatePersonalNotes = [...(personalNotesByDate.get(selectedDate) ?? [])].sort((a, b) => Number(b.is_pinned) - Number(a.is_pinned) || Number(a.is_completed) - Number(b.is_completed) || b.created_at.localeCompare(a.created_at));
+
+  async function togglePersonalTodo(note: PersonalNote) {
+    const previous = personalNotes;
+    setPersonalNotes((current) => current.map((item) => item.id === note.id ? { ...item, is_completed: !item.is_completed } : item));
+    const response = await fetch(`/api/personal-notes/${note.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ isCompleted: !note.is_completed }) });
+    if (!response.ok) { setPersonalNotes(previous); toast.error("Todo 상태를 저장하지 못했습니다."); return; }
+    dispatchPersonalNotesChanged();
+  }
   const legendItems: { label: string; variant: BadgeVariant }[] = [
     { label: "지연", variant: "danger" },
     { label: "오늘", variant: "warning" },
@@ -738,40 +795,34 @@ export default function CalendarPage() {
               </Button>
             ))}
           </div>
-          <Button
-            onClick={loadCalendar}
-            variant="secondary"
-            className="flex h-10 shrink-0 items-center justify-center gap-2 rounded-2xl px-4 text-sm font-medium transition-colors duration-150"
-          >
-            <RefreshCw size={16} />
-            새로고침
-          </Button>
+          <div className="flex gap-2"><Button onClick={() => openNoteEditor({ noteType: "todo", dueDate: selectedDate || today })} variant="primary" className="flex h-10 items-center gap-2 rounded-2xl px-4"><Plus size={16}/>내 일정 추가</Button><Button onClick={loadCalendar} variant="secondary" className="flex h-10 shrink-0 items-center justify-center gap-2 rounded-2xl px-4 text-sm font-medium transition-colors duration-150"><RefreshCw size={16}/>새로고침</Button></div>
         </div>
       </div>
 
       <div className="mb-5 grid grid-cols-1 gap-4 md:grid-cols-3">
         <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
           <h3 className="text-sm font-medium text-slate-500">조회 일정</h3>
-          <p className="mt-1 text-3xl font-bold tracking-tight text-slate-950">{currentViewItems.length}</p>
+          <p className="mt-1 text-3xl font-bold tracking-tight text-slate-950">{visibleCompanyCount + visiblePersonalCount}</p>
         </div>
 
         <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
           <h3 className="text-sm font-medium text-slate-500">업무 일정</h3>
           <p className="mt-1 text-3xl font-bold tracking-tight text-blue-600">
-            {currentViewItems.filter(isTaskCalendarItem).length}
+            {showCompanySchedule ? currentViewItems.filter(isTaskCalendarItem).length : 0}
           </p>
         </div>
 
         <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
           <h3 className="text-sm font-medium text-slate-500">오늘 일정</h3>
           <p className="mt-1 text-3xl font-bold tracking-tight text-orange-600">
-            {currentViewItems.filter((item) => item.date === today).length}
+            {(showCompanySchedule ? currentViewItems.filter((item) => item.date === today).length : 0) + (showPersonalSchedule ? personalNotes.filter((note) => note.due_date === today).length : 0)}
           </p>
         </div>
       </div>
 
       <div className="mb-5 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
         <div className="flex flex-wrap items-end gap-3">
+          <div><div className="mb-1.5 text-xs font-medium text-slate-500">일정 소스</div><div className="flex rounded-2xl bg-slate-100 p-1">{sourceFilters.map((filter) => <button key={filter.value} type="button" onClick={() => { setSourceFilter(filter.value); if (filter.value === "personal") setViewMode("달력 보기"); window.localStorage.setItem(CALENDAR_SOURCE_FILTER_KEY, filter.value); }} className={`rounded-xl px-3 py-2 text-sm font-medium transition ${sourceFilter === filter.value ? "bg-white text-blue-700 shadow-sm" : "text-slate-500 hover:text-slate-800"}`}>{filter.label}</button>)}</div></div>
           <div>
             <div className="mb-1.5 text-xs font-medium text-slate-500">보기 방식</div>
 
@@ -923,7 +974,7 @@ export default function CalendarPage() {
                               setSelectedDate(date);
                             }
                           }}
-                          className={`h-full rounded-2xl border p-2.5 outline-none transition-all duration-150 ${
+                          className={`relative h-full rounded-2xl border p-2.5 outline-none transition-all duration-150 ${
                             date === selectedDate
                               ? "border-blue-200 bg-blue-50 shadow-sm ring-2 ring-blue-100"
                               : date === today
@@ -941,6 +992,8 @@ export default function CalendarPage() {
                               )}
                             </div>
                           )}
+                          {date && showPersonalSchedule && (personalNotesByDate.get(date)?.length ?? 0) > 0 && <button type="button" aria-label={`${date} 내 일정 보기`} onClick={(event) => { event.stopPropagation(); setSelectedDate(date); }} className="absolute right-2 top-10 z-20 rounded-full bg-violet-600 px-2 py-0.5 text-[10px] font-semibold text-white shadow-sm">📝 {personalNotesByDate.get(date)?.length}</button>}
+                          {date && sourceFilter === "personal" && <div className="mt-9 space-y-1">{(personalNotesByDate.get(date) ?? []).slice(0, 2).map((note) => <div key={note.id} className={`truncate rounded-md border px-1.5 py-0.5 text-[10px] ${personalNoteColorClass[note.color]} ${note.note_type === "todo" && note.is_completed ? "line-through opacity-60" : ""}`}>{note.note_type === "sticky" ? "📌" : note.note_type === "todo" ? note.is_completed ? "☑" : "☐" : "📝"} {note.title || note.content}</div>)}</div>}
                         </div>
                       ))}
                     </div>
@@ -1071,13 +1124,10 @@ export default function CalendarPage() {
             <h2 className="text-lg font-bold tracking-tight text-slate-950">
               {formatKoreanDate(selectedDate)}
             </h2>
-            <p className="mt-1 text-sm leading-6 text-slate-500">
-              {selectedDate === today ? "오늘 업무" : "업무"}{" "}
-              {selectedDateTaskItems.length}건
-            </p>
+            <p className="mt-1 text-sm leading-6 text-slate-500">{showCompanySchedule && `회사 일정 ${selectedDateTaskItems.length}건`}{showCompanySchedule && showPersonalSchedule ? " · " : ""}{showPersonalSchedule && `내 일정 ${selectedDatePersonalNotes.length}건`}</p>
           </div>
 
-          <div className="mb-5 min-w-0 rounded-2xl bg-slate-50 p-3.5">
+          {showCompanySchedule && <div className="mb-5 min-w-0 rounded-2xl bg-slate-50 p-3.5">
             <div className="mb-3 flex items-center justify-between gap-3">
               <h3 className="text-sm font-semibold text-slate-800">선택 날짜 업무</h3>
               <span className="rounded-full bg-white px-2.5 py-1 text-xs font-medium text-slate-500">
@@ -1137,7 +1187,12 @@ export default function CalendarPage() {
                 className="rounded-xl bg-white p-8 text-center text-sm text-slate-400"
               />
             )}
-          </div>
+          </div>}
+
+          {showPersonalSchedule && <div className="mb-5 min-w-0 rounded-2xl bg-violet-50 p-3.5">
+            <div className="mb-3 flex items-center justify-between gap-3"><div><h3 className="text-sm font-semibold text-slate-800">내 일정</h3><p className="mt-0.5 text-xs text-slate-500">나에게만 표시되는 개인 메모</p></div><button type="button" onClick={() => openNoteEditor({ noteType: "todo", dueDate: selectedDate })} className="inline-flex items-center gap-1 rounded-xl bg-violet-600 px-3 py-2 text-xs font-semibold text-white hover:bg-violet-700"><Plus size={14}/>내 일정 추가</button></div>
+            {selectedDatePersonalNotes.length > 0 ? <div className="max-h-80 space-y-2 overflow-y-auto pr-1">{selectedDatePersonalNotes.map((note) => { const Icon = note.note_type === "sticky" ? Pin : note.note_type === "todo" ? CheckSquare : StickyNote; return <article key={note.id} className={`rounded-xl border p-3 ${personalNoteColorClass[note.color]} ${note.note_type === "todo" && note.is_completed ? "opacity-60" : ""}`}><div className="flex items-start gap-2">{note.note_type === "todo" ? <button type="button" aria-label="Todo 완료 전환" onClick={() => void togglePersonalTodo(note)} className="mt-0.5 shrink-0"><CheckSquare size={16}/></button> : <Icon size={16} className="mt-0.5 shrink-0"/>}<div className="min-w-0"><p className={`text-sm font-semibold ${note.note_type === "todo" && note.is_completed ? "line-through" : ""}`}>{note.note_type === "todo" ? `${note.is_completed ? "☑" : "☐"} ` : note.note_type === "sticky" ? "📌 " : "📝 "}{note.title || note.content}</p>{note.title && note.content && <p className="mt-1 whitespace-pre-wrap text-xs opacity-80">{note.content}</p>}<span className="mt-1 inline-block rounded-full bg-white/70 px-2 py-0.5 text-[10px]">내 일정</span></div></div></article>; })}</div> : <EmptyState message="선택한 날짜에 개인 일정이 없습니다." className="rounded-xl bg-white p-6 text-center text-sm text-slate-400"/>}
+          </div>}
 
           <div>
             <h3 className="mb-3 text-sm font-semibold text-slate-800">Legend</h3>

@@ -1,5 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { buildMarketSummary, type LmeMarketPrice, type MarketAverage } from "@/lib/lme-market";
+import { calculateDomesticLmeValue } from "@/lib/market-data/calculations";
+import { buildWeeklyLmeComparison, findNearestExchangeRate, getKoreanWeeklyRanges } from "@/lib/market-data/weekly-lme";
 
 const EXCHANGE_RATE_TYPE = "usd_krw_deal_base_rate";
 
@@ -26,20 +28,26 @@ async function attachExchangeRates(supabase: SupabaseClient, records: LmeMarketP
   ] as ExchangeRateRow[];
   rates.sort((a, b) => a.reference_date.localeCompare(b.reference_date));
   const enriched = records.map((record) => {
-    let nearest: ExchangeRateRow | undefined;
-    for (const rate of rates) {
-      if (rate.reference_date > record.reference_date) break;
-      nearest = rate;
-    }
+    const nearest = findNearestExchangeRate(rates, record.reference_date);
     if (!nearest) return record;
     const exchangeRate = Number(nearest.rate);
+    const calculation = calculateDomesticLmeValue(record.lme_al_usd_per_ton, exchangeRate);
     return {
       ...record,
       exchange_rate_krw_per_usd: exchangeRate,
-      domestic_lme_krw_per_kg: record.lme_al_usd_per_ton * exchangeRate / 1000,
+      domestic_lme_krw_per_kg: calculation.status === "calculated" ? calculation.value : null,
     };
   });
   return { data: enriched, error: null };
+}
+
+export async function getWeeklyLmeComparison(supabase: SupabaseClient, materialCode = "AL", now = new Date()) {
+  const ranges = getKoreanWeeklyRanges(now);
+  const result = await supabase.from("lme_market_prices").select("*").eq("material_code", materialCode).eq("price_type", "spot").gte("reference_date", ranges.previousWeekStart).lte("reference_date", ranges.currentWeekEnd).order("reference_date", { ascending: true }).order("created_at", { ascending: false });
+  if (result.error) return { data: null, error: result.error };
+  const enriched = await attachExchangeRates(supabase, (result.data ?? []) as LmeMarketPrice[]);
+  if (enriched.error || !enriched.data) return { data: null, error: enriched.error };
+  return { data: buildWeeklyLmeComparison(enriched.data, ranges), error: null };
 }
 
 export async function getLatestLmeMarket(supabase: SupabaseClient, materialCode = "AL") {

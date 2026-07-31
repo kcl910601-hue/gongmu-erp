@@ -13,6 +13,7 @@ import QuickActionsFab from "@/components/quick-actions/QuickActionsFab";
 import { ToastViewport } from "@/components/ui/ToastViewport";
 import { FocusPanel } from "@/components/focus/FocusPanel";
 import { TaskDetailDialog } from "@/components/tasks/TaskDetailDialog";
+import NoteEditorModal from "@/components/workspace/NoteEditorModal";
 
 function getSidebarSnapshot() {
   if (typeof window === "undefined") return false;
@@ -148,6 +149,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       <ToastViewport />
       <FocusPanel />
       <TaskDetailDialog canEdit={hasPermission(employee?.role, "update")} />
+      <NoteEditorModal />
     </div>
     </AppShellUserProvider>
   );

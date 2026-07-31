@@ -15,6 +15,7 @@ import { logActivity } from "@/lib/activity";
 import { useAppShellUser } from "@/contexts/AppShellUserContext";
 import { supabase } from "@/lib/supabase";
 import type { QuickCreateInitialView } from "@/components/quick-create/QuickCreate";
+import { openNoteEditor } from "@/lib/personal-notes";
 
 type ProjectOption = {
   id: number;
@@ -22,7 +23,7 @@ type ProjectOption = {
   project_code: string | null;
 };
 
-type FabDialog = "shipment" | "memo" | null;
+type FabDialog = "shipment" | null;
 
 const initialShipmentForm = {
   projectId: "",
@@ -51,7 +52,6 @@ export default function QuickActionsFab() {
   const [dialog, setDialog] = useState<FabDialog>(null);
   const [projects, setProjects] = useState<ProjectOption[]>([]);
   const [shipmentForm, setShipmentForm] = useState(initialShipmentForm);
-  const [memo, setMemo] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
 
@@ -70,6 +70,10 @@ export default function QuickActionsFab() {
     setIsOpen(false);
     setDialog(null);
     setErrorMessage("");
+  }, []);
+
+  useEffect(() => {
+    window.localStorage.removeItem("quick-memos");
   }, []);
 
   useEffect(() => {
@@ -172,38 +176,6 @@ export default function QuickActionsFab() {
     closeAll();
   }
 
-  function saveMemo() {
-    const trimmedMemo = memo.trim();
-    if (!trimmedMemo) {
-      setErrorMessage("메모 내용을 입력하세요.");
-      return;
-    }
-
-    let storedMemos: unknown[] = [];
-    try {
-      const storedValue = JSON.parse(
-        localStorage.getItem("quick-memos") || "[]"
-      ) as unknown;
-      if (Array.isArray(storedValue)) storedMemos = storedValue;
-    } catch {
-      storedMemos = [];
-    }
-    localStorage.setItem(
-      "quick-memos",
-      JSON.stringify([
-        {
-          id: crypto.randomUUID(),
-          content: trimmedMemo,
-          projectId: contextProjectId,
-          createdAt: new Date().toISOString(),
-        },
-        ...storedMemos,
-      ])
-    );
-    setMemo("");
-    closeAll();
-  }
-
   if (!canUseQuickActions) return null;
 
   return (
@@ -243,10 +215,10 @@ export default function QuickActionsFab() {
               onClick={() => openQuickCreate("file")}
             />
             <ActionButton
-              label="메모 작성"
+              label="빠른 추가"
               icon={StickyNote}
               onClick={() => {
-                setDialog("memo");
+                openNoteEditor("memo");
                 setIsOpen(false);
               }}
             />
@@ -279,13 +251,13 @@ export default function QuickActionsFab() {
           <div
             role="dialog"
             aria-modal="true"
-            aria-label={dialog === "shipment" ? "출고 등록" : "메모 작성"}
+            aria-label="출고 등록"
             className="w-full max-w-lg rounded-2xl border border-slate-200 bg-white p-5 shadow-xl"
             onMouseDown={(event) => event.stopPropagation()}
           >
             <div className="mb-5 flex items-center justify-between">
               <h2 className="text-lg font-bold text-slate-950">
-                {dialog === "shipment" ? "출고 등록" : "빠른 메모"}
+                출고 등록
               </h2>
               <button
                 type="button"
@@ -297,8 +269,7 @@ export default function QuickActionsFab() {
               </button>
             </div>
 
-            {dialog === "shipment" ? (
-              <div className="space-y-3">
+            <div className="space-y-3">
                 <select
                   value={shipmentForm.projectId}
                   onChange={(event) =>
@@ -360,17 +331,7 @@ export default function QuickActionsFab() {
                   placeholder="비고"
                   className="w-full resize-none rounded-xl border border-slate-200 px-3 py-2 text-sm"
                 />
-              </div>
-            ) : (
-              <textarea
-                autoFocus
-                value={memo}
-                onChange={(event) => setMemo(event.target.value)}
-                rows={6}
-                placeholder="빠르게 기록할 내용을 입력하세요."
-                className="w-full resize-none rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-blue-300 focus:outline-none focus:ring-2 focus:ring-blue-100"
-              />
-            )}
+            </div>
 
             {errorMessage && (
               <p className="mt-3 rounded-xl bg-red-50 px-3 py-2 text-sm text-red-600">
@@ -389,9 +350,7 @@ export default function QuickActionsFab() {
               <button
                 type="button"
                 disabled={isSaving}
-                onClick={() =>
-                  dialog === "shipment" ? void createShipment() : saveMemo()
-                }
+                onClick={() => void createShipment()}
                 className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
               >
                 {isSaving ? "저장 중..." : "저장"}

@@ -25,6 +25,7 @@ import {
 import { isTaskCompleted } from "@/lib/status";
 import { toast } from "@/lib/toast";
 import { openTaskDetail } from "@/lib/task-detail";
+import { MorningBriefWorkspaceSummary } from "@/components/dashboard/MorningBriefWorkspaceSummary";
 
 const EXPANDED_KEY = "erp-morning-brief-expanded";
 
@@ -297,6 +298,7 @@ export function MorningBrief({
           onOpenTask={(task) => openTaskDetail(task.id)}
         />
       </div>
+      <MorningBriefWorkspaceSummary />
       </div>
       </div>
     </section>

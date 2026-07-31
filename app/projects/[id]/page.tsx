@@ -49,6 +49,7 @@ import { getShipmentQuantitySummary, isShipmentQuantityTask, resolveShipmentQuan
 import { assignTaskOrdersByCurrentSequence, persistRecalculatedTaskOrders, sortTasksBySchedule } from "@/lib/task-ordering";
 import type { ProcessType } from "@/types/process-type";
 import type { ProjectAssemblyVendor, ProjectSection } from "@/types/project-section";
+import { dispatchPersonalNotesChanged } from "@/lib/personal-notes";
 import {
   getProjectStatusLabel,
   getTaskStatusLabel,
@@ -76,6 +77,7 @@ type Project = {
   completion_due_date: string | null;
   quantity: number | null;
   quantity_unit: string | null;
+  memo: string | null;
 };
 
 type Task = {
@@ -1664,6 +1666,23 @@ export default function ProjectDetail() {
     return "default";
   }
 
+  async function copyProjectToPersonalNote() {
+    if (!project) return;
+    const sourceMemo = project.memo?.trim() || "프로젝트 상세 내용을 확인해주세요.";
+    const memoTitle = project.memo?.trim().split(/\r?\n/)[0]?.slice(0, 120) || "프로젝트 정보";
+    const copiedAt = new Date().toISOString().slice(0, 10);
+    const content = `프로젝트 : ${project.project_name}\n\n--------------------\n\n${sourceMemo}\n\n--------------------\n\n복사일\n${copiedAt}`;
+    const response = await fetch("/api/personal-notes", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ noteType: "memo", title: `[${project.project_name}] ${memoTitle}`, content, color: "default", dueDate: null }),
+    });
+    const result = await response.json() as { error?: string };
+    if (!response.ok) { toast.error(result.error ?? "내 메모에 추가하지 못했습니다."); return; }
+    dispatchPersonalNotesChanged();
+    toast.success("내 메모에 추가되었습니다.");
+  }
+
   if (!project) {
     return (
       <div className="min-h-screen bg-slate-50 p-8 text-sm text-slate-500">
@@ -1744,6 +1763,13 @@ export default function ProjectDetail() {
                   size={16}
                   className={isFavorite ? "fill-current" : ""}
                 />
+              </button>
+              <button
+                type="button"
+                onClick={() => void copyProjectToPersonalNote()}
+                className="inline-flex h-8 items-center gap-1.5 rounded-xl border border-blue-200 bg-blue-50 px-3 text-xs font-semibold text-blue-700 hover:bg-blue-100"
+              >
+                <Copy size={14}/>내 메모로 복사
               </button>
             </div>
 
