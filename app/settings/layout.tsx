@@ -7,9 +7,10 @@ import { usePermission } from "@/hooks/usePermission";
 import { canAccessRoute } from "@/lib/permissions";
 
 const tabs = [
-  { href: "/settings/templates", label: "업무 템플릿 관리" },
-  { href: "/settings/employees", label: "직원 관리" },
-  { href: "/settings/partners", label: "협력업체 관리" },
+  { href: "/settings/maintenance", label: "시스템 점검모드", adminOnly: true },
+  { href: "/settings/templates", label: "업무 템플릿 관리", adminOnly: false },
+  { href: "/settings/employees", label: "직원 관리", adminOnly: false },
+  { href: "/settings/partners", label: "협력업체 관리", adminOnly: false },
 ];
 
 export default function SettingsLayout({ children }: { children: ReactNode }) {
@@ -30,7 +31,7 @@ export default function SettingsLayout({ children }: { children: ReactNode }) {
             className="mt-6 overflow-x-auto border-b border-slate-300"
           >
             <div className="flex min-w-max gap-6">
-              {tabs.filter((tab) => canAccessRoute(role, tab.href)).map((tab) => {
+              {tabs.filter((tab) => (!tab.adminOnly || role === "admin") && canAccessRoute(role, tab.href)).map((tab) => {
                 const active = pathname === tab.href;
                 return (
                   <Link

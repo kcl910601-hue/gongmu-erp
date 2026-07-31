@@ -40,7 +40,7 @@ export function ShipmentSchedulePreview({ month, vendorName, printedAt, items = 
             <div key={weekIndex} className="grid grid-cols-7">
               {(Array.isArray(week) ? week : []).map((cell) => (
                 <div key={cell.key} className={`min-h-24 overflow-hidden border border-slate-300 p-1 ${cell.day === null ? "bg-slate-50" : ""}`}>
-                  {cell.day !== null && <><div className={`mb-1 font-bold ${cell.isSunday ? "text-red-600" : cell.isSaturday ? "text-blue-600" : ""}`}>{cell.day}</div>{(Array.isArray(cell.items) ? cell.items : []).slice(0, MAX_CALENDAR_ITEMS).map((item) => <div key={item.id} className="mt-0.5 flex gap-1 rounded bg-blue-50 px-1 py-0.5"><strong className="min-w-0 flex-1 truncate">{item.projectName}</strong><span>{formatShipmentQuantity(item)}</span></div>)}{(Array.isArray(cell.items) ? cell.items : []).length > MAX_CALENDAR_ITEMS && <div className="mt-1 font-bold text-slate-600">외 {(Array.isArray(cell.items) ? cell.items : []).length - MAX_CALENDAR_ITEMS}건</div>}</>}
+                  {cell.day !== null && <><div className={`mb-1 font-bold ${cell.isSunday ? "text-red-600" : cell.isSaturday ? "text-blue-600" : ""}`}>{cell.day}</div>{(Array.isArray(cell.items) ? cell.items : []).slice(0, MAX_CALENDAR_ITEMS).map((item) => <div key={item.id} className="mt-0.5 rounded bg-blue-50 px-1 py-0.5"><strong className="block truncate">{item.projectName}</strong><span className="block truncate text-slate-600">{item.taskName}</span></div>)}{(Array.isArray(cell.items) ? cell.items : []).length > MAX_CALENDAR_ITEMS && <div className="mt-1 font-bold text-slate-600">외 {(Array.isArray(cell.items) ? cell.items : []).length - MAX_CALENDAR_ITEMS}건</div>}</>}
                 </div>
               ))}
             </div>

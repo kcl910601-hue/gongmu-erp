@@ -47,6 +47,7 @@ import { getProjectAssemblyVendors, updateProjectAssemblyVendorQuantity, updateP
 import { formatProjectQuantity, parseProjectQuantity } from "@/lib/project-quantity";
 import { PROJECT_SELECT_FIELDS } from "@/lib/projects";
 import { getShipmentQuantitySummary, isShipmentQuantityTask, resolveShipmentQuantity } from "@/lib/shipment-quantity";
+import { getTaskFormRule } from "@/lib/task-form-rules";
 import { assignTaskOrdersByCurrentSequence, persistRecalculatedTaskOrders, sortTasksBySchedule } from "@/lib/task-ordering";
 import type { ProcessType } from "@/types/process-type";
 import type { ProjectAssemblyVendor, ProjectSection } from "@/types/project-section";
@@ -196,6 +197,8 @@ export default function ProjectDetail() {
   }), [project?.quantity, tasks]);
 
   const newTaskInputQuantity = taskForm.quantity.trim() === "" ? null : Number(taskForm.quantity);
+  const newTaskFormRule = getTaskFormRule(taskForm.task_name);
+  const showNewTaskQuantity = taskForm.task_type.includes("출고") && newTaskFormRule.showQuantity;
   const newTaskShipmentSummary = useMemo(() => getShipmentQuantitySummary({
     projectQuantity: project?.quantity ?? null,
     tasks,
@@ -882,18 +885,17 @@ export default function ProjectDetail() {
       return;
     }
 
-    const isShipment = taskForm.task_type.includes("출고");
     const normalizedQuantity = taskForm.quantity.trim();
     const taskQuantity = normalizedQuantity === "" ? null : Number(normalizedQuantity);
-    if (isShipment && taskQuantity !== null && (!Number.isInteger(taskQuantity) || taskQuantity <= 0)) {
-      toast.warning("출고 수량은 0보다 큰 정수로 입력하세요.");
+    if (newTaskFormRule.showQuantity && taskQuantity !== null && (!Number.isInteger(taskQuantity) || taskQuantity <= 0)) {
+      toast.warning("수량은 0보다 큰 정수로 입력하세요.");
       return;
     }
-    if (isShipment && taskQuantity !== null && newTaskShipmentSummary.projectQuantity === null) {
+    if (showNewTaskQuantity && taskQuantity !== null && newTaskShipmentSummary.projectQuantity === null) {
       toast.warning("프로젝트 전체 수량을 먼저 확인해주세요.");
       return;
     }
-    if (isShipment && taskQuantity !== null && newTaskShipmentSummary.isExceeded) {
+    if (showNewTaskQuantity && taskQuantity !== null && newTaskShipmentSummary.isExceeded) {
       toast.error(
         `프로젝트 수량을 초과했습니다. 기존 출고 예정 ${formatProjectQuantity(newTaskShipmentSummary.existingShipmentTotal, project.quantity_unit)}, 현재 입력 ${formatProjectQuantity(taskQuantity, project.quantity_unit)}, 초과 ${formatProjectQuantity(newTaskShipmentSummary.exceededQuantity, project.quantity_unit)}, 최대 입력 가능 ${formatProjectQuantity(newTaskShipmentSummary.maxInputQuantity, project.quantity_unit)}`
       );
@@ -926,7 +928,7 @@ export default function ProjectDetail() {
           task_order: maxOrder + 1,
           task_name: taskForm.task_name.trim(),
           task_type: taskForm.task_type.trim(),
-          quantity: isShipment ? taskQuantity : null,
+          quantity: newTaskFormRule.showQuantity ? taskQuantity : null,
           assignee: savedAssignee,
           status: taskForm.status,
           start_date: taskForm.start_date || null,
@@ -1022,25 +1024,26 @@ export default function ProjectDetail() {
   }
 
   async function updateTaskQuantity(task: Task, rawQuantity: string) {
-    if (isUpdating || !isShipmentTask(task)) return;
+    if (isUpdating || !getTaskFormRule(task.task_name).showQuantity) return;
 
     const normalizedQuantity = rawQuantity.trim();
     const quantity = normalizedQuantity === "" ? null : Number(normalizedQuantity);
     if (quantity !== null && (!Number.isInteger(quantity) || quantity <= 0)) {
-      toast.warning("출고 수량은 0보다 큰 정수로 입력하세요.");
+      toast.warning("수량은 0보다 큰 정수로 입력하세요.");
       return;
     }
+    const isShipment = isShipmentTask(task);
     const summary = getShipmentQuantitySummary({
       projectQuantity: project?.quantity ?? null,
       tasks,
       editingTaskId: task.id,
       inputQuantity: quantity,
     });
-    if (quantity !== null && summary.projectQuantity === null) {
+    if (isShipment && quantity !== null && summary.projectQuantity === null) {
       toast.warning("프로젝트 전체 수량을 먼저 확인해주세요.");
       return;
     }
-    if (quantity !== null && summary.isExceeded) {
+    if (isShipment && quantity !== null && summary.isExceeded) {
       toast.error(
         `프로젝트 수량을 초과했습니다. 기존 출고 예정 ${formatProjectQuantity(summary.existingShipmentTotal, project?.quantity_unit)}, 현재 입력 ${formatProjectQuantity(quantity, project?.quantity_unit)}, 예상 출고 합계 ${formatProjectQuantity(summary.expectedShipmentTotal, project?.quantity_unit)}, 초과 ${formatProjectQuantity(summary.exceededQuantity, project?.quantity_unit)}, 최대 입력 가능 ${formatProjectQuantity(summary.maxInputQuantity, project?.quantity_unit)}`
       );
@@ -1076,7 +1079,7 @@ export default function ProjectDetail() {
     await addActivity({
       type: "task_update",
       title: `업무 수정 · ${changes.length}개 항목 변경`,
-      description: `${updatedTask.task_name || "업무"} 출고 수량을 변경했습니다.`,
+      description: `${updatedTask.task_name || "업무"} 수량을 변경했습니다.`,
       projectId: updatedTask.project_id,
       targetType: "task",
       targetId: updatedTask.id,
@@ -2236,6 +2239,9 @@ export default function ProjectDetail() {
                 const dueDateBadge = getDueDateBadge(task);
                 const noteSummary = taskNoteSummaries.get(task.id);
                 const latestNote = noteSummary?.latestNote ?? null;
+                const taskFormRule = getTaskFormRule(task.task_name);
+                const showTaskQuantity = isShipmentTask(task) && taskFormRule.showQuantity;
+                const showGenericTaskQuantity = !isShipmentTask(task) && taskFormRule.showQuantity;
                 const quantityDraft = taskQuantityDrafts[task.id] ?? task.quantity?.toString() ?? "";
                 const parsedQuantityDraft = quantityDraft.trim() === "" ? null : Number(quantityDraft);
                 const isQuantityDraftInvalid = parsedQuantityDraft !== null
@@ -2307,7 +2313,7 @@ export default function ProjectDetail() {
                       <div className="truncate text-sm leading-5 text-slate-600" title={task.task_type || "-"}>
                         {task.task_type || "-"}
                       </div>
-                      {isShipmentTask(task) && (
+                      {showTaskQuantity && (
                         <div className="mt-1 flex items-center gap-1">
                           <input
                             type="number"
@@ -2318,7 +2324,7 @@ export default function ProjectDetail() {
                             value={quantityDraft}
                             disabled={isUpdating}
                             aria-label={`${task.task_name || "업무"} 출고 수량`}
-                            placeholder="비워두면 전체 수량"
+                            placeholder="-"
                             onKeyDown={(event) => {
                               if (event.key === "Enter") event.currentTarget.blur();
                             }}
@@ -2343,7 +2349,7 @@ export default function ProjectDetail() {
                           )}
                         </div>
                       )}
-                      {isShipmentTask(task) && (
+                      {showTaskQuantity && (
                         <p className={`mt-1 text-[10px] ${
                           isQuantityDraftInvalid || taskShipmentSummary.isExceeded ? "text-red-600" : "text-slate-400"
                         }`}>
@@ -2353,6 +2359,15 @@ export default function ProjectDetail() {
                               ? `초과 ${formatProjectQuantity(taskShipmentSummary.exceededQuantity, project.quantity_unit)} · 저장 불가`
                               : `최대 ${formatProjectQuantity(taskShipmentSummary.maxInputQuantity, project.quantity_unit)} · 입력 후 잔여 ${formatProjectQuantity(taskShipmentSummary.remainingQuantity, project.quantity_unit)}`}
                         </p>
+                      )}
+                      {showGenericTaskQuantity && (
+                        <div className="mt-1 flex items-center gap-1">
+                          <input type="number" min="1" step="1" inputMode="numeric" value={quantityDraft} disabled={isUpdating} aria-label={`${task.task_name || "업무"} 수량`} placeholder="-" onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }} onChange={(event) => setTaskQuantityDrafts((current) => ({ ...current, [task.id]: event.target.value }))} onBlur={(event) => { const rawQuantity = event.currentTarget.value; const parsedQuantity = rawQuantity.trim() === "" ? null : Number(rawQuantity); if (parsedQuantity !== null && (!Number.isInteger(parsedQuantity) || parsedQuantity <= 0)) return; void updateTaskQuantity(task, rawQuantity); }} className={`h-7 min-w-0 w-full rounded-lg border bg-white px-2 text-xs outline-none placeholder:text-slate-400 disabled:bg-slate-100 ${isQuantityDraftInvalid ? "border-red-300 text-red-700" : "border-slate-200 text-slate-700 focus:border-blue-300"}`}/>
+                          {project.quantity_unit && <span className="shrink-0 text-[10px] text-slate-400">{project.quantity_unit}</span>}
+                        </div>
+                      )}
+                      {!taskFormRule.showQuantity && (
+                        <span className="mt-1 block text-xs text-slate-400">-</span>
                       )}
                     </td>
                     <td className="h-14 px-2 py-2 align-middle">
@@ -2639,7 +2654,10 @@ export default function ProjectDetail() {
                   })
                 }
               />
-              {taskForm.task_type.includes("출고") && (
+              {newTaskFormRule.showQuantity && !showNewTaskQuantity && (
+                <input type="number" min="1" step="1" inputMode="numeric" className="h-10 w-full rounded-2xl border border-slate-200 bg-slate-50 px-3 text-sm outline-none transition-colors focus:border-blue-300 focus:bg-white" placeholder="수량 (선택)" value={taskForm.quantity} onChange={(event) => setTaskForm({ ...taskForm, quantity: event.target.value })}/>
+              )}
+              {showNewTaskQuantity && (
                 <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
                   <div className="mb-2 grid grid-cols-2 gap-x-3 gap-y-1 text-xs text-slate-600">
                     <span>프로젝트 수량</span>
@@ -2757,14 +2775,16 @@ export default function ProjectDetail() {
                 variant="primary"
                 onClick={addTask}
                 disabled={isSavingTask || (
-                  taskForm.task_type.includes("출고")
+                  newTaskFormRule.showQuantity
                   && taskForm.quantity.trim() !== ""
                   && (
                     newTaskInputQuantity === null
                     || !Number.isInteger(newTaskInputQuantity)
                     || newTaskInputQuantity <= 0
-                    || newTaskShipmentSummary.projectQuantity === null
-                    || newTaskShipmentSummary.isExceeded
+                    || (showNewTaskQuantity && (
+                      newTaskShipmentSummary.projectQuantity === null
+                      || newTaskShipmentSummary.isExceeded
+                    ))
                   )
                 )}
                 className="rounded-2xl px-4 py-2 text-sm"

@@ -1,6 +1,6 @@
 ﻿"use client";
 
-import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { getEmployeeByAuth, type CurrentEmployee } from "@/lib/auth";
@@ -14,6 +14,8 @@ import { ToastViewport } from "@/components/ui/ToastViewport";
 import { FocusPanel } from "@/components/focus/FocusPanel";
 import { TaskDetailDialog } from "@/components/tasks/TaskDetailDialog";
 import NoteEditorModal from "@/components/workspace/NoteEditorModal";
+import { MaintenanceScreen } from "@/components/maintenance/MaintenanceScreen";
+import { getDefaultMaintenanceModeSetting, getMaintenanceModeSetting, MAINTENANCE_MODE_UPDATED_EVENT, shouldBlockForMaintenance, type MaintenanceModeSetting } from "@/lib/maintenance-mode";
 
 function getSidebarSnapshot() {
   if (typeof window === "undefined") return false;
@@ -37,6 +39,8 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const [authUserId, setAuthUserId] = useState<string | null>(null);
   const [authEmail, setAuthEmail] = useState<string | null>(null);
   const [isUserLoading, setIsUserLoading] = useState(!isPublicPage);
+  const [maintenanceSetting, setMaintenanceSetting] = useState<MaintenanceModeSetting>(getDefaultMaintenanceModeSetting);
+  const lastMaintenancePathRef = useRef<string | null>(null);
   const isCollapsed = useSyncExternalStore(
     subscribeSidebarChange,
     getSidebarSnapshot,
@@ -56,6 +60,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         setEmployee(null);
         setAuthUserId(null);
         setAuthEmail(null);
+        setMaintenanceSetting(getDefaultMaintenanceModeSetting());
         setIsUserLoading(false);
         router.push("/login");
         return;
@@ -75,6 +80,10 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         if (isMounted) router.replace(`/login?status=${authorizationStatus}`);
         return;
       }
+      const nextMaintenanceSetting = await getMaintenanceModeSetting(supabase);
+      if (!isMounted) return;
+      setMaintenanceSetting(nextMaintenanceSetting);
+      lastMaintenancePathRef.current = window.location.pathname;
       setEmployee(result.employee);
       setIsUserLoading(false);
     }
@@ -99,6 +108,24 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       subscription.unsubscribe();
     };
   }, [isPublicPage, router]);
+
+  useEffect(() => {
+    if (isPublicPage || !employee || lastMaintenancePathRef.current === pathname) return;
+    let active = true;
+    lastMaintenancePathRef.current = pathname;
+    void getMaintenanceModeSetting(supabase).then((setting) => {
+      if (active) setMaintenanceSetting(setting);
+    });
+    return () => { active = false; };
+  }, [employee, isPublicPage, pathname]);
+
+  useEffect(() => {
+    function handleMaintenanceUpdated(event: Event) {
+      setMaintenanceSetting((event as CustomEvent<MaintenanceModeSetting>).detail);
+    }
+    window.addEventListener(MAINTENANCE_MODE_UPDATED_EVENT, handleMaintenanceUpdated);
+    return () => window.removeEventListener(MAINTENANCE_MODE_UPDATED_EVENT, handleMaintenanceUpdated);
+  }, []);
 
   const userContextValue = useMemo(
     () => ({ employee, authUserId, authEmail, isLoading: isUserLoading }),
@@ -130,6 +157,14 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
   if (isPublicPage) {
     return <>{children}</>;
+  }
+
+  if (isUserLoading || !employee) {
+    return <main className="flex min-h-screen items-center justify-center bg-slate-100"><div className="text-center"><div className="mx-auto h-8 w-8 animate-spin rounded-full border-2 border-slate-300 border-t-blue-600" /><p className="mt-3 text-sm text-slate-500">사용자 정보를 확인하고 있습니다.</p></div></main>;
+  }
+
+  if (shouldBlockForMaintenance(employee, maintenanceSetting)) {
+    return <MaintenanceScreen employee={employee} setting={maintenanceSetting} />;
   }
 
   return (

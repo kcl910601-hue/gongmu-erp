@@ -72,13 +72,13 @@ export function buildShipmentCalendarWeeks(month: string, items: ShipmentSchedul
   return weeks;
 }
 
-function renderCalendar(month: string, items: ShipmentScheduleItem[]) {
+export function renderShipmentCalendar(month: string, items: ShipmentScheduleItem[]) {
   const weeks = buildShipmentCalendarWeeks(month, items);
   return `<section class="calendar"><div class="weekdays">${WEEKDAY_LABELS.map((label, index) => `<div class="weekday ${index === 0 ? "sun" : index === 6 ? "sat" : ""}">${label}</div>`).join("")}</div>${weeks.map((week) => `<div class="week">${week.map((cell) => {
     if (cell.day === null) return `<div class="day empty"></div>`;
     const visibleItems = cell.items.slice(0, MAX_CALENDAR_ITEMS);
     const remainingCount = cell.items.length - visibleItems.length;
-    return `<div class="day"><div class="day-number ${cell.isSunday ? "sun" : cell.isSaturday ? "sat" : ""}">${cell.day}</div>${visibleItems.map((item) => `<div class="calendar-item"><strong>${escapeHtml(item.projectName)}</strong><span>${escapeHtml(formatShipmentQuantity(item))}</span></div>`).join("")}${remainingCount > 0 ? `<div class="more">외 ${remainingCount}건</div>` : ""}</div>`;
+    return `<div class="day"><div class="day-number ${cell.isSunday ? "sun" : cell.isSaturday ? "sat" : ""}">${cell.day}</div>${visibleItems.map((item) => `<div class="calendar-item"><strong>${escapeHtml(item.projectName)}</strong><span>${escapeHtml(item.taskName)}</span></div>`).join("")}${remainingCount > 0 ? `<div class="more">외 ${remainingCount}건</div>` : ""}</div>`;
   }).join("")}</div>`).join("")}</section>`;
 }
 
@@ -113,11 +113,11 @@ export function printShipmentSchedulePdf(input: {
     h1 { margin: 0; font-size: 22px; } .meta { display: grid; grid-template-columns: auto auto; gap: 3px 14px; text-align: right; }
     .weekdays, .week { display: grid; grid-template-columns: repeat(7, 1fr); } .weekday { padding: 5px; border: 1px solid #cbd5e1; border-bottom: 0; background: #eff6ff; text-align: center; font-weight: 700; }
     .day { min-height: 72px; border: 1px solid #cbd5e1; padding: 4px; overflow: hidden; } .day.empty { background: #f8fafc; } .day-number { font-weight: 700; margin-bottom: 3px; }
-    .sun { color: #dc2626; } .sat { color: #2563eb; } .calendar-item { display: flex; justify-content: space-between; gap: 4px; margin-top: 2px; padding: 2px 3px; border-radius: 3px; background: #eff6ff; white-space: nowrap; }
-    .calendar-item strong { overflow: hidden; text-overflow: ellipsis; } .more { margin-top: 3px; color: #475569; font-weight: 700; }
+    .sun { color: #dc2626; } .sat { color: #2563eb; } .calendar-item { margin-top: 2px; padding: 2px 3px; border-radius: 3px; background: #eff6ff; white-space: nowrap; overflow: hidden; }
+    .calendar-item strong, .calendar-item span { display: block; overflow: hidden; text-overflow: ellipsis; } .calendar-item span { color: #475569; } .more { margin-top: 3px; color: #475569; font-weight: 700; }
     .details { margin-top: 12px; break-before: auto; } h2 { margin: 0 0 6px; font-size: 14px; } table { width: 100%; border-collapse: collapse; } th, td { border: 1px solid #94a3b8; padding: 5px 6px; text-align: left; } th { background: #e2e8f0; } .check { width: 42px; text-align: center; } .no-data { padding: 18px; text-align: center; color: #64748b; }
     @media print { .details { page-break-inside: auto; } thead { display: table-header-group; } tr { page-break-inside: avoid; } }
-  </style></head><body><header><div><h1>조립업체 월간 출고 일정표</h1></div><div class="meta"><b>업체명</b><span>${escapeHtml(input.vendorName)}</span><b>출력월</b><span>${escapeHtml(input.month)}</span><b>출력일</b><span>${escapeHtml(input.printedAt)}</span></div></header>${input.options.showCalendar ? renderCalendar(input.month, sortedItems) : ""}${input.options.showDetails ? renderDetails(sortedItems, input.options.includeCheckbox) : ""}</body></html>`);
+  </style></head><body><header><div><h1>조립업체 월간 출고 일정표</h1></div><div class="meta"><b>업체명</b><span>${escapeHtml(input.vendorName)}</span><b>출력월</b><span>${escapeHtml(input.month)}</span><b>출력일</b><span>${escapeHtml(input.printedAt)}</span></div></header>${input.options.showCalendar ? renderShipmentCalendar(input.month, sortedItems) : ""}${input.options.showDetails ? renderDetails(sortedItems, input.options.includeCheckbox) : ""}</body></html>`);
   popup.document.close();
   popup.focus();
   window.setTimeout(() => popup.print(), 250);

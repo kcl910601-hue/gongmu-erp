@@ -6,7 +6,7 @@ import { ShipmentSchedulePreview } from "@/components/shipments/ShipmentSchedule
 import { Button } from "@/components/ui/Button";
 import { supabase } from "@/lib/supabase";
 import { printShipmentSchedulePdf, type ShipmentScheduleItem, type ShipmentScheduleOptions } from "@/lib/shipment-schedule-pdf";
-import { resolveShipmentQuantity } from "@/lib/shipment-quantity";
+import { resolveTaskDisplayQuantity } from "@/lib/task-form-rules";
 
 type VendorRelation = {
   id: number;
@@ -234,7 +234,7 @@ export default function ShipmentSchedulePage() {
         shipmentDate: task.due_date?.slice(0, 10) ?? "",
         projectName: project?.project_name || "현장명 없음",
         taskName: task.task_name || "출고",
-        quantity: resolveShipmentQuantity(task.quantity, project?.quantity),
+        quantity: resolveTaskDisplayQuantity(task.task_name, task.quantity, project?.quantity),
         quantityUnit: project?.quantity_unit ?? null,
         memo: project?.memo ?? null,
       };
