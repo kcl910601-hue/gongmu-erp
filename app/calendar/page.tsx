@@ -32,6 +32,7 @@ import { PROJECT_SELECT_FIELDS } from "@/lib/projects";
 import { persistRecalculatedTaskOrders } from "@/lib/task-ordering";
 import { getCalendarMonthRange, normalizeCalendarSourceFilter, PERSONAL_NOTES_CHANGED_EVENT, dispatchPersonalNotesChanged, openNoteEditor, selectPersonalNotesForCalendar, type CalendarSourceFilter, type PersonalNote, type PersonalNoteColor } from "@/lib/personal-notes";
 import { toast } from "@/lib/toast";
+import { getSundayFirstMonthDays } from "@/lib/calendar-grid";
 
 type Project = IntegratedProject & {
   completion_due_date: string | null;
@@ -585,28 +586,7 @@ export default function CalendarPage() {
   }
 
   function getCalendarDays() {
-    const [year, month] = currentMonth.split("-").map(Number);
-    const firstDate = new Date(year, month - 1, 1);
-    const lastDate = new Date(year, month, 0);
-
-    const startDay = (firstDate.getDay() + 6) % 7;
-    const totalDays = lastDate.getDate();
-
-    const days: (string | null)[] = [];
-
-    for (let i = 0; i < startDay; i++) {
-      days.push(null);
-    }
-
-    for (let day = 1; day <= totalDays; day++) {
-      days.push(`${currentMonth}-${String(day).padStart(2, "0")}`);
-    }
-
-    while (days.length % 7 !== 0) {
-      days.push(null);
-    }
-
-    return days;
+    return getSundayFirstMonthDays(currentMonth);
   }
 
   const today = getLocalDateValue();
@@ -939,10 +919,10 @@ export default function CalendarPage() {
           </div>
 
           <div className="grid grid-cols-7 gap-1.5 sm:gap-2">
-            {["월", "화", "수", "목", "금", "토", "일"].map((day) => (
+            {["일", "월", "화", "수", "목", "금", "토"].map((day, dayIndex) => (
               <div
                 key={day}
-                className="rounded-xl border border-slate-200 bg-slate-50 px-2 py-2 text-center text-xs font-semibold text-slate-500"
+                className={`rounded-xl border px-2 py-2 text-center text-xs font-semibold ${dayIndex === 0 ? "border-red-100 bg-red-50 text-red-600" : dayIndex === 6 ? "border-blue-100 bg-blue-50 text-blue-600" : "border-slate-200 bg-slate-50 text-slate-500"}`}
               >
                 {day}
               </div>
@@ -959,8 +939,12 @@ export default function CalendarPage() {
                     style={{ height: weekHeight }}
                   >
                     <div className="grid h-full grid-cols-7 gap-1.5 sm:gap-2">
-                      {week.days.map((date, dayIndex) => (
-                        <div
+                      {week.days.map((date, dayIndex) => {
+                        const isSunday = dayIndex === 0;
+                        const isSaturday = dayIndex === 6;
+                        const weekendCellClass = isSunday ? "border-red-100 bg-red-50/40 hover:bg-red-50/60" : isSaturday ? "border-blue-100 bg-blue-50/40 hover:bg-blue-50/60" : "border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50";
+                        const dateNumberClass = date === selectedDate ? "text-blue-900" : date === today ? "text-amber-900" : isSunday ? "text-red-600" : isSaturday ? "text-blue-600" : "text-slate-700";
+                        return <div
                           key={date || `empty-${dayIndex}`}
                           onClick={() => {
                             if (date) setSelectedDate(date);
@@ -979,11 +963,11 @@ export default function CalendarPage() {
                               ? "border-blue-200 bg-blue-50 shadow-sm ring-2 ring-blue-100"
                               : date === today
                                 ? "border-amber-200 bg-amber-50"
-                                : "border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50 hover:shadow-sm"
-                          } ${date ? "cursor-pointer focus-visible:ring-2 focus-visible:ring-blue-100" : "border-slate-100 bg-slate-50/60"}`}
+                                : `${weekendCellClass} hover:shadow-sm`
+                          } ${date ? "cursor-pointer focus-visible:ring-2 focus-visible:ring-blue-100" : isSunday ? "border-red-100 bg-red-50/25" : isSaturday ? "border-blue-100 bg-blue-50/25" : "border-slate-100 bg-slate-50/60"}`}
                         >
                           {date && (
-                            <div className="flex items-center justify-between gap-2 text-sm font-semibold text-slate-700">
+                            <div className={`flex items-center justify-between gap-2 text-sm font-semibold ${dateNumberClass}`}>
                               <span>{Number(date.slice(-2))}</span>
                               {date === today && (
                                 <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-700">
@@ -994,8 +978,8 @@ export default function CalendarPage() {
                           )}
                           {date && showPersonalSchedule && (personalNotesByDate.get(date)?.length ?? 0) > 0 && <button type="button" aria-label={`${date} 내 일정 보기`} onClick={(event) => { event.stopPropagation(); setSelectedDate(date); }} className="absolute right-2 top-10 z-20 rounded-full bg-violet-600 px-2 py-0.5 text-[10px] font-semibold text-white shadow-sm">📝 {personalNotesByDate.get(date)?.length}</button>}
                           {date && sourceFilter === "personal" && <div className="mt-9 space-y-1">{(personalNotesByDate.get(date) ?? []).slice(0, 2).map((note) => <div key={note.id} className={`truncate rounded-md border px-1.5 py-0.5 text-[10px] ${personalNoteColorClass[note.color]} ${note.note_type === "todo" && note.is_completed ? "line-through opacity-60" : ""}`}>{note.note_type === "sticky" ? "📌" : note.note_type === "todo" ? note.is_completed ? "☑" : "☐" : "📝"} {note.title || note.content}</div>)}</div>}
-                        </div>
-                      ))}
+                        </div>;
+                      })}
                     </div>
 
                     <div className="pointer-events-none absolute inset-x-0 top-11 z-10 grid grid-cols-7 gap-x-1.5 gap-y-1.5 sm:gap-x-2">

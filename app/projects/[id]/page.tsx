@@ -26,6 +26,7 @@ import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { CollapsibleSection } from "@/components/ui/CollapsibleSection";
 import { DatePicker } from "@/components/common/DatePicker";
 import { ProjectFiles } from "@/components/files/ProjectFiles";
+import { ProjectMaterialAllocationsSection } from "@/components/projects/ProjectMaterialAllocationsSection";
 import ActivityTimeline from "@/components/activity/ActivityTimeline";
 import ProjectTimeline from "@/components/activity/ProjectTimeline";
 import { ProjectSectionDialog, type ProjectSectionDialogValue } from "@/components/projects/ProjectSectionDialog";
@@ -2508,6 +2509,8 @@ export default function ProjectDetail() {
         {sections.length === 0 && <EmptyState message="등록된 공정이 없습니다." />}
         </div>
       </div>
+
+      <ProjectMaterialAllocationsSection project={project} />
 
       <ProjectFiles projectId={projectId} />
 

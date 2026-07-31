@@ -41,7 +41,6 @@ import {
   isTaskInProgress,
   isTaskPending,
 } from "@/lib/status";
-import { formatNumber } from "@/lib/lme";
 import type { WeeklyLmeComparison } from "@/lib/market-data/weekly-lme";
 import PersonalWorkspace from "@/components/dashboard/PersonalWorkspace";
 import { WeeklyLmeCard } from "@/components/dashboard/WeeklyLmeCard";
