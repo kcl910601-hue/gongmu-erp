@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Clock, FolderOpen, Star, Trash2, X } from "lucide-react";
 import { Badge } from "@/components/ui/Badge";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { DdayBadge } from "@/components/ui/DdayBadge";
 import {
   clearFavoriteProjects,
   clearRecentProjects,
@@ -361,6 +362,7 @@ export default function RecentWorkspace({
                           {task.due_date || "-"}
                         </p>
                         <div className="mt-2 flex items-center gap-2">
+                          <DdayBadge targetDate={task.due_date} />
                           <Badge variant="default" className="px-2 py-0.5">
                             {getTaskStatusLabel(task.status)}
                           </Badge>

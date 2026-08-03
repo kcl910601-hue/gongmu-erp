@@ -31,6 +31,7 @@ import { logActivity } from "@/lib/activity";
 import { TASK_TAGS, getTaskTagDefinition, type TaskTagCode } from "@/lib/task-tags";
 import { formatProjectQuantity } from "@/lib/project-quantity";
 import { compareTasksBySchedule, persistRecalculatedTaskOrders } from "@/lib/task-ordering";
+import { getDday } from "@/lib/dday";
 import {
   getProjectStatusLabel,
   getTaskStatusLabel,
@@ -451,10 +452,7 @@ function addDays(date: Date, days: number) {
 }
 
 function getDayDiff(startDate: string, endDate: string) {
-  const startTime = parseDate(startDate).getTime();
-  const endTime = parseDate(endDate).getTime();
-
-  return Math.round((endTime - startTime) / (1000 * 60 * 60 * 24));
+  return getDday(endDate, startDate)?.diff ?? 0;
 }
 
 function getMonthRange(month: string) {
@@ -512,11 +510,11 @@ function getProjectStatusVariant(status: string | null): BadgeVariant {
 }
 
 function getDelayedDays(task: IntegratedTask, today: string) {
-  if (isTaskCompleted(task.status) || !task.due_date || task.due_date >= today) {
+  if (isTaskCompleted(task.status) || !task.due_date) {
     return null;
   }
-
-  return getDayDiff(task.due_date, today);
+  const dday = getDday(task.due_date, today);
+  return dday?.isExpired ? Math.abs(dday.diff) : null;
 }
 
 function getTaskTypeLabel(taskType: string | null) {

@@ -10,6 +10,7 @@ import {
   type PrioritizableTask,
 } from "@/lib/task-priority";
 import { getTaskStatusLabel } from "@/lib/status";
+import { DdayBadge } from "@/components/ui/DdayBadge";
 
 export type DashboardFocusTask = PrioritizableTask & {
   projectName: string;
@@ -99,6 +100,7 @@ export function TodayTaskList({
                 <Badge variant="default">
                   {getTaskStatusLabel(task.status)}
                 </Badge>
+                <DdayBadge targetDate={task.due_date} today={today} />
               </div>
               <p className="mt-1 truncate text-sm font-semibold text-slate-900">
                 {task.task_name || "업무명 없음"}

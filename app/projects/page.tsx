@@ -33,6 +33,7 @@ import { Button } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { TableViewControls } from "@/components/ui/TableViewControls";
 import { ErrorState } from "@/components/ui/ErrorState";
+import { DdayBadge } from "@/components/ui/DdayBadge";
 import { TableSkeleton } from "@/components/ui/Skeleton";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { usePersistentState } from "@/hooks/usePersistentState";
@@ -825,7 +826,10 @@ const loadRole = useCallback(async function loadRole() {
                     </Badge>
                   </td>
                   <td className="whitespace-nowrap px-3 py-3.5 text-slate-500">
-                    {formatDate(project.end_date || project.completion_due_date)}
+                    <div className="flex items-center gap-2">
+                      <span>{formatDate(project.end_date || project.completion_due_date)}</span>
+                      <DdayBadge targetDate={project.end_date || project.completion_due_date} />
+                    </div>
                   </td>
                   <td className="px-3 py-3.5">
                     <div className="flex gap-2"><Link href={`/projects/${project.id}`} className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-blue-600 transition-colors hover:border-blue-200 hover:bg-blue-50">보기</Link>

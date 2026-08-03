@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { Badge, type BadgeVariant } from "@/components/ui/Badge";
+import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { supabase } from "@/lib/supabase";
 import {
@@ -14,6 +14,8 @@ import type {
   GanttTaskDetail,
   IntegratedTask,
 } from "@/components/gantt/IntegratedProjectGantt";
+import { DdayBadge } from "@/components/ui/DdayBadge";
+import { getDday } from "@/lib/dday";
 
 type GanttTaskDetailModalProps = {
   task: GanttTaskDetail;
@@ -30,27 +32,6 @@ function isValidDateValue(value: string) {
 
   const date = new Date(`${value}T00:00:00`);
   return !Number.isNaN(date.getTime());
-}
-
-function getScheduleVariant(task: GanttTaskDetail, today: string): BadgeVariant {
-  if (isTaskCompleted(task.status)) return "success";
-  if (task.delayedDays !== null) return "danger";
-  if (task.dueDate === today) return "warning";
-  return "info";
-}
-
-function getScheduleLabel(task: GanttTaskDetail, today: string) {
-  if (isTaskCompleted(task.status)) return "완료";
-  if (task.delayedDays !== null) return `지연 ${task.delayedDays}일`;
-  if (task.dueDate === today) return "오늘 마감";
-
-  const dueDate = new Date(`${task.dueDate}T00:00:00`);
-  const todayDate = new Date(`${today}T00:00:00`);
-  const diffDays = Math.ceil(
-    (dueDate.getTime() - todayDate.getTime()) / (1000 * 60 * 60 * 24)
-  );
-
-  return diffDays > 0 ? `D-${diffDays}` : "-";
 }
 
 export function GanttTaskDetailModal({
@@ -84,13 +65,12 @@ export function GanttTaskDetailModal({
       status: editStatus,
       completedDate: editCompletedDate || null,
       delayedDays:
-        isTaskCompleted(editStatus) || !editDueDate || editDueDate >= today
+        isTaskCompleted(editStatus) || !editDueDate
           ? null
-          : Math.ceil(
-              (new Date(`${today}T00:00:00`).getTime() -
-                new Date(`${editDueDate}T00:00:00`).getTime()) /
-                (1000 * 60 * 60 * 24)
-            ),
+          : (() => {
+              const dday = getDday(editDueDate, today);
+              return dday?.isExpired ? Math.abs(dday.diff) : null;
+            })(),
     }),
     [editCompletedDate, editDueDate, editStartDate, editStatus, task, today]
   );
@@ -183,8 +163,6 @@ export function GanttTaskDetailModal({
     };
   });
 
-  const scheduleLabel = getScheduleLabel(previewTask, today);
-  const scheduleVariant = getScheduleVariant(previewTask, today);
 
   return (
     <div
@@ -206,9 +184,7 @@ export function GanttTaskDetailModal({
               >
                 {task.taskType || "미지정"}
               </span>
-              <Badge variant={scheduleVariant} className="px-2.5 py-1 font-semibold">
-                {scheduleLabel}
-              </Badge>
+              {isTaskCompleted(previewTask.status) ? <Badge variant="success" className="px-2.5 py-1 font-semibold">완료</Badge> : <DdayBadge targetDate={previewTask.dueDate} today={today} className="px-2.5 py-1" />}
             </div>
             <h2
               id="gantt-task-detail-title"
@@ -305,9 +281,7 @@ export function GanttTaskDetailModal({
 
         <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-3">
           <div className="text-xs font-medium text-slate-500">일정 상태</div>
-          <Badge variant={scheduleVariant} className="mt-2 px-2.5 py-1 font-semibold">
-            {scheduleLabel}
-          </Badge>
+          {isTaskCompleted(previewTask.status) ? <Badge variant="success" className="mt-2 px-2.5 py-1 font-semibold">완료</Badge> : <DdayBadge targetDate={previewTask.dueDate} today={today} className="mt-2 px-2.5 py-1" />}
         </div>
 
         {errorMessage && (

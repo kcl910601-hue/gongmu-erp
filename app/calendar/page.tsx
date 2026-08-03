@@ -33,6 +33,8 @@ import { persistRecalculatedTaskOrders } from "@/lib/task-ordering";
 import { getCalendarMonthRange, normalizeCalendarSourceFilter, PERSONAL_NOTES_CHANGED_EVENT, dispatchPersonalNotesChanged, openNoteEditor, selectPersonalNotesForCalendar, type CalendarSourceFilter, type PersonalNote, type PersonalNoteColor } from "@/lib/personal-notes";
 import { toast } from "@/lib/toast";
 import { getSundayFirstMonthDays } from "@/lib/calendar-grid";
+import { getDday } from "@/lib/dday";
+import { DdayBadge } from "@/components/ui/DdayBadge";
 
 type Project = IntegratedProject & {
   completion_due_date: string | null;
@@ -394,14 +396,11 @@ export default function CalendarPage() {
   }
 
   function getDelayedDays(task: Task) {
-    if (isTaskCompleted(task.status) || !task.due_date || task.due_date >= today) {
+    if (isTaskCompleted(task.status) || !task.due_date) {
       return null;
     }
-
-    const diffMs =
-      parseDateValue(today).getTime() - parseDateValue(task.due_date).getTime();
-
-    return Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+    const dday = getDday(task.due_date, today);
+    return dday?.isExpired ? Math.abs(dday.diff) : null;
   }
 
   function openTaskDetailModal(item: CalendarItem) {
@@ -461,29 +460,9 @@ export default function CalendarPage() {
     return isTaskCompleted(item.status);
   }
 
-  function getTaskDueVariant(item: CalendarItem): BadgeVariant {
-    if (isTaskCompleted(item.status)) return "success";
-    if (item.date < today) return "danger";
-    if (item.date === today) return "warning";
-    return "info";
-  }
-
   function getTaskDueLabel(item: CalendarItem) {
     if (isTaskCompleted(item.status)) return "완료";
-    if (item.date < today) {
-      const diffMs =
-        parseDateValue(today).getTime() - parseDateValue(item.date).getTime();
-      const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
-
-      return `지연 ${diffDays}일`;
-    }
-    if (item.date === today) return "오늘";
-
-    const diffMs =
-      parseDateValue(item.date).getTime() - parseDateValue(today).getTime();
-    const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
-
-    return `D-${diffDays}`;
+    return getDday(item.date, today)?.label ?? "-";
   }
 
   function getTaskDueClassName(item: CalendarItem) {
@@ -1151,12 +1130,11 @@ export default function CalendarPage() {
                       >
                         {getTaskStatusLabel(item.status)}
                       </Badge>
-                      <Badge
-                        variant={getTaskDueVariant(item)}
-                        className="px-2 py-0.5 text-[11px] font-medium"
-                      >
-                        {getTaskDueLabel(item)}
-                      </Badge>
+                      {isTaskCompleted(item.status) ? (
+                        <Badge variant="success" className="px-2 py-0.5 text-[11px] font-medium">{getTaskDueLabel(item)}</Badge>
+                      ) : (
+                        <DdayBadge targetDate={item.date} today={today} className="px-2 py-0.5 text-[11px]" />
+                      )}
                     </div>
                   </button>
                 ))}

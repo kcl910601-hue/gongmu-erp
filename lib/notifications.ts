@@ -2,6 +2,7 @@ import type { PostgrestError } from "@supabase/supabase-js";
 import { getCurrentEmployee, type CurrentEmployee } from "@/lib/auth";
 import { supabase } from "@/lib/supabase";
 import { isTaskCompleted } from "@/lib/status";
+import { getDday } from "@/lib/dday";
 
 export type NotificationSeverity = "danger" | "warning" | "info";
 export type NotificationCategory = "task" | "shipment" | "project" | "employee";
@@ -161,9 +162,8 @@ function getProjectName(
 }
 
 function getDaysDelayed(date: string, today: string) {
-  const dueTime = new Date(`${date}T00:00:00`).getTime();
-  const todayTime = new Date(`${today}T00:00:00`).getTime();
-  return Math.max(1, Math.ceil((todayTime - dueTime) / 86_400_000));
+  const dday = getDday(date, today);
+  return dday?.isExpired ? Math.abs(dday.diff) : 0;
 }
 
 function compareNotifications(a: NotificationItem, b: NotificationItem) {

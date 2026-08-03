@@ -44,6 +44,8 @@ import {
 import type { WeeklyLmeComparison } from "@/lib/market-data/weekly-lme";
 import PersonalWorkspace from "@/components/dashboard/PersonalWorkspace";
 import { WeeklyLmeCard } from "@/components/dashboard/WeeklyLmeCard";
+import { DdayBadge } from "@/components/ui/DdayBadge";
+import { getDday } from "@/lib/dday";
 
 const DASHBOARD_ACTIVITY_EXPANDED_KEY =
   "erp-dashboard-activity-expanded";
@@ -324,12 +326,7 @@ export default function Home() {
 
   function getDaysLeft(date: string | null) {
     if (!date) return null;
-
-    const today = new Date(getToday());
-    const dueDate = new Date(date);
-    const diff = dueDate.getTime() - today.getTime();
-
-    return Math.ceil(diff / (1000 * 60 * 60 * 24));
+    return getDday(date)?.diff ?? null;
   }
 
   function getDueStatus(project: Project) {
@@ -2058,7 +2055,10 @@ export default function Home() {
                       <td className="px-3 py-2.5">{project.process_type}</td>
                       <td className="px-3 py-2.5">{project.task_manager || "-"}</td>
                       <td className="px-3 py-2.5 text-slate-500">
-                        {getProjectEndDate(project) || "-"}
+                        <div className="flex items-center gap-2">
+                          <span>{getProjectEndDate(project) || "-"}</span>
+                          <DdayBadge targetDate={getProjectEndDate(project)} />
+                        </div>
                       </td>
 
                       <td className="px-3 py-2.5">

@@ -52,6 +52,7 @@ import { assignTaskOrdersByCurrentSequence, persistRecalculatedTaskOrders, sortT
 import type { ProcessType } from "@/types/process-type";
 import type { ProjectAssemblyVendor, ProjectSection } from "@/types/project-section";
 import { dispatchPersonalNotesChanged } from "@/lib/personal-notes";
+import { DdayBadge } from "@/components/ui/DdayBadge";
 import {
   getProjectStatusLabel,
   getTaskStatusLabel,
@@ -1631,36 +1632,6 @@ export default function ProjectDetail() {
     return "border-slate-200 bg-slate-50 text-slate-700";
   }
 
-  function getDueDateBadge(task: Task) {
-    if (isTaskCompleted(task.status) || !task.due_date) return null;
-
-    const today = new Date().toISOString().slice(0, 10);
-    const dueDate = new Date(task.due_date);
-    const todayDate = new Date(today);
-    const diffDays = Math.ceil(
-      (dueDate.getTime() - todayDate.getTime()) / (1000 * 60 * 60 * 24)
-    );
-
-    if (diffDays === 0) {
-      return {
-        label: "오늘",
-        variant: "warning" as BadgeVariant,
-      };
-    }
-
-    if (diffDays > 0) {
-      return {
-        label: `D-${diffDays}`,
-        variant: "default" as BadgeVariant,
-      };
-    }
-
-    return {
-      label: `지연 ${Math.abs(diffDays)}일`,
-      variant: "danger" as BadgeVariant,
-    };
-  }
-
   function getProjectStatusBadgeVariant(status: string | null): BadgeVariant {
     const statusValue = normalizeProjectStatus(status);
 
@@ -1857,6 +1828,7 @@ export default function ProjectDetail() {
                   {getProjectStatusLabel(project.status)}
                 </Badge>
                 <span>종료일 {projectEndDate || "-"}</span>
+                <DdayBadge targetDate={projectEndDate} />
               </div>
             )}
           </div>
@@ -2236,7 +2208,6 @@ export default function ProjectDetail() {
 
             <tbody>
               {sectionTasks.map((task, index) => {
-                const dueDateBadge = getDueDateBadge(task);
                 const noteSummary = taskNoteSummaries.get(task.id);
                 const latestNote = noteSummary?.latestNote ?? null;
                 const taskFormRule = getTaskFormRule(task.task_name);
@@ -2418,14 +2389,7 @@ export default function ProjectDetail() {
                           placeholder="마감일 선택"
                           className="min-w-0 flex-1"
                         />
-                        {dueDateBadge && (
-                          <Badge
-                            variant={dueDateBadge.variant}
-                            className="shrink-0 whitespace-nowrap px-2 py-0.5 text-[11px] font-semibold"
-                          >
-                            {dueDateBadge.label}
-                          </Badge>
-                        )}
+                        {!isTaskCompleted(task.status) && <DdayBadge targetDate={task.due_date} className="shrink-0 whitespace-nowrap px-2 py-0.5 text-[11px]" />}
                       </div>
                     </td>
                     <td className="h-14 px-2 py-2 align-middle">
