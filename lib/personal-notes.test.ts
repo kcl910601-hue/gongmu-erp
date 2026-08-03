@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { getCalendarMonthRange, getNoteEditorDefaults, normalizeCalendarSourceFilter, PERSONAL_NOTE_COLORS, selectPersonalNotesForBrief, selectPersonalNotesForCalendar, sortPersonalNotes, type PersonalNote } from "./personal-notes.ts";
+import { getCalendarMonthRange, getNoteEditorDefaults, matchesCalendarSourceFilter, normalizeCalendarSourceFilter, PERSONAL_NOTE_COLORS, selectPersonalNotesForBrief, selectPersonalNotesForCalendar, sortPersonalNotes, type PersonalNote } from "./personal-notes.ts";
 
 function note(id: string, values: Partial<PersonalNote>): PersonalNote {
   return {
@@ -59,5 +59,16 @@ test("Calendar 일정 소스 필터는 전체를 기본값으로 하고 회사�
   assert.equal(normalizeCalendarSourceFilter(null), "all");
   assert.equal(normalizeCalendarSourceFilter("invalid"), "all");
   assert.equal(normalizeCalendarSourceFilter("company"), "company");
-  assert.equal(normalizeCalendarSourceFilter("personal"), "personal");
+  assert.equal(normalizeCalendarSourceFilter("personal"), "my");
+  assert.equal(normalizeCalendarSourceFilter("shared"), "shared_with_me");
+  assert.equal(normalizeCalendarSourceFilter("my_own"), "my_own");
+});
+
+test("Calendar 내 일정과 내 일정만, 공유받은 일정을 소유권으로 구분한다", () => {
+  const own = note("own", {});
+  const sharedByMe = note("shared-by-me", { sharing: { sharedItemId: "s1", ownerName: "나", permission: "owner", memberCount: 2 } });
+  const sharedWithMe = note("shared-with-me", { sharing: { sharedItemId: "s2", ownerName: "김철수", permission: "edit", memberCount: 2 } });
+  assert.deepEqual([own, sharedByMe, sharedWithMe].filter((item) => matchesCalendarSourceFilter(item, "my")).map((item) => item.id), ["own", "shared-by-me", "shared-with-me"]);
+  assert.deepEqual([own, sharedByMe, sharedWithMe].filter((item) => matchesCalendarSourceFilter(item, "my_own")).map((item) => item.id), ["own", "shared-by-me"]);
+  assert.deepEqual([own, sharedByMe, sharedWithMe].filter((item) => matchesCalendarSourceFilter(item, "shared_with_me")).map((item) => item.id), ["shared-with-me"]);
 });

@@ -1,5 +1,13 @@
 # 개발 로드맵
 
+## Sprint 8-8A
+
+- [x] Shared Workspace Phase 1 코드 및 migration 수정본 준비
+- [x] 원본 1개 기반 TODO·Memo·개인 일정 공유
+- [x] 공유 초대 수락·거절·취소와 view/edit 권한
+- [x] Calendar 공유 필터와 권한 기반 날짜 드래그 이동
+- [ ] 운영 Supabase migration 적용 및 다중 사용자 UAT
+
 ## Sprint 진행 현황
 
 - [x] Sprint 5-11A: UI → API → RPC → RLS 권한 및 인증 기준 통합

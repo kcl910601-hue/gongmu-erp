@@ -1,5 +1,14 @@
 # CHANGELOG
 
+## Sprint 8-8A Shared Workspace & Smart Calendar Phase 1
+
+- `personal_notes` 원본을 복제하지 않는 공유 메타데이터, 초대, 참여자 migration 추가
+- 소유자·편집자·보기 참여자별 RLS와 서버 RPC 권한 검증 추가
+- My Workspace 공유 Dialog 및 받은/보낸 요청 처리 UI 추가
+- Notification Bell에서 pending 공유 요청 수락·거절 지원
+- Calendar 공유 필터, 공유 Badge, edit 권한 드래그 이동과 실패 rollback 추가
+- 운영 DB에는 migration을 자동 적용하지 않음
+
 ## Sprint 5-11D Security Grant Hardening
 
 - 운영 DB에서 Core 테이블의 `authenticated` 역할에 `TRUNCATE`, `REFERENCES`, `TRIGGER` 권한이 남아 있음을 실제 확인

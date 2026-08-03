@@ -45,6 +45,8 @@ import { formatActivityTime } from "@/lib/activity";
 import { useAppShellUser } from "@/contexts/AppShellUserContext";
 import { toast } from "@/lib/toast";
 import { deriveNotificationState, matchesNotificationSearch } from "@/lib/notifications/engine";
+import { SHARE_PERMISSION_LABELS, type ShareInvitation, type SharingOverview } from "@/lib/sharing";
+import { dispatchPersonalNotesChanged } from "@/lib/personal-notes";
 
 type NotificationFilter = "all" | "task" | "project" | "raw_material" | "personal" | "system";
 
@@ -235,6 +237,7 @@ export default function NotificationCenter() {
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("");
   const [markingIds, setMarkingIds] = useState<Set<string>>(() => new Set());
   const [isMarkingAll, setIsMarkingAll] = useState(false);
+  const [shareInvitations, setShareInvitations] = useState<ShareInvitation[]>([]);
   const requestInFlightRef = useRef(false);
   const hasLoadedRef = useRef(false);
 
@@ -244,7 +247,9 @@ export default function NotificationCenter() {
     setIsLoading(true);
     setErrorMessage("");
 
-    const { data, error } = await loadNotificationSummary(30, employee);
+    const [notificationResult, sharingResponse] = await Promise.all([loadNotificationSummary(30, employee), fetch("/api/sharing", { cache: "no-store" }).catch(() => null)]);
+    const { data, error } = notificationResult;
+    if (sharingResponse?.ok) { const sharing = await sharingResponse.json() as SharingOverview; setShareInvitations([...sharing.received.filter((invitation) => invitation.status === "pending"), ...sharing.sent.filter((invitation) => invitation.status === "accepted" || invitation.status === "rejected").slice(0, 5)]); }
 
     if (error) {
       setSummary(null);
@@ -380,7 +385,15 @@ export default function NotificationCenter() {
 
   const notificationState = useMemo(() => deriveNotificationState(summary?.items ?? []), [summary]);
   const unreadCount = notificationState.unreadCount;
-  const badgeLabel = getBadgeLabel(unreadCount);
+  const pendingShareCount = shareInvitations.filter((invitation) => invitation.status === "pending").length;
+  const badgeLabel = getBadgeLabel(unreadCount + pendingShareCount);
+  async function respondToShare(invitation: ShareInvitation, action: "accept" | "reject") {
+    const response = await fetch("/api/sharing", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action, invitationId: invitation.id }) });
+    if (!response.ok) { toast.error("공유 요청을 처리하지 못했습니다."); return; }
+    setShareInvitations((current) => current.filter((item) => item.id !== invitation.id));
+    dispatchPersonalNotesChanged();
+    toast.success(action === "accept" ? "공유 요청을 수락했습니다." : "공유 요청을 거절했습니다.");
+  }
 
   return (
     <>
@@ -497,8 +510,9 @@ export default function NotificationCenter() {
                   message={errorMessage}
                   onRetry={() => void loadNotifications()}
                 />
-              ) : filteredItems.length > 0 ? (
+              ) : filteredItems.length > 0 || ((activeFilter === "all" || activeFilter === "personal") && shareInvitations.length > 0) ? (
                 <div className="space-y-3">
+                  {(activeFilter === "all" || activeFilter === "personal") && shareInvitations.map((invitation) => <article key={invitation.id} className="rounded-2xl border border-blue-200 bg-blue-50 p-4"><div className="flex items-center justify-between gap-2"><span className="rounded-full bg-blue-600 px-2 py-0.5 text-[10px] font-bold text-white">{invitation.status === "pending" ? "공유 요청" : "공유 응답"}</span><span className="text-xs text-blue-600">{SHARE_PERMISSION_LABELS[invitation.permission]}</span></div><p className="mt-2 text-sm font-semibold text-slate-900">{invitation.status === "pending" ? `${invitation.inviter?.name ?? "직원"}님이 항목을 공유했습니다.` : `${invitation.invitee?.name ?? "직원"}님이 공유 요청을 ${invitation.status === "accepted" ? "수락" : "거절"}했습니다.`}</p><p className="mt-1 text-xs text-slate-500">{invitation.shared_item?.item_type.toUpperCase() ?? "공유 항목"}</p>{invitation.status === "pending" && <div className="mt-3 flex gap-2"><button type="button" onClick={() => void respondToShare(invitation, "accept")} className="rounded-xl bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white">수락</button><button type="button" onClick={() => void respondToShare(invitation, "reject")} className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600">거절</button></div>}</article>)}
                   {filteredItems.map((item) => (
                     <NotificationRow
                       key={item.id}

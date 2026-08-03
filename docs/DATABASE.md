@@ -1,5 +1,11 @@
 # ERP Database v1
 
+## Sprint 8-8A Shared Workspace Phase 1
+
+`20260803150000_create_shared_workspace.sql`은 기존 `personal_notes` 원본 행을 복제하지 않고 공유 메타데이터만 추가합니다. `shared_items.item_id`는 원본 `personal_notes.id`를 참조하며, `share_invitations`는 초대 이력과 상태를, `shared_item_members`는 수락한 참여자와 `view`/`edit` 권한을 저장합니다. 실제 `employees.id` bigint 타입과 `employees.auth_user_id = auth.uid()` 연결을 사용합니다.
+
+RLS는 소유자와 수락한 참여자만 원본을 조회하도록 하며, 수정은 소유자와 `edit` 참여자만, 삭제는 소유자만 허용합니다. 초대 수락은 원본 복제가 아니라 참여 권한 추가입니다. 이 migration은 운영 DB에 자동 적용하지 않았으며 관리자가 검토 후 직접 실행해야 합니다.
+
 ## Sprint 7C LME 일별 자동 동기화
 
 `20260731140000_add_lme_daily_sync.sql`은 기존 `lme_market_prices`의 월·회차 수기 이력을 보존하면서 일별 현물 행을 함께 저장하도록 호환 확장합니다. 자동 행은 `price_type=spot`, `currency=USD`, `unit=metric_ton`이며 `(reference_date, material_code, price_type) where price_type='spot'` 부분 unique index를 사용합니다. 협회 원천에 환율이 없으므로 환율과 국내환산가는 nullable이며 0이나 임의값을 저장하지 않습니다. 기존 수기 행의 월·회차 unique 제약과 불변 trigger는 유지됩니다.

@@ -17,6 +17,7 @@ export type PersonalNote = {
   sort_order: number;
   created_at: string;
   updated_at: string;
+  sharing?: { sharedItemId: string; ownerName: string; permission: "owner" | "view" | "edit"; memberCount: number } | null;
 };
 
 export const PERSONAL_NOTES_CHANGED_EVENT = "personal-notes:changed";
@@ -24,10 +25,22 @@ export const NOTE_EDITOR_OPEN_EVENT = "note-editor:open";
 
 export type NoteEditorPreset = "memo" | "todo" | "sticky";
 export type NoteEditorOpenOptions = { noteType?: NoteEditorPreset; dueDate?: string | null };
-export type CalendarSourceFilter = "all" | "company" | "personal";
+export type CalendarSourceFilter = "all" | "company" | "my" | "my_own" | "shared_with_me";
 
 export function normalizeCalendarSourceFilter(value: string | null): CalendarSourceFilter {
-  return value === "company" || value === "personal" ? value : "all";
+  if (value === "company" || value === "my" || value === "my_own" || value === "shared_with_me") return value;
+  if (value === "personal") return "my";
+  if (value === "shared") return "shared_with_me";
+  return "all";
+}
+
+export function matchesCalendarSourceFilter(note: PersonalNote, filter: CalendarSourceFilter) {
+  const isOwnedByMe = !note.sharing || note.sharing.permission === "owner";
+  const isSharedWithMe = Boolean(note.sharing && note.sharing.permission !== "owner");
+  if (filter === "company") return false;
+  if (filter === "my_own") return isOwnedByMe;
+  if (filter === "shared_with_me") return isSharedWithMe;
+  return true;
 }
 
 export function openNoteEditor(input: NoteEditorPreset | NoteEditorOpenOptions = "memo") {
