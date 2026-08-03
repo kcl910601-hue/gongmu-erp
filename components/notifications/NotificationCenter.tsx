@@ -20,6 +20,7 @@ import {
   Package,
   Pin,
   EyeOff,
+  RotateCcw,
   X,
 } from "lucide-react";
 import { ErrorState } from "@/components/ui/ErrorState";
@@ -30,7 +31,9 @@ import {
   loadNotificationSummary,
   markNotificationsRead,
   NOTIFICATION_READ_EVENT,
+  NOTIFICATION_PREFERENCE_EVENT,
   notifyNotificationReadStateChanged,
+  notifyNotificationPreferenceChanged,
   updateNotificationPreference,
   type NotificationCategory,
   type NotificationItem,
@@ -39,6 +42,7 @@ import {
 import { formatActivityTime } from "@/lib/activity";
 import { useAppShellUser } from "@/contexts/AppShellUserContext";
 import { toast } from "@/lib/toast";
+import { deriveNotificationState } from "@/lib/notifications/engine";
 
 type NotificationFilter = "all" | "task" | "project" | "raw_material" | "personal" | "system";
 
@@ -178,6 +182,7 @@ export function NotificationRow({
               {item.category}
             </Badge>
             {!item.isRead && <span className="h-2 w-2 rounded-full bg-blue-600" />}
+            {item.isHidden ? <Badge variant="warning" className="px-2 py-0.5 text-[10px]">숨김</Badge> : null}
           </div>
           <p className={`truncate text-sm text-slate-900 ${item.isRead ? "font-medium" : "font-bold"}`}>
             {item.description}
@@ -201,7 +206,7 @@ export function NotificationRow({
       {!item.isRead && onMarkRead ? (
         <button
           type="button"
-          onClick={() => void onMarkRead()}
+          onClick={(event) => { event.preventDefault(); event.stopPropagation(); void onMarkRead(); }}
           disabled={isMarkingRead}
           aria-label={`${item.description} 읽음 처리`}
           title="읽음 처리"
@@ -210,8 +215,9 @@ export function NotificationRow({
           <Check size={15} />
         </button>
       ) : null}
-      {onTogglePin ? <button type="button" onClick={() => void onTogglePin()} aria-label={item.isPinned ? "고정 해제" : "고정"} title={item.isPinned ? "고정 해제" : "고정"} className={`absolute right-12 top-3 flex h-8 w-8 items-center justify-center rounded-xl border bg-white ${item.isPinned ? "border-blue-200 text-blue-600" : "border-slate-200 text-slate-400"}`}><Pin size={14} className={item.isPinned ? "fill-current" : ""} /></button> : null}
-      {onHide ? <button type="button" onClick={() => void onHide()} aria-label="알림 숨기기" title="숨기기" className="absolute right-3 bottom-3 flex h-8 w-8 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-400 hover:text-red-600"><EyeOff size={14} /></button> : null}
+      {item.isRead ? <span title="읽음 완료" aria-label="읽음 완료" className="absolute right-3 top-3 flex h-8 w-8 items-center justify-center rounded-xl text-emerald-600"><Check size={15} /></span> : null}
+      {onTogglePin ? <button type="button" onClick={(event) => { event.preventDefault(); event.stopPropagation(); void onTogglePin(); }} aria-label={item.isPinned ? "고정 해제" : "고정"} title={item.isPinned ? "고정 해제" : "고정"} className={`absolute right-12 top-3 flex h-8 w-8 items-center justify-center rounded-xl border bg-white ${item.isPinned ? "border-blue-200 text-blue-600" : "border-slate-200 text-slate-400"}`}><Pin size={14} className={item.isPinned ? "fill-current" : ""} /></button> : null}
+      {onHide ? <button type="button" onClick={(event) => { event.preventDefault(); event.stopPropagation(); void onHide(); }} aria-label={item.isHidden ? "알림 복원" : "알림 숨기기"} title={item.isHidden ? "복원" : "숨기기"} className="absolute right-3 bottom-3 flex h-8 w-8 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-400 hover:text-red-600">{item.isHidden ? <RotateCcw size={14} /> : <EyeOff size={14} />}</button> : null}
     </div>
   );
 }
@@ -280,11 +286,11 @@ export default function NotificationCenter() {
 
   const applyReadState = useCallback((notificationIds: string[], readAt: string) => {
     const idSet = new Set(notificationIds);
-    setSummary((current) => current ? {
-      ...current,
-      items: current.items.map((item) => idSet.has(item.id) ? { ...item, isRead: true, readAt } : item),
-      unreadCount: current.items.filter((item) => !idSet.has(item.id) && !item.isRead).length,
-    } : current);
+    setSummary((current) => {
+      if (!current) return current;
+      const items = current.items.map((item) => idSet.has(item.id) ? { ...item, isRead: true, readAt } : item);
+      return { ...current, items, unreadCount: deriveNotificationState(items).unreadCount };
+    });
   }, []);
 
   useEffect(() => {
@@ -295,6 +301,12 @@ export default function NotificationCenter() {
     window.addEventListener(NOTIFICATION_READ_EVENT, handleReadState);
     return () => window.removeEventListener(NOTIFICATION_READ_EVENT, handleReadState);
   }, [applyReadState]);
+
+  useEffect(() => {
+    function handlePreferenceChange() { void loadNotifications(); }
+    window.addEventListener(NOTIFICATION_PREFERENCE_EVENT, handlePreferenceChange);
+    return () => window.removeEventListener(NOTIFICATION_PREFERENCE_EVENT, handlePreferenceChange);
+  }, [loadNotifications]);
 
   const markRead = useCallback(async (notificationIds: string[]) => {
     if (!employee || notificationIds.length === 0) return false;
@@ -334,9 +346,10 @@ export default function NotificationCenter() {
 
   async function setPreference(item: NotificationItem, values: { isPinned?: boolean; isHidden?: boolean }) {
     if (!employee) return;
-    const { error } = await updateNotificationPreference(item.id, employee, { ...values, isRead: item.isRead });
+    const { error } = await updateNotificationPreference(item.id, employee, { ...values, isRead: item.isRead, readAt: item.readAt });
     if (error) { toast.error("알림 설정을 저장하지 못했습니다."); return; }
     setSummary((current) => current ? { ...current, items: current.items.map((currentItem) => currentItem.id === item.id ? { ...currentItem, isPinned: values.isPinned ?? currentItem.isPinned, isHidden: values.isHidden ?? currentItem.isHidden } : currentItem).filter((currentItem) => !currentItem.isHidden).sort((left, right) => Number(right.isPinned) - Number(left.isPinned)) } : current);
+    notifyNotificationPreferenceChanged();
   }
 
   const filteredItems = useMemo(() => {
@@ -345,8 +358,8 @@ export default function NotificationCenter() {
     return showUnreadOnly ? categoryItems.filter((item) => !item.isRead) : categoryItems;
   }, [activeFilter, showUnreadOnly, summary]);
 
-  const unreadCount =
-    summary?.items.filter((item) => !item.isRead).length || 0;
+  const notificationState = useMemo(() => deriveNotificationState(summary?.items ?? []), [summary]);
+  const unreadCount = notificationState.unreadCount;
   const badgeLabel = getBadgeLabel(unreadCount);
 
   return (
@@ -385,7 +398,7 @@ export default function NotificationCenter() {
                   <h2 className="text-lg font-bold text-slate-950">알림</h2>
                   <p className="mt-1 text-sm text-slate-500">
                     확인 필요 항목 {unreadCount}건
-                    {summary ? ` · 전체 ${summary.totalCount}건` : ""}
+                    {summary ? ` · 전체 ${notificationState.totalCount}건` : ""}
                   </p>
                 </div>
                 <div className="flex shrink-0 items-center gap-2">
@@ -424,7 +437,7 @@ export default function NotificationCenter() {
                         : "text-slate-500 hover:text-slate-800"
                     }`}
                   >
-                    {filter.label} ({summary?.items.filter((item) => matchesFilter(item.category, filter.value)).length ?? 0})
+                    {filter.label} ({summary?.items.filter((item) => !item.isHidden && matchesFilter(item.category, filter.value)).length ?? 0})
                   </button>
                 ))}
               </div>

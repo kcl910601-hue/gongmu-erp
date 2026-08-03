@@ -9,13 +9,16 @@ import {
   markNotificationsRead,
   NOTIFICATION_READ_EVENT,
   notifyNotificationReadStateChanged,
+  notifyNotificationPreferenceChanged,
   updateNotificationPreference,
   type NotificationCategory,
   type NotificationSummary,
 } from "@/lib/notifications";
 import { toast } from "@/lib/toast";
+import { deriveNotificationState } from "@/lib/notifications/engine";
 
 type Filter = "all" | "task" | "project" | "raw_material" | "personal" | "system";
+type ViewMode = "all" | "unread" | "pinned" | "hidden";
 
 const filters: { value: Filter; label: string }[] = [
   { value: "all", label: "전체" },
@@ -36,7 +39,7 @@ function matchesFilter(category: NotificationCategory, filter: Filter) {
 export default function NotificationsPage() {
   const [summary, setSummary] = useState<NotificationSummary | null>(null);
   const [filter, setFilter] = useState<Filter>("all");
-  const [showUnreadOnly, setShowUnreadOnly] = useState(false);
+  const [viewMode, setViewMode] = useState<ViewMode>("all");
   const [markingIds, setMarkingIds] = useState<Set<string>>(() => new Set());
   const [markingAll, setMarkingAll] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -45,7 +48,7 @@ export default function NotificationsPage() {
   const loadNotifications = useCallback(async () => {
     setLoading(true);
     setErrorMessage("");
-    const { data, error } = await loadNotificationSummary(100);
+    const { data, error } = await loadNotificationSummary(100, undefined, "include");
     if (error || !data) {
       setErrorMessage("알림을 불러오지 못했습니다.");
       setLoading(false);
@@ -69,11 +72,11 @@ export default function NotificationsPage() {
 
   const applyReadState = useCallback((notificationIds: string[], readAt: string) => {
     const idSet = new Set(notificationIds);
-    setSummary((current) => current ? {
-      ...current,
-      items: current.items.map((item) => idSet.has(item.id) ? { ...item, isRead: true, readAt } : item),
-      unreadCount: current.items.filter((item) => !idSet.has(item.id) && !item.isRead).length,
-    } : current);
+    setSummary((current) => {
+      if (!current) return current;
+      const items = current.items.map((item) => idSet.has(item.id) ? { ...item, isRead: true, readAt } : item);
+      return { ...current, items, unreadCount: deriveNotificationState(items).unreadCount };
+    });
   }, []);
 
   useEffect(() => {
@@ -111,7 +114,7 @@ export default function NotificationsPage() {
 
   async function markAllRead() {
     if (!summary || markingAll) return;
-    const unreadIds = summary.items.filter((item) => !item.isRead).map((item) => item.id);
+    const unreadIds = summary.items.filter((item) => !item.isRead && !item.isHidden).map((item) => item.id);
     if (unreadIds.length === 0) return;
     setMarkingAll(true);
     const succeeded = await markRead(unreadIds);
@@ -121,18 +124,24 @@ export default function NotificationsPage() {
 
   async function setPreference(item: NonNullable<typeof summary>["items"][number], values: { isPinned?: boolean; isHidden?: boolean }) {
     if (!summary?.currentEmployee) return;
-    const { error } = await updateNotificationPreference(item.id, summary.currentEmployee, { ...values, isRead: item.isRead });
+    const { error } = await updateNotificationPreference(item.id, summary.currentEmployee, { ...values, isRead: item.isRead, readAt: item.readAt });
     if (error) { toast.error("알림 설정을 저장하지 못했습니다."); return; }
-    setSummary((current) => current ? { ...current, items: current.items.map((currentItem) => currentItem.id === item.id ? { ...currentItem, isPinned: values.isPinned ?? currentItem.isPinned, isHidden: values.isHidden ?? currentItem.isHidden } : currentItem).filter((currentItem) => !currentItem.isHidden).sort((left, right) => Number(right.isPinned) - Number(left.isPinned)) } : current);
+    setSummary((current) => current ? { ...current, items: current.items.map((currentItem) => currentItem.id === item.id ? { ...currentItem, isPinned: values.isPinned ?? currentItem.isPinned, isHidden: values.isHidden ?? currentItem.isHidden } : currentItem).sort((left, right) => Number(right.isPinned) - Number(left.isPinned)) } : current);
+    notifyNotificationPreferenceChanged();
   }
 
   const items = useMemo(() => {
     if (!summary) return [];
     const categoryItems = summary.items.filter((item) => matchesFilter(item.category, filter));
-    return showUnreadOnly ? categoryItems.filter((item) => !item.isRead) : categoryItems;
-  }, [filter, showUnreadOnly, summary]);
+    if (viewMode === "hidden") return categoryItems.filter((item) => item.isHidden);
+    const visible = categoryItems.filter((item) => !item.isHidden);
+    if (viewMode === "unread") return visible.filter((item) => !item.isRead);
+    if (viewMode === "pinned") return visible.filter((item) => item.isPinned);
+    return visible;
+  }, [filter, summary, viewMode]);
 
-  const unreadCount = summary?.items.filter((item) => !item.isRead).length ?? 0;
+  const notificationState = useMemo(() => deriveNotificationState(summary?.items ?? []), [summary]);
+  const unreadCount = notificationState.unreadCount;
 
   return (
     <main className="space-y-5 p-8">
@@ -142,10 +151,11 @@ export default function NotificationsPage() {
           <p className="mt-1 text-sm text-slate-500">
             업무, 출고, 프로젝트 및 직원 승인 알림을 확인합니다.
           </p>
+          <p className="mt-1 text-xs font-medium text-slate-500">확인 필요 항목 {unreadCount}건 · 전체 {notificationState.totalCount}건</p>
         </div>
         <div className="flex items-center gap-2">
           <button type="button" onClick={() => void markAllRead()} disabled={unreadCount === 0 || markingAll} className="flex items-center gap-2 rounded-xl border border-blue-100 bg-white px-3 py-2 text-sm font-semibold text-blue-600 shadow-sm disabled:text-slate-300">
-            <CheckCheck size={15} />{markingAll ? "처리 중..." : "모두 읽음"}
+            <CheckCheck size={15} />{markingAll ? "처리 중..." : "전체 읽음"}
           </button>
           <button
             type="button"
@@ -171,13 +181,12 @@ export default function NotificationsPage() {
                 : "bg-white text-slate-600 shadow-sm"
             }`}
           >
-            {item.label} ({summary?.items.filter((notification) => matchesFilter(notification.category, item.value)).length ?? 0})
+            {item.label} ({summary?.items.filter((notification) => !notification.isHidden && matchesFilter(notification.category, item.value)).length ?? 0})
           </button>
         ))}
-        <label className="ml-auto flex cursor-pointer items-center gap-2 rounded-xl bg-white px-3 py-2 text-sm font-medium text-slate-600 shadow-sm">
-          <input type="checkbox" checked={showUnreadOnly} onChange={(event) => setShowUnreadOnly(event.target.checked)} className="h-4 w-4 rounded border-slate-300 text-blue-600" />
-          읽지 않은 알림만
-        </label>
+        <div className="ml-auto flex flex-wrap gap-1 rounded-xl bg-white p-1 shadow-sm">
+          {([['all','전체'],['unread','읽지 않음'],['pinned','고정'],['hidden','숨긴 알림']] as const).map(([value, label]) => <button key={value} type="button" onClick={() => setViewMode(value)} className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${viewMode === value ? "bg-blue-600 text-white" : "text-slate-600 hover:bg-slate-50"}`}>{label}</button>)}
+        </div>
       </div>
 
       {loading ? (
@@ -190,7 +199,7 @@ export default function NotificationsPage() {
         </p>
       ) : items.length === 0 ? (
         <EmptyState
-          title={showUnreadOnly ? "읽지 않은 알림이 없습니다." : "새로운 알림이 없습니다."}
+          title={viewMode === "hidden" ? "숨긴 알림이 없습니다." : viewMode === "unread" ? "읽지 않은 알림이 없습니다." : "새로운 알림이 없습니다."}
           className="rounded-2xl bg-white p-10 text-center text-slate-500 shadow-sm"
         />
       ) : (
@@ -202,7 +211,7 @@ export default function NotificationsPage() {
               isMarkingRead={markingIds.has(item.id)}
               onMarkRead={() => markOneRead(item.id)}
               onTogglePin={() => setPreference(item, { isPinned: !item.isPinned })}
-              onHide={() => setPreference(item, { isHidden: true })}
+              onHide={() => setPreference(item, { isHidden: !item.isHidden })}
               onSelect={() => item.isRead ? undefined : markOneRead(item.id)}
             />
           ))}

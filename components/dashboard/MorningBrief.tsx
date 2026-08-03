@@ -26,6 +26,8 @@ import { toast } from "@/lib/toast";
 import { openTaskDetail } from "@/lib/task-detail";
 import { MorningBriefWorkspaceSummary } from "@/components/dashboard/MorningBriefWorkspaceSummary";
 import { generateNotifications } from "@/lib/notifications/engine";
+import { loadHiddenNotificationIds, NOTIFICATION_PREFERENCE_EVENT } from "@/lib/notifications";
+import { useAppShellUser } from "@/contexts/AppShellUserContext";
 
 const EXPANDED_KEY = "erp-morning-brief-expanded";
 
@@ -64,6 +66,8 @@ export function MorningBrief({
   const [isExpanded, setIsExpanded] = useState(true);
   const [adminScope, setAdminScope] = useState<"all" | "mine">("all");
   const [completingTaskId, setCompletingTaskId] = useState<number | null>(null);
+  const [hiddenNotificationIds, setHiddenNotificationIds] = useState<Set<string>>(() => new Set());
+  const { employee } = useAppShellUser();
   const today = getLocalDateString();
   const isAdmin = currentUserRole === "admin";
 
@@ -85,20 +89,34 @@ export function MorningBrief({
       ),
     [adminScope, currentUserName, isAdmin, tasks]
   );
-  const briefNotifications = useMemo(() => generateNotifications({
+  const generatedNotifications = useMemo(() => generateNotifications({
     today,
     tasks: scopedTasks.map((task) => ({ ...task, project_name: task.projectName })),
     shipments: shipments.map((shipment) => ({ ...shipment, project_name: "", status: shipment.status })),
   }), [scopedTasks, shipments, today]);
+  useEffect(() => {
+    if (!employee) return;
+    const currentEmployee = employee;
+    let active = true;
+    async function refreshHidden() {
+      const result = await loadHiddenNotificationIds(generatedNotifications.map((item) => item.id), currentEmployee);
+      if (active && !result.error) setHiddenNotificationIds(result.data);
+    }
+    void refreshHidden();
+    window.addEventListener(NOTIFICATION_PREFERENCE_EVENT, refreshHidden);
+    return () => { active = false; window.removeEventListener(NOTIFICATION_PREFERENCE_EVENT, refreshHidden); };
+  }, [employee, generatedNotifications]);
+  const briefNotifications = useMemo(() => generatedNotifications.filter((item) => !hiddenNotificationIds.has(item.id)), [generatedNotifications, hiddenNotificationIds]);
+  const hiddenTaskIds = useMemo(() => new Set(generatedNotifications.filter((item) => item.category === "task" && hiddenNotificationIds.has(item.id)).map((item) => Number(item.id.split("-").at(-1)))), [generatedNotifications, hiddenNotificationIds]);
   const briefTaskIds = useMemo(() => new Set(briefNotifications.filter((item) => item.category === "task").map((item) => Number(item.id.split("-").at(-1)))), [briefNotifications]);
   const briefTasks = useMemo(() => scopedTasks.filter((task) => briefTaskIds.has(task.id) || (isTaskCompleted(task.status) && task.completed_date === today)), [briefTaskIds, scopedTasks, today]);
   const openTasks = useMemo(
     () =>
       sortTasksByPriority(
-        scopedTasks.filter((task) => !isTaskCompleted(task.status)),
+        scopedTasks.filter((task) => !isTaskCompleted(task.status) && !hiddenTaskIds.has(task.id)),
         today
       ).slice(0, 5),
-    [scopedTasks, today]
+    [hiddenTaskIds, scopedTasks, today]
   );
   const completedToday = briefTasks.filter(
     (task) =>

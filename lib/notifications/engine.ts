@@ -24,12 +24,58 @@ export function sortNotifications(items: EngineNotification[]) {
   return [...items].sort((left, right) => NOTIFICATION_PRIORITY_RANK[left.priority] - NOTIFICATION_PRIORITY_RANK[right.priority] || (right.date ?? "").localeCompare(left.date ?? "") || left.id.localeCompare(right.id));
 }
 
-export function applyNotificationPreferences<T extends { id: string }>(items: T[], preferences: { notification_id: string; is_read: boolean; read_at: string | null; is_pinned: boolean; is_hidden: boolean }[]) {
+export type HiddenNotificationMode = "exclude" | "only" | "include";
+
+export function applyNotificationPreferences<T extends { id: string }>(items: T[], preferences: { notification_id: string; is_read: boolean; read_at: string | null; is_pinned: boolean; is_hidden: boolean }[], options: { hiddenMode?: HiddenNotificationMode } = {}) {
   const byId = new Map(preferences.map((preference) => [preference.notification_id, preference]));
+  const hiddenMode = options.hiddenMode ?? "exclude";
   return items.map((entry) => {
     const preference = byId.get(entry.id);
-    return { ...entry, isRead: preference?.is_read ?? false, readAt: preference?.read_at ?? null, isPinned: preference?.is_pinned ?? false, isHidden: preference?.is_hidden ?? false };
-  }).filter((entry) => !entry.isHidden).sort((left, right) => Number(right.isPinned) - Number(left.isPinned));
+    const readAt = preference?.read_at ?? null;
+    return { ...entry, isRead: readAt !== null, isUnread: readAt === null, readAt, isPinned: preference?.is_pinned ?? false, isHidden: preference?.is_hidden ?? false };
+  }).filter((entry) => hiddenMode === "include" || (hiddenMode === "only" ? entry.isHidden : !entry.isHidden)).sort((left, right) => Number(right.isPinned) - Number(left.isPinned));
+}
+
+export function countUnreadNotifications(items: { isRead: boolean; isHidden?: boolean }[]) {
+  return items.filter((item) => !item.isRead && !item.isHidden).length;
+}
+
+export function buildNotificationCounts<T extends { category: string; isRead: boolean; isPinned?: boolean; isHidden?: boolean }>(items: T[]) {
+  const visible = items.filter((item) => !item.isHidden);
+  const byCategory: Record<string, { total: number; unread: number }> = {};
+  for (const item of visible) {
+    const current = byCategory[item.category] ?? { total: 0, unread: 0 };
+    current.total += 1;
+    if (!item.isRead) current.unread += 1;
+    byCategory[item.category] = current;
+  }
+  return {
+    totalCount: visible.length,
+    unreadCount: visible.filter((item) => !item.isRead).length,
+    pinnedCount: visible.filter((item) => item.isPinned).length,
+    hiddenCount: items.filter((item) => item.isHidden).length,
+    byCategory,
+  };
+}
+
+export function deriveNotificationState<T extends { category: string; isRead: boolean; isPinned?: boolean; isHidden?: boolean }>(items: T[]) {
+  const visibleItems = items.filter((item) => !item.isHidden);
+  const hiddenItems = items.filter((item) => item.isHidden);
+  const unreadItems = visibleItems.filter((item) => !item.isRead);
+  const readItems = visibleItems.filter((item) => item.isRead);
+  return { visibleItems, unreadItems, readItems, hiddenItems, ...buildNotificationCounts(items) };
+}
+
+export function buildNotificationReadRows(notificationIds: string[], authUserId: string, existingRows: { notification_id: string; is_pinned: boolean; is_hidden: boolean }[], readAt: string) {
+  const existingById = new Map(existingRows.map((row) => [row.notification_id, row]));
+  return notificationIds.map((notificationId) => ({
+    auth_user_id: authUserId,
+    notification_id: notificationId,
+    is_read: true,
+    read_at: readAt,
+    is_pinned: existingById.get(notificationId)?.is_pinned ?? false,
+    is_hidden: existingById.get(notificationId)?.is_hidden ?? false,
+  }));
 }
 
 export function generateNotifications(input: NotificationEngineInput): EngineNotification[] {

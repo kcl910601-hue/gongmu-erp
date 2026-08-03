@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { applyNotificationPreferences, generateNotifications } from "./engine.ts";
+import { applyNotificationPreferences, buildNotificationCounts, buildNotificationReadRows, countUnreadNotifications, deriveNotificationState, generateNotifications } from "./engine.ts";
 
 const today = "2026-08-03";
 
@@ -39,4 +39,45 @@ test("read, pin and hidden preferences are applied per notification", () => {
   ]);
   assert.deepEqual(items.map((item) => item.id), ["b", "a"]);
   assert.equal(items[1].isRead, true);
+});
+
+test("hidden modes and unread count exclude hidden notifications", () => {
+  const source = [{ id: "a" }, { id: "b" }];
+  const preferences = [
+    { notification_id: "a", is_read: false, read_at: null, is_pinned: true, is_hidden: true },
+    { notification_id: "b", is_read: false, read_at: null, is_pinned: false, is_hidden: false },
+  ];
+  assert.deepEqual(applyNotificationPreferences(source, preferences).map((item) => item.id), ["b"]);
+  assert.deepEqual(applyNotificationPreferences(source, preferences, { hiddenMode: "only" }).map((item) => item.id), ["a"]);
+  const included = applyNotificationPreferences(source, preferences, { hiddenMode: "include" });
+  assert.equal(countUnreadNotifications(included), 1);
+  assert.equal(included.find((item) => item.id === "a")?.isPinned, true);
+});
+
+test("summary counts use the same visible collection", () => {
+  const counts = buildNotificationCounts([
+    { category: "task", isRead: false, isPinned: true, isHidden: false },
+    { category: "task", isRead: true, isPinned: false, isHidden: false },
+    { category: "project", isRead: false, isPinned: false, isHidden: true },
+  ]);
+  assert.deepEqual(counts, { totalCount: 2, unreadCount: 1, pinnedCount: 1, hiddenCount: 1, byCategory: { task: { total: 2, unread: 1 } } });
+});
+
+test("batch read rows preserve pin and hidden preferences", () => {
+  const rows = buildNotificationReadRows(["a", "b"], "user", [{ notification_id: "a", is_pinned: true, is_hidden: true }], "now");
+  assert.deepEqual(rows, [
+    { auth_user_id: "user", notification_id: "a", is_read: true, read_at: "now", is_pinned: true, is_hidden: true },
+    { auth_user_id: "user", notification_id: "b", is_read: true, read_at: "now", is_pinned: false, is_hidden: false },
+  ]);
+});
+
+test("read state is derived only from read_at", () => {
+  const items = applyNotificationPreferences([{ id: "missing" }, { id: "null" }, { id: "read" }], [
+    { notification_id: "null", is_read: true, read_at: null, is_pinned: false, is_hidden: false },
+    { notification_id: "read", is_read: false, read_at: "2026-08-03T00:00:00Z", is_pinned: false, is_hidden: false },
+  ], { hiddenMode: "include" });
+  assert.deepEqual(items.map((item) => [item.id, item.isRead, item.isUnread]), [["missing", false, true], ["null", false, true], ["read", true, false]]);
+  const state = deriveNotificationState(items.map((item) => ({ ...item, category: "task" })));
+  assert.equal(state.unreadCount, 2);
+  assert.equal(state.readItems.length, 1);
 });

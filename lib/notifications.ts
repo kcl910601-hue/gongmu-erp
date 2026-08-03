@@ -3,7 +3,7 @@ import { getCurrentEmployee, type CurrentEmployee } from "@/lib/auth";
 import { supabase } from "@/lib/supabase";
 import { isTaskCompleted } from "@/lib/status";
 import { getDday } from "@/lib/dday";
-import { applyNotificationPreferences, generateNotifications } from "@/lib/notifications/engine";
+import { applyNotificationPreferences, buildNotificationCounts, buildNotificationReadRows, generateNotifications, type HiddenNotificationMode } from "@/lib/notifications/engine";
 import type { NotificationPriority, SmartNotificationType } from "@/lib/notifications/types";
 import { buildWeeklyLmeComparison, getKoreanWeeklyRanges } from "@/lib/market-data/weekly-lme";
 import type { PersonalNote } from "@/lib/personal-notes";
@@ -93,6 +93,7 @@ export type NotificationSummary = {
   unreadCount: number;
   totalCount: number;
   hiddenCount: number;
+  hiddenItemCount?: number;
 };
 
 type LoadNotificationSummaryResult = {
@@ -102,6 +103,7 @@ type LoadNotificationSummaryResult = {
 
 const DEFAULT_LIMIT = 30;
 export const NOTIFICATION_READ_EVENT = "notification-read-state-change";
+export const NOTIFICATION_PREFERENCE_EVENT = "notification-preference-change";
 
 type NotificationReadRow = {
   notification_id: string;
@@ -118,6 +120,10 @@ export function notifyNotificationReadStateChanged(notificationIds: string[]) {
   }));
 }
 
+export function notifyNotificationPreferenceChanged() {
+  if (typeof window !== "undefined") window.dispatchEvent(new Event(NOTIFICATION_PREFERENCE_EVENT));
+}
+
 export async function markNotificationsRead(
   notificationIds: string[],
   currentEmployee: CurrentEmployee
@@ -129,29 +135,36 @@ export async function markNotificationsRead(
   }
 
   const readAt = new Date().toISOString();
+  const { data: existingRows, error: existingError } = await supabase
+    .from("notification_reads")
+    .select("notification_id, is_pinned, is_hidden")
+    .eq("auth_user_id", currentEmployee.auth_user_id)
+    .in("notification_id", uniqueIds);
+  if (existingError) return { error: existingError, readAt: null };
   const { error } = await supabase.from("notification_reads").upsert(
-    uniqueIds.map((notificationId) => ({
-      auth_user_id: currentEmployee.auth_user_id,
-      notification_id: notificationId,
-      is_read: true,
-      read_at: readAt,
-    })),
+    buildNotificationReadRows(uniqueIds, currentEmployee.auth_user_id, existingRows ?? [], readAt),
     { onConflict: "auth_user_id,notification_id" }
   );
   return { error, readAt: error ? null : readAt };
 }
 
-export async function updateNotificationPreference(notificationId: string, currentEmployee: CurrentEmployee, values: { isPinned?: boolean; isHidden?: boolean; isRead: boolean }) {
+export async function updateNotificationPreference(notificationId: string, currentEmployee: CurrentEmployee, values: { isPinned?: boolean; isHidden?: boolean; isRead: boolean; readAt: string | null }) {
   if (!currentEmployee.auth_user_id) return { error: new Error("로그인 사용자 정보를 확인할 수 없습니다.") };
   const { error } = await supabase.from("notification_reads").upsert({
     auth_user_id: currentEmployee.auth_user_id,
     notification_id: notificationId,
     is_read: values.isRead,
-    read_at: values.isRead ? new Date().toISOString() : null,
+    read_at: values.readAt,
     ...(values.isPinned === undefined ? {} : { is_pinned: values.isPinned }),
     ...(values.isHidden === undefined ? {} : { is_hidden: values.isHidden }),
   }, { onConflict: "auth_user_id,notification_id" });
   return { error };
+}
+
+export async function loadHiddenNotificationIds(notificationIds: string[], currentEmployee: CurrentEmployee) {
+  if (!currentEmployee.auth_user_id || notificationIds.length === 0) return { data: new Set<string>(), error: null };
+  const { data, error } = await supabase.from("notification_reads").select("notification_id").eq("auth_user_id", currentEmployee.auth_user_id).eq("is_hidden", true).in("notification_id", notificationIds);
+  return { data: new Set((data ?? []).map((row) => row.notification_id)), error };
 }
 
 function formatDateInput(date: Date) {
@@ -427,7 +440,8 @@ export function calculateNotificationSummary(input: {
 
 export async function loadNotificationSummary(
   limit = DEFAULT_LIMIT,
-  providedEmployee?: CurrentEmployee | null
+  providedEmployee?: CurrentEmployee | null,
+  hiddenMode: HiddenNotificationMode = "exclude"
 ): Promise<LoadNotificationSummaryResult> {
   const currentEmployee =
     providedEmployee === undefined
@@ -558,8 +572,11 @@ export async function loadNotificationSummary(
         .in("notification_id", notificationIds);
   if (readResult.error) return { data: null, error: readResult.error };
 
-  summary.items = applyNotificationPreferences(summary.items, (readResult.data ?? []) as NotificationReadRow[]);
-  summary.unreadCount = summary.items.filter((item) => !item.isRead).length;
+  summary.items = applyNotificationPreferences(summary.items, (readResult.data ?? []) as NotificationReadRow[], { hiddenMode });
+  const counts = buildNotificationCounts(summary.items);
+  summary.totalCount = counts.totalCount;
+  summary.unreadCount = counts.unreadCount;
+  summary.hiddenItemCount = counts.hiddenCount;
 
   return {
     data: summary,
