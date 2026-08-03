@@ -19,13 +19,13 @@ import { Skeleton } from "@/components/ui/Skeleton";
 import { completeTask } from "@/lib/task-actions";
 import {
   getLocalDateString,
-  isMorningBriefTask,
   sortTasksByPriority,
 } from "@/lib/task-priority";
 import { isTaskCompleted } from "@/lib/status";
 import { toast } from "@/lib/toast";
 import { openTaskDetail } from "@/lib/task-detail";
 import { MorningBriefWorkspaceSummary } from "@/components/dashboard/MorningBriefWorkspaceSummary";
+import { generateNotifications } from "@/lib/notifications/engine";
 
 const EXPANDED_KEY = "erp-morning-brief-expanded";
 
@@ -85,10 +85,13 @@ export function MorningBrief({
       ),
     [adminScope, currentUserName, isAdmin, tasks]
   );
-  const briefTasks = useMemo(
-    () => scopedTasks.filter((task) => isMorningBriefTask(task, today)),
-    [scopedTasks, today]
-  );
+  const briefNotifications = useMemo(() => generateNotifications({
+    today,
+    tasks: scopedTasks.map((task) => ({ ...task, project_name: task.projectName })),
+    shipments: shipments.map((shipment) => ({ ...shipment, project_name: "", status: shipment.status })),
+  }), [scopedTasks, shipments, today]);
+  const briefTaskIds = useMemo(() => new Set(briefNotifications.filter((item) => item.category === "task").map((item) => Number(item.id.split("-").at(-1)))), [briefNotifications]);
+  const briefTasks = useMemo(() => scopedTasks.filter((task) => briefTaskIds.has(task.id) || (isTaskCompleted(task.status) && task.completed_date === today)), [briefTaskIds, scopedTasks, today]);
   const openTasks = useMemo(
     () =>
       sortTasksByPriority(
@@ -101,18 +104,9 @@ export function MorningBrief({
     (task) =>
       isTaskCompleted(task.status) && task.completed_date === today
   );
-  const dueToday = briefTasks.filter(
-    (task) => !isTaskCompleted(task.status) && task.due_date === today
-  );
-  const overdue = briefTasks.filter(
-    (task) =>
-      !isTaskCompleted(task.status) &&
-      task.due_date !== null &&
-      task.due_date < today
-  );
-  const todayShipments = shipments.filter(
-    (shipment) => shipment.shipment_date === today
-  );
+  const dueToday = briefNotifications.filter((item) => item.type === "task_today");
+  const overdue = briefNotifications.filter((item) => item.type === "task_overdue");
+  const todayShipments = briefNotifications.filter((item) => item.type === "shipment_today");
 
   async function handleComplete(task: DashboardFocusTask) {
     if (completingTaskId !== null) return;

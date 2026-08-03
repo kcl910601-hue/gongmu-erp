@@ -3,10 +3,15 @@ import { getCurrentEmployee, type CurrentEmployee } from "@/lib/auth";
 import { supabase } from "@/lib/supabase";
 import { isTaskCompleted } from "@/lib/status";
 import { getDday } from "@/lib/dday";
+import { applyNotificationPreferences, generateNotifications } from "@/lib/notifications/engine";
+import type { NotificationPriority, SmartNotificationType } from "@/lib/notifications/types";
+import { buildWeeklyLmeComparison, getKoreanWeeklyRanges } from "@/lib/market-data/weekly-lme";
+import type { PersonalNote } from "@/lib/personal-notes";
 
 export type NotificationSeverity = "danger" | "warning" | "info";
-export type NotificationCategory = "task" | "shipment" | "project" | "employee";
+export type NotificationCategory = "task" | "shipment" | "project" | "personal" | "raw_material" | "lme" | "system" | "employee";
 export type NotificationType =
+  | SmartNotificationType
   | "task_delayed"
   | "task_today"
   | "task_started"
@@ -30,6 +35,8 @@ type NotificationTask = {
 type NotificationProject = {
   id: number;
   project_name: string;
+  status?: string | null;
+  end_date?: string | null;
 };
 
 type NotificationShipment = {
@@ -68,12 +75,16 @@ export type NotificationItem = {
   date: string | null;
   href: string;
   priority: number;
+  priorityLevel?: NotificationPriority;
   severity: NotificationSeverity;
   projectName: string;
   actor?: string | null;
   statusLabel?: string | null;
+  actionLabel?: string;
   isRead: boolean;
   readAt: string | null;
+  isPinned?: boolean;
+  isHidden?: boolean;
 };
 
 export type NotificationSummary = {
@@ -94,7 +105,10 @@ export const NOTIFICATION_READ_EVENT = "notification-read-state-change";
 
 type NotificationReadRow = {
   notification_id: string;
+  is_read: boolean;
   read_at: string | null;
+  is_pinned: boolean;
+  is_hidden: boolean;
 };
 
 export function notifyNotificationReadStateChanged(notificationIds: string[]) {
@@ -125,6 +139,19 @@ export async function markNotificationsRead(
     { onConflict: "auth_user_id,notification_id" }
   );
   return { error, readAt: error ? null : readAt };
+}
+
+export async function updateNotificationPreference(notificationId: string, currentEmployee: CurrentEmployee, values: { isPinned?: boolean; isHidden?: boolean; isRead: boolean }) {
+  if (!currentEmployee.auth_user_id) return { error: new Error("로그인 사용자 정보를 확인할 수 없습니다.") };
+  const { error } = await supabase.from("notification_reads").upsert({
+    auth_user_id: currentEmployee.auth_user_id,
+    notification_id: notificationId,
+    is_read: values.isRead,
+    read_at: values.isRead ? new Date().toISOString() : null,
+    ...(values.isPinned === undefined ? {} : { is_pinned: values.isPinned }),
+    ...(values.isHidden === undefined ? {} : { is_hidden: values.isHidden }),
+  }, { onConflict: "auth_user_id,notification_id" });
+  return { error };
 }
 
 function formatDateInput(date: Date) {
@@ -171,7 +198,7 @@ function compareNotifications(a: NotificationItem, b: NotificationItem) {
   return (b.date ?? "").localeCompare(a.date ?? "");
 }
 
-export function calculateNotificationSummary({
+function calculateLegacyNotificationSummary({
   tasks,
   projects,
   shipments,
@@ -356,6 +383,48 @@ export function calculateNotificationSummary({
   };
 }
 
+export function calculateNotificationSummary(input: {
+  tasks: NotificationTask[];
+  projects: NotificationProject[];
+  shipments: NotificationShipment[];
+  approvals: ApprovalEmployee[];
+  activities: ActivityRow[];
+  currentEmployee: CurrentEmployee | null;
+  limit?: number;
+  personal?: PersonalNote[];
+  contracts?: { id: string; contract_name: string; effective_end_date: string; contract_quantity_ton: number; remaining_quantity_ton: number; status: string }[];
+  weeklyLmeChangeRate?: number | null;
+}): NotificationSummary {
+  const legacy = calculateLegacyNotificationSummary(input);
+  const isAdmin = input.currentEmployee?.role === "admin";
+  const visibleTasks = isAdmin ? input.tasks : input.tasks.filter((task) => task.assignee === input.currentEmployee?.name);
+  const allowedProjectIds = new Set(visibleTasks.map((task) => task.project_id));
+  const visibleShipments = isAdmin ? input.shipments : input.shipments.filter((shipment) => shipment.project_id !== null && allowedProjectIds.has(shipment.project_id));
+  const priorityRank: Record<NotificationPriority, number> = { critical: 1, high: 2, medium: 3, low: 4 };
+  const severity: Record<NotificationPriority, NotificationSeverity> = { critical: "danger", high: "danger", medium: "warning", low: "info" };
+  const engineItems: NotificationItem[] = generateNotifications({
+    today: getToday(),
+    projects: input.projects.map((project) => ({ id: project.id, project_name: project.project_name, status: project.status ?? null, end_date: project.end_date ?? null })),
+    personal: input.personal,
+    contracts: input.contracts,
+    weeklyLmeChangeRate: input.weeklyLmeChangeRate,
+    tasks: visibleTasks.map((task) => ({ ...task, project_name: getProjectName(input.projects, task.project_id) })),
+    shipments: visibleShipments.map((shipment) => ({ ...shipment, project_name: getProjectName(input.projects, shipment.project_id) })),
+  }).map((generated) => ({
+    ...generated,
+    href: generated.action.href,
+    actionLabel: generated.action.label,
+    priority: priorityRank[generated.priority],
+    priorityLevel: generated.priority,
+    severity: severity[generated.priority],
+    isRead: false,
+    readAt: null,
+  }));
+  const preserved = legacy.items.filter((item) => item.category !== "task" && item.category !== "shipment");
+  const items = [...engineItems, ...preserved].sort(compareNotifications).slice(0, input.limit ?? DEFAULT_LIMIT);
+  return { ...legacy, items, totalCount: items.length, unreadCount: items.length, hiddenCount: 0 };
+}
+
 export async function loadNotificationSummary(
   limit = DEFAULT_LIMIT,
   providedEmployee?: CurrentEmployee | null
@@ -453,10 +522,20 @@ export async function loadNotificationSummary(
   const projectResult = projectIds.length
     ? await supabase
         .from("projects")
-        .select("id, project_name")
+        .select("id, project_name, status, end_date")
         .in("id", projectIds)
     : { data: [], error: null };
   if (projectResult.error) return { data: null, error: projectResult.error };
+
+  const weeklyRanges = getKoreanWeeklyRanges();
+  const [personalResult, contractResult, lmeResult] = await Promise.all([
+    supabase.from("personal_notes").select("id, user_id, note_type, title, content, is_completed, is_pinned, color, due_date, sort_order, created_at, updated_at").or(`due_date.lte.${today},note_type.eq.sticky`).limit(100),
+    supabase.from("raw_material_contracts").select("id, contract_name, effective_end_date, contract_quantity_ton, remaining_quantity_ton, status").eq("status", "active").limit(100),
+    supabase.from("lme_market_prices").select("reference_date, domestic_lme_krw_per_kg").gte("reference_date", weeklyRanges.previousWeekStart).lte("reference_date", weeklyRanges.currentWeekEnd).order("reference_date", { ascending: true }).limit(100),
+  ]);
+  const supplementalError = personalResult.error || contractResult.error || lmeResult.error;
+  if (supplementalError) return { data: null, error: supplementalError };
+  const weeklyLme = buildWeeklyLmeComparison(lmeResult.data ?? [], weeklyRanges);
 
   const summary = calculateNotificationSummary({
       tasks: (taskResult.data ?? []) as NotificationTask[],
@@ -466,24 +545,20 @@ export async function loadNotificationSummary(
       activities: (activityResult.data ?? []) as ActivityRow[],
       currentEmployee,
       limit,
+      personal: (personalResult.data ?? []) as PersonalNote[],
+      contracts: contractResult.data ?? [],
+      weeklyLmeChangeRate: weeklyLme.differenceRate,
     });
   const notificationIds = summary.items.map((item) => item.id);
   const readResult = notificationIds.length === 0
     ? { data: [], error: null }
     : await supabase
         .from("notification_reads")
-        .select("notification_id, read_at")
+        .select("notification_id, is_read, read_at, is_pinned, is_hidden")
         .in("notification_id", notificationIds);
   if (readResult.error) return { data: null, error: readResult.error };
 
-  const readById = new Map(
-    ((readResult.data ?? []) as NotificationReadRow[]).map((row) => [row.notification_id, row.read_at])
-  );
-  summary.items = summary.items.map((item) => ({
-    ...item,
-    isRead: readById.has(item.id),
-    readAt: readById.get(item.id) ?? null,
-  }));
+  summary.items = applyNotificationPreferences(summary.items, (readResult.data ?? []) as NotificationReadRow[]);
   summary.unreadCount = summary.items.filter((item) => !item.isRead).length;
 
   return {

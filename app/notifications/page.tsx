@@ -9,20 +9,29 @@ import {
   markNotificationsRead,
   NOTIFICATION_READ_EVENT,
   notifyNotificationReadStateChanged,
+  updateNotificationPreference,
   type NotificationCategory,
   type NotificationSummary,
 } from "@/lib/notifications";
 import { toast } from "@/lib/toast";
 
-type Filter = "all" | NotificationCategory;
+type Filter = "all" | "task" | "project" | "raw_material" | "personal" | "system";
 
 const filters: { value: Filter; label: string }[] = [
   { value: "all", label: "전체" },
   { value: "task", label: "업무" },
-  { value: "shipment", label: "출고" },
   { value: "project", label: "프로젝트" },
-  { value: "employee", label: "직원" },
+  { value: "raw_material", label: "원자재" },
+  { value: "personal", label: "개인" },
+  { value: "system", label: "시스템" },
 ];
+
+function matchesFilter(category: NotificationCategory, filter: Filter) {
+  if (filter === "all") return true;
+  if (filter === "task") return category === "task" || category === "shipment";
+  if (filter === "system") return category === "system" || category === "employee" || category === "lme";
+  return category === filter;
+}
 
 export default function NotificationsPage() {
   const [summary, setSummary] = useState<NotificationSummary | null>(null);
@@ -110,11 +119,16 @@ export default function NotificationsPage() {
     setMarkingAll(false);
   }
 
+  async function setPreference(item: NonNullable<typeof summary>["items"][number], values: { isPinned?: boolean; isHidden?: boolean }) {
+    if (!summary?.currentEmployee) return;
+    const { error } = await updateNotificationPreference(item.id, summary.currentEmployee, { ...values, isRead: item.isRead });
+    if (error) { toast.error("알림 설정을 저장하지 못했습니다."); return; }
+    setSummary((current) => current ? { ...current, items: current.items.map((currentItem) => currentItem.id === item.id ? { ...currentItem, isPinned: values.isPinned ?? currentItem.isPinned, isHidden: values.isHidden ?? currentItem.isHidden } : currentItem).filter((currentItem) => !currentItem.isHidden).sort((left, right) => Number(right.isPinned) - Number(left.isPinned)) } : current);
+  }
+
   const items = useMemo(() => {
     if (!summary) return [];
-    const categoryItems = filter === "all"
-      ? summary.items
-      : summary.items.filter((item) => item.category === filter);
+    const categoryItems = summary.items.filter((item) => matchesFilter(item.category, filter));
     return showUnreadOnly ? categoryItems.filter((item) => !item.isRead) : categoryItems;
   }, [filter, showUnreadOnly, summary]);
 
@@ -157,7 +171,7 @@ export default function NotificationsPage() {
                 : "bg-white text-slate-600 shadow-sm"
             }`}
           >
-            {item.label}
+            {item.label} ({summary?.items.filter((notification) => matchesFilter(notification.category, item.value)).length ?? 0})
           </button>
         ))}
         <label className="ml-auto flex cursor-pointer items-center gap-2 rounded-xl bg-white px-3 py-2 text-sm font-medium text-slate-600 shadow-sm">
@@ -187,6 +201,8 @@ export default function NotificationsPage() {
               item={item}
               isMarkingRead={markingIds.has(item.id)}
               onMarkRead={() => markOneRead(item.id)}
+              onTogglePin={() => setPreference(item, { isPinned: !item.isPinned })}
+              onHide={() => setPreference(item, { isHidden: true })}
               onSelect={() => item.isRead ? undefined : markOneRead(item.id)}
             />
           ))}

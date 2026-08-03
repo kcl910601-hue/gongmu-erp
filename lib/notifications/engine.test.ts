@@ -1,0 +1,42 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { applyNotificationPreferences, generateNotifications } from "./engine.ts";
+
+const today = "2026-08-03";
+
+test("generates project, task and shipment notifications with priorities", () => {
+  const items = generateNotifications({ today, projects: [{ id: 1, project_name: "P", status: "in_progress", end_date: today }], tasks: [{ id: 2, project_id: 1, project_name: "P", task_name: "T", assignee: "A", status: "pending", due_date: "2026-08-04" }], shipments: [{ id: 3, project_id: 1, project_name: "P", site_name: "S", item_name: "I", status: "pending", shipment_date: today }] });
+  assert.deepEqual(items.map((item) => [item.category, item.priority]), [["project", "critical"], ["shipment", "high"], ["task", "medium"]]);
+});
+
+test("generates Todo, Sticky and Memo without completed Todo", () => {
+  const items = generateNotifications({ today, personal: [
+    { id: "1", note_type: "todo", title: "todo", content: "", due_date: today, is_completed: false, is_pinned: false },
+    { id: "2", note_type: "todo", title: "done", content: "", due_date: today, is_completed: true, is_pinned: false },
+    { id: "3", note_type: "sticky", title: "sticky", content: "", due_date: null, is_completed: false, is_pinned: true },
+    { id: "4", note_type: "memo", title: "memo", content: "", due_date: today, is_completed: false, is_pinned: false },
+  ] });
+  assert.deepEqual(items.map((item) => item.type), ["personal_todo_today", "personal_memo_today", "personal_sticky"]);
+});
+
+test("generates raw-material threshold and LME change notifications", () => {
+  const items = generateNotifications({ today, contracts: [{ id: "c", contract_name: "AL", effective_end_date: "2026-08-10", contract_quantity_ton: 100, remaining_quantity_ton: 10, status: "active" }], weeklyLmeChangeRate: 6.2 });
+  assert.equal(items.filter((item) => item.category === "raw_material").length, 2);
+  assert.equal(items.find((item) => item.category === "lme")?.description, "+6.2%");
+  assert.equal(items[0].priority, "critical");
+});
+
+test("priority sorting is critical, high, medium, low", () => {
+  const items = generateNotifications({ today, personal: [{ id: "s", note_type: "sticky", title: "sticky", content: "", due_date: null, is_completed: false, is_pinned: true }], tasks: [{ id: 1, project_id: 1, project_name: "P", task_name: "late", assignee: null, status: null, due_date: "2026-08-01" }] });
+  assert.deepEqual(items.map((item) => item.priority), ["critical", "low"]);
+});
+
+test("read, pin and hidden preferences are applied per notification", () => {
+  const items = applyNotificationPreferences([{ id: "a" }, { id: "b" }, { id: "c" }], [
+    { notification_id: "a", is_read: true, read_at: "2026-08-03T00:00:00Z", is_pinned: false, is_hidden: false },
+    { notification_id: "b", is_read: false, read_at: null, is_pinned: true, is_hidden: false },
+    { notification_id: "c", is_read: false, read_at: null, is_pinned: false, is_hidden: true },
+  ]);
+  assert.deepEqual(items.map((item) => item.id), ["b", "a"]);
+  assert.equal(items[1].isRead, true);
+});

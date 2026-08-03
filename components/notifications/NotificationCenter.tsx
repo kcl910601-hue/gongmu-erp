@@ -15,6 +15,11 @@ import {
   RefreshCw,
   Truck,
   User,
+  StickyNote,
+  TrendingUp,
+  Package,
+  Pin,
+  EyeOff,
   X,
 } from "lucide-react";
 import { ErrorState } from "@/components/ui/ErrorState";
@@ -26,6 +31,7 @@ import {
   markNotificationsRead,
   NOTIFICATION_READ_EVENT,
   notifyNotificationReadStateChanged,
+  updateNotificationPreference,
   type NotificationCategory,
   type NotificationItem,
   type NotificationSummary,
@@ -34,15 +40,23 @@ import { formatActivityTime } from "@/lib/activity";
 import { useAppShellUser } from "@/contexts/AppShellUserContext";
 import { toast } from "@/lib/toast";
 
-type NotificationFilter = "all" | NotificationCategory;
+type NotificationFilter = "all" | "task" | "project" | "raw_material" | "personal" | "system";
 
 const filters: { value: NotificationFilter; label: string }[] = [
   { value: "all", label: "전체" },
   { value: "task", label: "업무" },
-  { value: "shipment", label: "출고" },
   { value: "project", label: "프로젝트" },
-  { value: "employee", label: "직원" },
+  { value: "raw_material", label: "원자재" },
+  { value: "personal", label: "개인" },
+  { value: "system", label: "시스템" },
 ];
+
+function matchesFilter(category: NotificationCategory, filter: NotificationFilter) {
+  if (filter === "all") return true;
+  if (filter === "task") return category === "task" || category === "shipment";
+  if (filter === "system") return category === "system" || category === "employee" || category === "lme";
+  return category === filter;
+}
 
 function getBadgeLabel(count: number) {
   if (count <= 0) return "";
@@ -62,9 +76,10 @@ function formatDisplayDate(date: string | null) {
 
 function getEmptyMessage(filter: NotificationFilter) {
   if (filter === "task") return "업무 알림이 없습니다.";
-  if (filter === "shipment") return "확인할 출고 알림이 없습니다.";
   if (filter === "project") return "최근 프로젝트 알림이 없습니다.";
-  if (filter === "employee") return "승인 대기 직원이 없습니다.";
+  if (filter === "raw_material") return "원자재 알림이 없습니다.";
+  if (filter === "personal") return "개인 알림이 없습니다.";
+  if (filter === "system") return "시스템 알림이 없습니다.";
   return "현재 확인해야 할 알림이 없습니다.";
 }
 
@@ -93,6 +108,10 @@ function NotificationIcon({ item }: { item: NotificationItem }) {
     );
   }
 
+  if (item.category === "personal") return <div className={className}><StickyNote size={17} /></div>;
+  if (item.category === "raw_material") return <div className={className}><Package size={17} /></div>;
+  if (item.category === "lme") return <div className={className}><TrendingUp size={17} /></div>;
+
   if (item.category === "employee") {
     return (
       <div className={className}>
@@ -119,11 +138,15 @@ export function NotificationRow({
   onSelect,
   onMarkRead,
   isMarkingRead = false,
+  onTogglePin,
+  onHide,
 }: {
   item: NotificationItem;
   onSelect: () => void | Promise<void>;
   onMarkRead?: () => void | Promise<void>;
   isMarkingRead?: boolean;
+  onTogglePin?: () => void | Promise<void>;
+  onHide?: () => void | Promise<void>;
 }) {
   const router = useRouter();
   return (
@@ -138,7 +161,7 @@ export function NotificationRow({
           await onSelect();
           router.push(item.href);
         }}
-        className="block p-3.5 pr-12 text-left focus:outline-none focus:ring-2 focus:ring-blue-100"
+        className="block p-3.5 pr-28 text-left focus:outline-none focus:ring-2 focus:ring-blue-100"
       >
       <div className="flex items-start gap-3">
         <NotificationIcon item={item} />
@@ -150,6 +173,9 @@ export function NotificationRow({
               className="shrink-0 px-2.5 py-0.5 font-semibold"
             >
               {item.title}
+            </Badge>
+            <Badge variant="default" className="px-2 py-0.5 text-[10px] uppercase">
+              {item.category}
             </Badge>
             {!item.isRead && <span className="h-2 w-2 rounded-full bg-blue-600" />}
           </div>
@@ -184,6 +210,8 @@ export function NotificationRow({
           <Check size={15} />
         </button>
       ) : null}
+      {onTogglePin ? <button type="button" onClick={() => void onTogglePin()} aria-label={item.isPinned ? "고정 해제" : "고정"} title={item.isPinned ? "고정 해제" : "고정"} className={`absolute right-12 top-3 flex h-8 w-8 items-center justify-center rounded-xl border bg-white ${item.isPinned ? "border-blue-200 text-blue-600" : "border-slate-200 text-slate-400"}`}><Pin size={14} className={item.isPinned ? "fill-current" : ""} /></button> : null}
+      {onHide ? <button type="button" onClick={() => void onHide()} aria-label="알림 숨기기" title="숨기기" className="absolute right-3 bottom-3 flex h-8 w-8 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-400 hover:text-red-600"><EyeOff size={14} /></button> : null}
     </div>
   );
 }
@@ -304,11 +332,16 @@ export default function NotificationCenter() {
     setIsMarkingAll(false);
   }
 
+  async function setPreference(item: NotificationItem, values: { isPinned?: boolean; isHidden?: boolean }) {
+    if (!employee) return;
+    const { error } = await updateNotificationPreference(item.id, employee, { ...values, isRead: item.isRead });
+    if (error) { toast.error("알림 설정을 저장하지 못했습니다."); return; }
+    setSummary((current) => current ? { ...current, items: current.items.map((currentItem) => currentItem.id === item.id ? { ...currentItem, isPinned: values.isPinned ?? currentItem.isPinned, isHidden: values.isHidden ?? currentItem.isHidden } : currentItem).filter((currentItem) => !currentItem.isHidden).sort((left, right) => Number(right.isPinned) - Number(left.isPinned)) } : current);
+  }
+
   const filteredItems = useMemo(() => {
     if (!summary) return [];
-    const categoryItems = activeFilter === "all"
-      ? summary.items
-      : summary.items.filter((item) => item.category === activeFilter);
+    const categoryItems = summary.items.filter((item) => matchesFilter(item.category, activeFilter));
     return showUnreadOnly ? categoryItems.filter((item) => !item.isRead) : categoryItems;
   }, [activeFilter, showUnreadOnly, summary]);
 
@@ -379,7 +412,7 @@ export default function NotificationCenter() {
                 </div>
               </div>
 
-              <div className="mt-4 grid grid-cols-5 gap-1 rounded-2xl bg-slate-100 p-1">
+              <div className="mt-4 grid grid-cols-3 gap-1 rounded-2xl bg-slate-100 p-1 sm:grid-cols-6">
                 {filters.map((filter) => (
                   <button
                     key={filter.value}
@@ -391,7 +424,7 @@ export default function NotificationCenter() {
                         : "text-slate-500 hover:text-slate-800"
                     }`}
                   >
-                    {filter.label}
+                    {filter.label} ({summary?.items.filter((item) => matchesFilter(item.category, filter.value)).length ?? 0})
                   </button>
                 ))}
               </div>
@@ -433,6 +466,8 @@ export default function NotificationCenter() {
                       item={item}
                       isMarkingRead={markingIds.has(item.id)}
                       onMarkRead={() => markOneRead(item)}
+                      onTogglePin={() => setPreference(item, { isPinned: !item.isPinned })}
+                      onHide={() => setPreference(item, { isHidden: true })}
                       onSelect={async () => {
                         if (!item.isRead) await markOneRead(item);
                         setIsOpen(false);

@@ -8,7 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "test:dday": "node --experimental-strip-types --test lib/dday.test.ts",
-    "test": "node --experimental-strip-types --test lib/dday.test.ts lib/calendar-grid.test.ts lib/lme-sync-parser.test.ts lib/market-data/market-data-engine.test.ts lib/market-data/exchange-rate-provider.test.ts lib/market-data/weekly-lme.test.ts lib/material-contract-allocations.test.ts lib/personal-notes.test.ts lib/project-margin-analysis.test.mjs lib/project-profit-analysis.test.mjs lib/task-form-rules.test.ts lib/shipment-schedule-pdf.test.ts lib/maintenance-mode.test.ts",
+    "test": "node --experimental-strip-types --test lib/notifications/engine.test.ts lib/dday.test.ts lib/calendar-grid.test.ts lib/lme-sync-parser.test.ts lib/market-data/market-data-engine.test.ts lib/market-data/exchange-rate-provider.test.ts lib/market-data/weekly-lme.test.ts lib/material-contract-allocations.test.ts lib/personal-notes.test.ts lib/project-margin-analysis.test.mjs lib/project-profit-analysis.test.mjs lib/task-form-rules.test.ts lib/shipment-schedule-pdf.test.ts lib/maintenance-mode.test.ts",
     "seed:uat": "node scripts/seed-uat-accounts.mjs",
     "cleanup:uat": "node scripts/cleanup-uat-accounts.mjs"
   },
