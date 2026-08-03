@@ -33,6 +33,9 @@ export async function GET(request: Request) {
     tasks: [],
     shipments: [],
     employees: [],
+    materialContracts: [],
+    personal: [],
+    lme: [],
   };
 
   if (safeQuery.length < GLOBAL_SEARCH_MIN_LENGTH) {
@@ -84,7 +87,9 @@ export async function GET(request: Request) {
     "memo",
   ]);
 
-  const [projectResult, taskResult, shipmentResult, employeeResult, vendorResult] =
+  const contractFilter = createIlikeFilter(safeQuery, ["contract_name", "material_code", "memo"]);
+  const personalFilter = createIlikeFilter(safeQuery, ["title", "content", "note_type"]);
+  const [projectResult, taskResult, shipmentResult, employeeResult, vendorResult, contractResult, personalResult, materialResult, supplierResult] =
     await Promise.all([
       supabase
         .from("projects")
@@ -126,6 +131,12 @@ export async function GET(request: Request) {
         .select("id")
         .ilike("name", `%${safeQuery}%`)
         .eq("is_active", true),
+      supabase.from("raw_material_contracts").select("id, contract_name, material_code, status, supplier:suppliers(name)").or(contractFilter).limit(GLOBAL_SEARCH_RESULT_LIMIT),
+      supabase.from("personal_notes").select("id, note_type, title, content").eq("user_id", user.id).or(personalFilter).limit(GLOBAL_SEARCH_RESULT_LIMIT),
+      safeQuery.toLowerCase().includes("lme")
+        ? supabase.from("lme_materials").select("code, name").eq("is_active", true).limit(GLOBAL_SEARCH_RESULT_LIMIT)
+        : supabase.from("lme_materials").select("code, name").eq("is_active", true).or(createIlikeFilter(safeQuery, ["code", "name"])).limit(GLOBAL_SEARCH_RESULT_LIMIT),
+      supabase.from("suppliers").select("id").ilike("name", `%${safeQuery}%`).eq("is_active", true).limit(GLOBAL_SEARCH_RESULT_LIMIT),
     ]);
 
   const firstError =
@@ -133,7 +144,11 @@ export async function GET(request: Request) {
     taskResult.error ||
     shipmentResult.error ||
     employeeResult.error ||
-    vendorResult.error;
+    vendorResult.error ||
+    contractResult.error ||
+    personalResult.error ||
+    materialResult.error ||
+    supplierResult.error;
 
   if (firstError) {
     console.error("global search failed", {
@@ -148,6 +163,19 @@ export async function GET(request: Request) {
   }
 
   let directProjects = (projectResult.data ?? []) as ProjectRow[];
+  let directContracts = contractResult.data ?? [];
+  const matchedSupplierIds = (supplierResult.data ?? []).map((supplier) => String(supplier.id));
+  const matchedMaterialCodes = (materialResult.data ?? []).map((material) => material.code);
+  if (matchedSupplierIds.length > 0 || matchedMaterialCodes.length > 0) {
+    const relatedQueries = [
+      ...(matchedSupplierIds.length > 0 ? [supabase.from("raw_material_contracts").select("id, contract_name, material_code, status, supplier:suppliers(name)").in("supplier_id", matchedSupplierIds).limit(GLOBAL_SEARCH_RESULT_LIMIT)] : []),
+      ...(matchedMaterialCodes.length > 0 ? [supabase.from("raw_material_contracts").select("id, contract_name, material_code, status, supplier:suppliers(name)").in("material_code", matchedMaterialCodes).limit(GLOBAL_SEARCH_RESULT_LIMIT)] : []),
+    ];
+    const relatedResults = await Promise.all(relatedQueries);
+    const relatedError = relatedResults.find((result) => result.error)?.error;
+    if (relatedError) return Response.json({ error: "검색 중 오류가 발생했습니다." }, { status: 500 });
+    directContracts = Array.from(new Map([...directContracts, ...relatedResults.flatMap((result) => result.data ?? [])].map((contract) => [contract.id, contract])).values()).slice(0, GLOBAL_SEARCH_RESULT_LIMIT);
+  }
   const matchedVendorIds = (vendorResult.data ?? []).map((vendor) => Number(vendor.id));
   if (matchedVendorIds.length > 0) {
     const relationResult = await supabase
@@ -283,11 +311,20 @@ export async function GET(request: Request) {
     status: shipment.status,
     assignee: shipment.driver_name,
   }));
+  const materialContracts = directContracts.map((contract) => {
+    const supplier = Array.isArray(contract.supplier) ? contract.supplier[0] : contract.supplier;
+    return { id: String(contract.id), contractName: contract.contract_name, supplierName: supplier?.name ?? null, materialCode: contract.material_code, status: contract.status };
+  });
+  const personal = (personalResult.data ?? []).map((note) => ({ id: String(note.id), noteType: note.note_type as "todo" | "memo" | "sticky", title: note.title, content: note.content }));
+  const lme = (materialResult.data ?? []).map((material) => ({ code: material.code, name: material.name }));
 
   return Response.json({
     projects,
     tasks,
     shipments,
     employees: employeeResult.data ?? [],
+    materialContracts,
+    personal,
+    lme,
   } satisfies GlobalSearchResponse);
 }

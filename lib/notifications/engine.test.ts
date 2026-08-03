@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { applyNotificationPreferences, buildNotificationCounts, buildNotificationReadRows, countUnreadNotifications, deriveNotificationState, generateNotifications } from "./engine.ts";
+import { applyNotificationPreferences, buildNotificationCounts, buildNotificationReadRows, countUnreadNotifications, deriveNotificationState, generateNotifications, matchesNotificationSearch } from "./engine.ts";
 
 const today = "2026-08-03";
 
@@ -71,6 +71,14 @@ test("batch read rows preserve pin and hidden preferences", () => {
   ]);
 });
 
+test("batch unread rows preserve pin and hidden preferences", () => {
+  const rows = buildNotificationReadRows(["a", "b"], "user", [{ notification_id: "a", is_pinned: true, is_hidden: true }], null);
+  assert.deepEqual(rows, [
+    { auth_user_id: "user", notification_id: "a", is_read: false, read_at: null, is_pinned: true, is_hidden: true },
+    { auth_user_id: "user", notification_id: "b", is_read: false, read_at: null, is_pinned: false, is_hidden: false },
+  ]);
+});
+
 test("read state is derived only from read_at", () => {
   const items = applyNotificationPreferences([{ id: "missing" }, { id: "null" }, { id: "read" }], [
     { notification_id: "null", is_read: true, read_at: null, is_pinned: false, is_hidden: false },
@@ -80,4 +88,10 @@ test("read state is derived only from read_at", () => {
   const state = deriveNotificationState(items.map((item) => ({ ...item, category: "task" })));
   assert.equal(state.unreadCount, 2);
   assert.equal(state.readItems.length, 1);
+});
+
+test("notification search matches title, content, project, category and priority", () => {
+  const item = { title: "D-DAY", description: "오늘 종료", projectName: "테스트 프로젝트", category: "project", priority: "critical" };
+  for (const query of ["d-day", "오늘", "테스트", "project", "critical", ""]) assert.equal(matchesNotificationSearch(item, query), true);
+  assert.equal(matchesNotificationSearch(item, "shipment"), false);
 });

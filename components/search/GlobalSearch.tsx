@@ -47,6 +47,9 @@ const EMPTY_RESULTS: GlobalSearchResponse = {
   tasks: [],
   shipments: [],
   employees: [],
+  materialContracts: [],
+  personal: [],
+  lme: [],
 };
 
 const quickLinks = [

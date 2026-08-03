@@ -113,10 +113,10 @@ type NotificationReadRow = {
   is_hidden: boolean;
 };
 
-export function notifyNotificationReadStateChanged(notificationIds: string[]) {
+export function notifyNotificationReadStateChanged(notificationIds: string[], readAt: string | null) {
   if (typeof window === "undefined") return;
-  window.dispatchEvent(new CustomEvent<string[]>(NOTIFICATION_READ_EVENT, {
-    detail: notificationIds,
+  window.dispatchEvent(new CustomEvent<{ notificationIds: string[]; readAt: string | null }>(NOTIFICATION_READ_EVENT, {
+    detail: { notificationIds, readAt },
   }));
 }
 
@@ -128,13 +128,27 @@ export async function markNotificationsRead(
   notificationIds: string[],
   currentEmployee: CurrentEmployee
 ) {
+  return setNotificationsReadState(notificationIds, currentEmployee, new Date().toISOString());
+}
+
+export async function markNotificationsUnread(
+  notificationIds: string[],
+  currentEmployee: CurrentEmployee
+) {
+  return setNotificationsReadState(notificationIds, currentEmployee, null);
+}
+
+async function setNotificationsReadState(
+  notificationIds: string[],
+  currentEmployee: CurrentEmployee,
+  readAt: string | null
+) {
   const uniqueIds = [...new Set(notificationIds)];
-  if (uniqueIds.length === 0) return { error: null, readAt: new Date().toISOString() };
+  if (uniqueIds.length === 0) return { error: null, readAt };
   if (!currentEmployee.auth_user_id) {
     return { error: new Error("로그인 사용자 정보를 확인할 수 없습니다."), readAt: null };
   }
 
-  const readAt = new Date().toISOString();
   const { data: existingRows, error: existingError } = await supabase
     .from("notification_reads")
     .select("notification_id, is_pinned, is_hidden")
@@ -145,7 +159,36 @@ export async function markNotificationsRead(
     buildNotificationReadRows(uniqueIds, currentEmployee.auth_user_id, existingRows ?? [], readAt),
     { onConflict: "auth_user_id,notification_id" }
   );
-  return { error, readAt: error ? null : readAt };
+  return { error, readAt: error ? undefined : readAt };
+}
+
+export async function toggleNotificationRead(
+  notificationKey: string,
+  currentReadAt: string | null,
+  currentEmployee: CurrentEmployee
+) {
+  if (!currentEmployee.auth_user_id) {
+    return { error: new Error("로그인 사용자 정보를 확인할 수 없습니다."), readAt: currentReadAt };
+  }
+
+  const readAt = currentReadAt ? null : new Date().toISOString();
+  const { data: existingRow, error: existingError } = await supabase
+    .from("notification_reads")
+    .select("is_pinned, is_hidden")
+    .eq("auth_user_id", currentEmployee.auth_user_id)
+    .eq("notification_id", notificationKey)
+    .maybeSingle();
+  if (existingError) return { error: existingError, readAt: currentReadAt };
+
+  const { error } = await supabase.from("notification_reads").upsert({
+    auth_user_id: currentEmployee.auth_user_id,
+    notification_id: notificationKey,
+    is_read: readAt !== null,
+    read_at: readAt,
+    is_pinned: existingRow?.is_pinned ?? false,
+    is_hidden: existingRow?.is_hidden ?? false,
+  }, { onConflict: "auth_user_id,notification_id" });
+  return { error, readAt: error ? currentReadAt : readAt };
 }
 
 export async function updateNotificationPreference(notificationId: string, currentEmployee: CurrentEmployee, values: { isPinned?: boolean; isHidden?: boolean; isRead: boolean; readAt: string | null }) {

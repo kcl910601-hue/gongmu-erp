@@ -828,7 +828,9 @@ const loadRole = useCallback(async function loadRole() {
                   <td className="whitespace-nowrap px-3 py-3.5 text-slate-500">
                     <div className="flex items-center gap-2">
                       <span>{formatDate(project.end_date || project.completion_due_date)}</span>
-                      <DdayBadge targetDate={project.end_date || project.completion_due_date} />
+                      {!isProjectCompleted(project.status) && (
+                        <DdayBadge targetDate={project.end_date || project.completion_due_date} />
+                      )}
                     </div>
                   </td>
                   <td className="px-3 py-3.5">

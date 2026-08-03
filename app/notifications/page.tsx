@@ -3,10 +3,13 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { CheckCheck, RefreshCw } from "lucide-react";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { NotificationRow } from "@/components/notifications/NotificationCenter";
 import {
   loadNotificationSummary,
   markNotificationsRead,
+  markNotificationsUnread,
+  toggleNotificationRead,
   NOTIFICATION_READ_EVENT,
   notifyNotificationReadStateChanged,
   notifyNotificationPreferenceChanged,
@@ -18,7 +21,8 @@ import { toast } from "@/lib/toast";
 import { deriveNotificationState } from "@/lib/notifications/engine";
 
 type Filter = "all" | "task" | "project" | "raw_material" | "personal" | "system";
-type ViewMode = "all" | "unread" | "pinned" | "hidden";
+type ViewMode = "all" | "unread" | "read" | "pinned" | "hidden";
+type BatchAction = "read" | "unread";
 
 const filters: { value: Filter; label: string }[] = [
   { value: "all", label: "전체" },
@@ -42,6 +46,7 @@ export default function NotificationsPage() {
   const [viewMode, setViewMode] = useState<ViewMode>("all");
   const [markingIds, setMarkingIds] = useState<Set<string>>(() => new Set());
   const [markingAll, setMarkingAll] = useState(false);
+  const [pendingBatchAction, setPendingBatchAction] = useState<BatchAction | null>(null);
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
 
@@ -70,56 +75,67 @@ export default function NotificationsPage() {
     };
   }, [loadNotifications]);
 
-  const applyReadState = useCallback((notificationIds: string[], readAt: string) => {
+  const applyReadState = useCallback((notificationIds: string[], readAt: string | null) => {
     const idSet = new Set(notificationIds);
     setSummary((current) => {
       if (!current) return current;
-      const items = current.items.map((item) => idSet.has(item.id) ? { ...item, isRead: true, readAt } : item);
+      const items = current.items.map((item) => idSet.has(item.id) ? { ...item, isRead: readAt !== null, isUnread: readAt === null, readAt } : item);
       return { ...current, items, unreadCount: deriveNotificationState(items).unreadCount };
     });
   }, []);
 
   useEffect(() => {
     function handleReadState(event: Event) {
-      applyReadState((event as CustomEvent<string[]>).detail ?? [], new Date().toISOString());
+      const detail = (event as CustomEvent<{ notificationIds: string[]; readAt: string | null }>).detail;
+      if (detail) applyReadState(detail.notificationIds, detail.readAt);
     }
     window.addEventListener(NOTIFICATION_READ_EVENT, handleReadState);
     return () => window.removeEventListener(NOTIFICATION_READ_EVENT, handleReadState);
   }, [applyReadState]);
 
-  const markRead = useCallback(async (notificationIds: string[]) => {
-    if (!summary?.currentEmployee || notificationIds.length === 0) return false;
-    const previousSummary = summary;
-    applyReadState(notificationIds, new Date().toISOString());
-    const { error, readAt } = await markNotificationsRead(notificationIds, summary.currentEmployee);
-    if (error || !readAt) {
-      setSummary(previousSummary);
-      toast.error("알림 읽음 처리에 실패했습니다.");
-      return false;
+  async function toggleOneRead(item: NonNullable<typeof summary>["items"][number]) {
+    if (!summary?.currentEmployee || markingIds.has(item.id)) return;
+    setMarkingIds((current) => new Set(current).add(item.id));
+    const previousReadAt = item.readAt;
+    const optimisticReadAt = previousReadAt ? null : new Date().toISOString();
+    applyReadState([item.id], optimisticReadAt);
+    const { error, readAt } = await toggleNotificationRead(item.id, previousReadAt, summary.currentEmployee);
+    if (error) {
+      applyReadState([item.id], previousReadAt);
+      toast.error("알림 읽음 상태를 변경하지 못했습니다.");
+    } else {
+      applyReadState([item.id], readAt);
+      notifyNotificationReadStateChanged([item.id], readAt);
     }
-    notifyNotificationReadStateChanged(notificationIds);
-    return true;
-  }, [applyReadState, summary]);
-
-  async function markOneRead(notificationId: string) {
-    if (markingIds.has(notificationId)) return;
-    setMarkingIds((current) => new Set(current).add(notificationId));
-    await markRead([notificationId]);
     setMarkingIds((current) => {
       const next = new Set(current);
-      next.delete(notificationId);
+      next.delete(item.id);
       return next;
     });
   }
 
-  async function markAllRead() {
-    if (!summary || markingAll) return;
-    const unreadIds = summary.items.filter((item) => !item.isRead && !item.isHidden).map((item) => item.id);
-    if (unreadIds.length === 0) return;
+  async function applyBatchReadState(action: BatchAction) {
+    if (!summary?.currentEmployee || markingAll) return;
+    const targets = action === "read" ? filteredUnreadItems : filteredReadItems;
+    const targetIds = targets.map((item) => item.id);
+    if (targetIds.length === 0) return;
     setMarkingAll(true);
-    const succeeded = await markRead(unreadIds);
-    if (succeeded) toast.success("모든 알림을 읽음 처리했습니다.");
+    const previousSummary = summary;
+    const optimisticReadAt = action === "read" ? new Date().toISOString() : null;
+    applyReadState(targetIds, optimisticReadAt);
+    const result = action === "read"
+      ? await markNotificationsRead(targetIds, summary.currentEmployee)
+      : await markNotificationsUnread(targetIds, summary.currentEmployee);
+    if (result.error || result.readAt === undefined) {
+      setSummary(previousSummary);
+      toast.error("알림 읽음 상태를 일괄 변경하지 못했습니다.");
+    } else {
+      applyReadState(targetIds, result.readAt);
+      notifyNotificationReadStateChanged(targetIds, result.readAt);
+      toast.success(action === "read" ? "현재 목록을 모두 읽음 처리했습니다." : "현재 목록을 모두 미확인 처리했습니다.");
+    }
     setMarkingAll(false);
+    setPendingBatchAction(null);
   }
 
   async function setPreference(item: NonNullable<typeof summary>["items"][number], values: { isPinned?: boolean; isHidden?: boolean }) {
@@ -136,9 +152,14 @@ export default function NotificationsPage() {
     if (viewMode === "hidden") return categoryItems.filter((item) => item.isHidden);
     const visible = categoryItems.filter((item) => !item.isHidden);
     if (viewMode === "unread") return visible.filter((item) => !item.isRead);
+    if (viewMode === "read") return visible.filter((item) => item.isRead);
     if (viewMode === "pinned") return visible.filter((item) => item.isPinned);
     return visible;
   }, [filter, summary, viewMode]);
+
+  const filteredUnreadItems = items.filter((item) => !item.isRead);
+  const filteredReadItems = items.filter((item) => item.isRead);
+  const hasFilteredScope = filter !== "all" || viewMode !== "all";
 
   const notificationState = useMemo(() => deriveNotificationState(summary?.items ?? []), [summary]);
   const unreadCount = notificationState.unreadCount;
@@ -154,8 +175,11 @@ export default function NotificationsPage() {
           <p className="mt-1 text-xs font-medium text-slate-500">확인 필요 항목 {unreadCount}건 · 전체 {notificationState.totalCount}건</p>
         </div>
         <div className="flex items-center gap-2">
-          <button type="button" onClick={() => void markAllRead()} disabled={unreadCount === 0 || markingAll} className="flex items-center gap-2 rounded-xl border border-blue-100 bg-white px-3 py-2 text-sm font-semibold text-blue-600 shadow-sm disabled:text-slate-300">
-            <CheckCheck size={15} />{markingAll ? "처리 중..." : "전체 읽음"}
+          <button type="button" title="현재 필터에 표시된 알림을 모두 읽음 처리합니다." onClick={() => setPendingBatchAction("read")} disabled={filteredUnreadItems.length === 0 || markingAll} className="flex items-center gap-2 rounded-xl border border-blue-100 bg-white px-3 py-2 text-sm font-semibold text-blue-600 shadow-sm disabled:text-slate-300">
+            <CheckCheck size={15} />{markingAll ? "처리 중..." : hasFilteredScope ? "현재 목록 모두 읽음" : "전체 읽음"}
+          </button>
+          <button type="button" title="현재 필터에 표시된 알림을 모두 미확인 처리합니다." onClick={() => setPendingBatchAction("unread")} disabled={filteredReadItems.length === 0 || markingAll} className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-600 shadow-sm disabled:text-slate-300">
+            {hasFilteredScope ? "현재 목록 모두 안읽음" : "전체 안읽음"}
           </button>
           <button
             type="button"
@@ -185,7 +209,7 @@ export default function NotificationsPage() {
           </button>
         ))}
         <div className="ml-auto flex flex-wrap gap-1 rounded-xl bg-white p-1 shadow-sm">
-          {([['all','전체'],['unread','읽지 않음'],['pinned','고정'],['hidden','숨긴 알림']] as const).map(([value, label]) => <button key={value} type="button" onClick={() => setViewMode(value)} className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${viewMode === value ? "bg-blue-600 text-white" : "text-slate-600 hover:bg-slate-50"}`}>{label}</button>)}
+          {([['all','전체'],['unread','읽지 않음'],['read','읽음'],['pinned','고정'],['hidden','숨긴 알림']] as const).map(([value, label]) => <button key={value} type="button" onClick={() => setViewMode(value)} className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${viewMode === value ? "bg-blue-600 text-white" : "text-slate-600 hover:bg-slate-50"}`}>{label}</button>)}
         </div>
       </div>
 
@@ -209,14 +233,25 @@ export default function NotificationsPage() {
               key={item.id}
               item={item}
               isMarkingRead={markingIds.has(item.id)}
-              onMarkRead={() => markOneRead(item.id)}
+              onToggleRead={() => toggleOneRead(item)}
               onTogglePin={() => setPreference(item, { isPinned: !item.isPinned })}
               onHide={() => setPreference(item, { isHidden: !item.isHidden })}
-              onSelect={() => item.isRead ? undefined : markOneRead(item.id)}
+              onSelect={() => item.isRead ? undefined : toggleOneRead(item)}
             />
           ))}
         </section>
       )}
+      <ConfirmDialog
+        open={pendingBatchAction !== null}
+        title={pendingBatchAction === "unread" ? "현재 목록 모두 안읽음" : "현재 목록 모두 읽음"}
+        description={pendingBatchAction === "unread"
+          ? `현재 목록의 읽은 알림 ${filteredReadItems.length}건을 모두 미확인으로 변경하시겠습니까?`
+          : `현재 목록의 미확인 알림 ${filteredUnreadItems.length}건을 모두 읽음 처리하시겠습니까?`}
+        confirmLabel={pendingBatchAction === "unread" ? "모두 안읽음" : "모두 읽음"}
+        isPending={markingAll}
+        onClose={() => setPendingBatchAction(null)}
+        onConfirm={() => { if (pendingBatchAction) void applyBatchReadState(pendingBatchAction); }}
+      />
     </main>
   );
 }

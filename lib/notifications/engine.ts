@@ -66,12 +66,19 @@ export function deriveNotificationState<T extends { category: string; isRead: bo
   return { visibleItems, unreadItems, readItems, hiddenItems, ...buildNotificationCounts(items) };
 }
 
-export function buildNotificationReadRows(notificationIds: string[], authUserId: string, existingRows: { notification_id: string; is_pinned: boolean; is_hidden: boolean }[], readAt: string) {
+export function matchesNotificationSearch(item: { title: string; description: string; projectName?: string | null; category: string; priority: string | number; priorityLevel?: string }, query: string) {
+  const keyword = query.trim().toLocaleLowerCase("ko-KR");
+  if (!keyword) return true;
+  return [item.title, item.description, item.projectName ?? "", item.category, String(item.priority), item.priorityLevel ?? ""]
+    .some((value) => value.toLocaleLowerCase("ko-KR").includes(keyword));
+}
+
+export function buildNotificationReadRows(notificationIds: string[], authUserId: string, existingRows: { notification_id: string; is_pinned: boolean; is_hidden: boolean }[], readAt: string | null) {
   const existingById = new Map(existingRows.map((row) => [row.notification_id, row]));
   return notificationIds.map((notificationId) => ({
     auth_user_id: authUserId,
     notification_id: notificationId,
-    is_read: true,
+    is_read: readAt !== null,
     read_at: readAt,
     is_pinned: existingById.get(notificationId)?.is_pinned ?? false,
     is_hidden: existingById.get(notificationId)?.is_hidden ?? false,

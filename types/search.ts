@@ -36,9 +36,16 @@ export type EmployeeSearchResult = {
   active: boolean | null;
 };
 
+export type MaterialContractSearchResult = { id: string; contractName: string; supplierName: string | null; materialCode: string; status: string };
+export type PersonalSearchResult = { id: string; noteType: "todo" | "memo" | "sticky"; title: string; content: string };
+export type LmeSearchResult = { code: string; name: string };
+
 export type GlobalSearchResponse = {
   projects: ProjectSearchResult[];
   tasks: TaskSearchResult[];
   shipments: ShipmentSearchResult[];
   employees: EmployeeSearchResult[];
+  materialContracts: MaterialContractSearchResult[];
+  personal: PersonalSearchResult[];
+  lme: LmeSearchResult[];
 };

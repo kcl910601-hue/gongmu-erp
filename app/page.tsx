@@ -11,7 +11,6 @@ import {
   ChevronUp,
   Clock,
   FolderKanban,
-  Search,
   Truck,
   User,
   UserCheck,
@@ -25,6 +24,7 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { ProgressBar } from "@/components/ui/ProgressBar";
 import ActivityTimeline from "@/components/activity/ActivityTimeline";
 import MyWorkspaceRecent from "@/components/recent/MyWorkspaceRecent";
+import DashboardSearch from "@/components/dashboard/DashboardSearch";
 import { Skeleton } from "@/components/ui/Skeleton";
 import {
   MorningBrief,
@@ -222,7 +222,6 @@ export default function Home() {
   const [shipments, setShipments] = useState<MorningBriefShipment[]>([]);
   const [recentProjects, setRecentProjects] = useState<ProjectWithProgress[]>([]);
   const [weeklyLme, setWeeklyLme] = useState<WeeklyLmeComparison | null>(null);
-  const [searchText, setSearchText] = useState("");
   const [isLoading, setIsLoading] = useState(true);
   const currentUserName = currentEmployee?.name ?? "";
   const currentUserRole = currentEmployee?.role ?? "";
@@ -1042,18 +1041,6 @@ export default function Home() {
     { value: "custom", label: "직접 선택" },
   ];
 
-  const searchedProjects = recentProjects.filter((project) => {
-    const keyword = searchText.trim().toLowerCase();
-
-    if (!keyword) return true;
-
-    return (
-      project.project_name.toLowerCase().includes(keyword) ||
-      (project.project_code || "").toLowerCase().includes(keyword) ||
-      project.process_type.toLowerCase().includes(keyword) ||
-      (project.task_manager || "").toLowerCase().includes(keyword)
-    );
-  });
   const morningBriefTasks = tasks.map((task) => ({
     ...task,
     projectName: getProjectName(task.project_id),
@@ -1097,17 +1084,7 @@ export default function Home() {
         }}
       />
 
-      <div className="mb-4 rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
-        <div className="flex items-center gap-3">
-          <Search className="text-slate-400" size={20} />
-          <input
-            value={searchText}
-            onChange={(e) => setSearchText(e.target.value)}
-            placeholder="프로젝트명, 코드, 공정, 담당자로 검색"
-            className="w-full bg-transparent text-sm text-slate-700 outline-none placeholder:text-slate-400"
-          />
-        </div>
-      </div>
+      <DashboardSearch />
 
       {isLoading ? (
         <div role="status" aria-label="대시보드를 불러오는 중" className="space-y-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
@@ -1122,7 +1099,7 @@ export default function Home() {
       ) : (
         <>
           <div className="grid gap-4 xl:grid-cols-[minmax(0,0.9fr)_minmax(420px,1.1fr)]">
-            <MyWorkspaceRecent />
+            <div id="my-workspace"><MyWorkspaceRecent /></div>
             <PersonalWorkspace />
           </div>
           <div className="mb-3 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
@@ -2012,7 +1989,7 @@ export default function Home() {
                 </p>
               </div>
               <span className="shrink-0 rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600">
-                {searchedProjects.length}건
+                {recentProjects.length}건
               </span>
             </div>
 
@@ -2031,7 +2008,7 @@ export default function Home() {
                 </thead>
 
                 <tbody>
-                  {searchedProjects.map((project) => (
+                  {recentProjects.map((project) => (
                     <tr key={project.id} className="border-b border-slate-100 text-sm text-slate-700 transition-colors hover:bg-slate-50">
                       <td className="px-3 py-2.5 text-slate-500">
                         <Link
@@ -2057,7 +2034,9 @@ export default function Home() {
                       <td className="px-3 py-2.5 text-slate-500">
                         <div className="flex items-center gap-2">
                           <span>{getProjectEndDate(project) || "-"}</span>
-                          <DdayBadge targetDate={getProjectEndDate(project)} />
+                          {!isProjectCompleted(project.status) && (
+                            <DdayBadge targetDate={getProjectEndDate(project)} />
+                          )}
                         </div>
                       </td>
 
@@ -2081,7 +2060,7 @@ export default function Home() {
                     </tr>
                   ))}
 
-                  {searchedProjects.length === 0 && (
+                  {recentProjects.length === 0 && (
                     <tr>
                       <td colSpan={7} className="p-0">
                         <EmptyState

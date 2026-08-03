@@ -21,6 +21,7 @@ import {
   Pin,
   EyeOff,
   RotateCcw,
+  Search,
   X,
 } from "lucide-react";
 import { ErrorState } from "@/components/ui/ErrorState";
@@ -30,6 +31,7 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import {
   loadNotificationSummary,
   markNotificationsRead,
+  toggleNotificationRead,
   NOTIFICATION_READ_EVENT,
   NOTIFICATION_PREFERENCE_EVENT,
   notifyNotificationReadStateChanged,
@@ -42,7 +44,7 @@ import {
 import { formatActivityTime } from "@/lib/activity";
 import { useAppShellUser } from "@/contexts/AppShellUserContext";
 import { toast } from "@/lib/toast";
-import { deriveNotificationState } from "@/lib/notifications/engine";
+import { deriveNotificationState, matchesNotificationSearch } from "@/lib/notifications/engine";
 
 type NotificationFilter = "all" | "task" | "project" | "raw_material" | "personal" | "system";
 
@@ -140,14 +142,14 @@ function NotificationIcon({ item }: { item: NotificationItem }) {
 export function NotificationRow({
   item,
   onSelect,
-  onMarkRead,
+  onToggleRead,
   isMarkingRead = false,
   onTogglePin,
   onHide,
 }: {
   item: NotificationItem;
   onSelect: () => void | Promise<void>;
-  onMarkRead?: () => void | Promise<void>;
+  onToggleRead?: () => void | Promise<void>;
   isMarkingRead?: boolean;
   onTogglePin?: () => void | Promise<void>;
   onHide?: () => void | Promise<void>;
@@ -203,19 +205,18 @@ export function NotificationRow({
         </div>
       </div>
       </Link>
-      {!item.isRead && onMarkRead ? (
+      {onToggleRead ? (
         <button
           type="button"
-          onClick={(event) => { event.preventDefault(); event.stopPropagation(); void onMarkRead(); }}
+          onClick={(event) => { event.preventDefault(); event.stopPropagation(); void onToggleRead(); }}
           disabled={isMarkingRead}
-          aria-label={`${item.description} 읽음 처리`}
-          title="읽음 처리"
-          className="absolute right-3 top-3 flex h-8 w-8 items-center justify-center rounded-xl border border-blue-100 bg-white text-blue-600 hover:bg-blue-50 disabled:opacity-50"
+          aria-label={`${item.description} ${item.isRead ? "미확인으로 표시" : "읽음 처리"}`}
+          title={item.isRead ? "미확인으로 표시" : "읽음 처리"}
+          className={`absolute right-3 top-3 flex h-8 w-8 items-center justify-center rounded-xl border disabled:opacity-50 ${item.isRead ? "border-emerald-200 bg-emerald-50 text-emerald-600 hover:bg-emerald-100" : "border-blue-100 bg-white text-blue-600 hover:bg-blue-50"}`}
         >
           <Check size={15} />
         </button>
       ) : null}
-      {item.isRead ? <span title="읽음 완료" aria-label="읽음 완료" className="absolute right-3 top-3 flex h-8 w-8 items-center justify-center rounded-xl text-emerald-600"><Check size={15} /></span> : null}
       {onTogglePin ? <button type="button" onClick={(event) => { event.preventDefault(); event.stopPropagation(); void onTogglePin(); }} aria-label={item.isPinned ? "고정 해제" : "고정"} title={item.isPinned ? "고정 해제" : "고정"} className={`absolute right-12 top-3 flex h-8 w-8 items-center justify-center rounded-xl border bg-white ${item.isPinned ? "border-blue-200 text-blue-600" : "border-slate-200 text-slate-400"}`}><Pin size={14} className={item.isPinned ? "fill-current" : ""} /></button> : null}
       {onHide ? <button type="button" onClick={(event) => { event.preventDefault(); event.stopPropagation(); void onHide(); }} aria-label={item.isHidden ? "알림 복원" : "알림 숨기기"} title={item.isHidden ? "복원" : "숨기기"} className="absolute right-3 bottom-3 flex h-8 w-8 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-400 hover:text-red-600">{item.isHidden ? <RotateCcw size={14} /> : <EyeOff size={14} />}</button> : null}
     </div>
@@ -230,6 +231,8 @@ export default function NotificationCenter() {
   const [errorMessage, setErrorMessage] = useState("");
   const [activeFilter, setActiveFilter] = useState<NotificationFilter>("all");
   const [showUnreadOnly, setShowUnreadOnly] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("");
   const [markingIds, setMarkingIds] = useState<Set<string>>(() => new Set());
   const [isMarkingAll, setIsMarkingAll] = useState(false);
   const requestInFlightRef = useRef(false);
@@ -272,31 +275,37 @@ export default function NotificationCenter() {
   }, [loadNotifications]);
 
   useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedSearchQuery(searchQuery), 300);
+    return () => window.clearTimeout(timer);
+  }, [searchQuery]);
+
+  useEffect(() => {
     if (!isOpen) return;
 
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key === "Escape") {
-        setIsOpen(false);
+        if (searchQuery) setSearchQuery("");
+        else setIsOpen(false);
       }
     }
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isOpen]);
+  }, [isOpen, searchQuery]);
 
-  const applyReadState = useCallback((notificationIds: string[], readAt: string) => {
+  const applyReadState = useCallback((notificationIds: string[], readAt: string | null) => {
     const idSet = new Set(notificationIds);
     setSummary((current) => {
       if (!current) return current;
-      const items = current.items.map((item) => idSet.has(item.id) ? { ...item, isRead: true, readAt } : item);
+      const items = current.items.map((item) => idSet.has(item.id) ? { ...item, isRead: readAt !== null, isUnread: readAt === null, readAt } : item);
       return { ...current, items, unreadCount: deriveNotificationState(items).unreadCount };
     });
   }, []);
 
   useEffect(() => {
     function handleReadState(event: Event) {
-      const notificationIds = (event as CustomEvent<string[]>).detail ?? [];
-      applyReadState(notificationIds, new Date().toISOString());
+      const detail = (event as CustomEvent<{ notificationIds: string[]; readAt: string | null }>).detail;
+      if (detail) applyReadState(detail.notificationIds, detail.readAt);
     }
     window.addEventListener(NOTIFICATION_READ_EVENT, handleReadState);
     return () => window.removeEventListener(NOTIFICATION_READ_EVENT, handleReadState);
@@ -319,14 +328,24 @@ export default function NotificationCenter() {
       toast.error("알림 읽음 처리에 실패했습니다.");
       return false;
     }
-    notifyNotificationReadStateChanged(notificationIds);
+    notifyNotificationReadStateChanged(notificationIds, readAt);
     return true;
   }, [applyReadState, employee, summary]);
 
-  async function markOneRead(item: NotificationItem) {
-    if (item.isRead || markingIds.has(item.id)) return;
+  async function toggleOneRead(item: NotificationItem) {
+    if (!employee || markingIds.has(item.id)) return;
     setMarkingIds((current) => new Set(current).add(item.id));
-    await markRead([item.id]);
+    const previousReadAt = item.readAt;
+    const optimisticReadAt = previousReadAt ? null : new Date().toISOString();
+    applyReadState([item.id], optimisticReadAt);
+    const { error, readAt } = await toggleNotificationRead(item.id, previousReadAt, employee);
+    if (error) {
+      applyReadState([item.id], previousReadAt);
+      toast.error("알림 읽음 상태를 변경하지 못했습니다.");
+    } else {
+      applyReadState([item.id], readAt);
+      notifyNotificationReadStateChanged([item.id], readAt);
+    }
     setMarkingIds((current) => {
       const next = new Set(current);
       next.delete(item.id);
@@ -355,8 +374,9 @@ export default function NotificationCenter() {
   const filteredItems = useMemo(() => {
     if (!summary) return [];
     const categoryItems = summary.items.filter((item) => matchesFilter(item.category, activeFilter));
-    return showUnreadOnly ? categoryItems.filter((item) => !item.isRead) : categoryItems;
-  }, [activeFilter, showUnreadOnly, summary]);
+    const unreadItems = showUnreadOnly ? categoryItems.filter((item) => !item.isRead) : categoryItems;
+    return unreadItems.filter((item) => matchesNotificationSearch(item, debouncedSearchQuery));
+  }, [activeFilter, debouncedSearchQuery, showUnreadOnly, summary]);
 
   const notificationState = useMemo(() => deriveNotificationState(summary?.items ?? []), [summary]);
   const unreadCount = notificationState.unreadCount;
@@ -425,6 +445,12 @@ export default function NotificationCenter() {
                 </div>
               </div>
 
+              <label className="mt-3 flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+                <Search size={15} className="text-slate-400" />
+                <input value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} placeholder="제목, 내용, 프로젝트, 카테고리, 우선순위 검색" aria-label="알림 검색" className="min-w-0 flex-1 bg-transparent text-sm text-slate-700 outline-none placeholder:text-slate-400" />
+                {searchQuery ? <button type="button" onClick={() => setSearchQuery("")} aria-label="알림 검색 초기화" title="검색 초기화" className="text-slate-400 hover:text-slate-700"><X size={14} /></button> : null}
+              </label>
+
               <div className="mt-4 grid grid-cols-3 gap-1 rounded-2xl bg-slate-100 p-1 sm:grid-cols-6">
                 {filters.map((filter) => (
                   <button
@@ -478,11 +504,11 @@ export default function NotificationCenter() {
                       key={item.id}
                       item={item}
                       isMarkingRead={markingIds.has(item.id)}
-                      onMarkRead={() => markOneRead(item)}
+                      onToggleRead={() => toggleOneRead(item)}
                       onTogglePin={() => setPreference(item, { isPinned: !item.isPinned })}
                       onHide={() => setPreference(item, { isHidden: true })}
                       onSelect={async () => {
-                        if (!item.isRead) await markOneRead(item);
+                        if (!item.isRead) await toggleOneRead(item);
                         setIsOpen(false);
                       }}
                     />
