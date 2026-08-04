@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { COMMENT_MAX_LENGTH, type SharedComment } from "@/lib/comments";
 import { toast } from "@/lib/toast";
 import { dispatchPersonalNotesChanged } from "@/lib/personal-notes";
+import { COMMENTS_CHANGED_EVENT } from "@/lib/collaboration-events";
 
 function formatCommentTime(value: string) {
   return new Intl.DateTimeFormat("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(value));
@@ -28,7 +29,11 @@ export function CommentSection({ itemId }: { itemId: string }) {
     setLoading(false);
   }, [itemId]);
 
-  useEffect(() => { const timer = window.setTimeout(() => void load(), 0); return () => window.clearTimeout(timer); }, [load]);
+  useEffect(() => {
+    const timer = window.setTimeout(() => void load(), 0);
+    window.addEventListener(COMMENTS_CHANGED_EVENT, load);
+    return () => { window.clearTimeout(timer); window.removeEventListener(COMMENTS_CHANGED_EVENT, load); };
+  }, [load]);
 
   async function createComment() {
     const normalized = content.trim();

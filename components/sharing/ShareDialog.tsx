@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { X } from "lucide-react";
 import type { PersonalNote } from "@/lib/personal-notes";
 import { SHARE_PERMISSION_LABELS, type ShareEmployee, type SharePermission, type SharedItemMember, type SharingOverview } from "@/lib/sharing";
+import { SHARING_CHANGED_EVENT } from "@/lib/collaboration-events";
 
 export function ShareDialog({ note, onClose, onChanged }: { note: PersonalNote; onClose: () => void; onChanged: () => void }) {
   const [employees, setEmployees] = useState<ShareEmployee[]>([]);
@@ -13,10 +14,15 @@ export function ShareDialog({ note, onClose, onChanged }: { note: PersonalNote; 
   const [search, setSearch] = useState("");
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
-  useEffect(() => { void fetch("/api/sharing", { cache: "no-store" }).then(async (response) => {
+  const load = useCallback(async () => { await fetch("/api/sharing", { cache: "no-store" }).then(async (response) => {
     const result = await response.json() as SharingOverview & { error?: string };
     if (!response.ok) setError(result.error ?? "직원 목록을 불러오지 못했습니다."); else { const itemMembers = result.members.filter((member) => member.shared_item_id === note.sharing?.sharedItemId); const excluded = new Set([...itemMembers.map((member) => member.employee_id), ...result.sent.filter((invitation) => invitation.status === "pending" && invitation.shared_item?.item_id === note.id).map((invitation) => invitation.invitee_id)]); setEmployees(result.employees.filter((employee) => !excluded.has(employee.id))); setMembers(itemMembers); }
   }); }, [note.id, note.sharing?.sharedItemId]);
+  useEffect(() => {
+    void load();
+    window.addEventListener(SHARING_CHANGED_EVENT, load);
+    return () => window.removeEventListener(SHARING_CHANGED_EVENT, load);
+  }, [load]);
   const visibleEmployees = useMemo(() => { const keyword = search.trim().toLocaleLowerCase("ko-KR"); return employees.filter((employee) => !keyword || employee.name.toLocaleLowerCase("ko-KR").includes(keyword) || (employee.position ?? "").toLocaleLowerCase("ko-KR").includes(keyword)); }, [employees, search]);
   async function submit() {
     if (selected.length === 0) return;

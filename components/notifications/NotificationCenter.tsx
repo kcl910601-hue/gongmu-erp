@@ -45,6 +45,7 @@ import { formatActivityTime } from "@/lib/activity";
 import { useAppShellUser } from "@/contexts/AppShellUserContext";
 import { toast } from "@/lib/toast";
 import { deriveNotificationState, matchesNotificationSearch } from "@/lib/notifications/engine";
+import { NOTIFICATIONS_CHANGED_EVENT } from "@/lib/collaboration-events";
 import { SHARE_PERMISSION_LABELS, type ShareInvitation, type SharingOverview } from "@/lib/sharing";
 import { dispatchPersonalNotesChanged } from "@/lib/personal-notes";
 
@@ -319,7 +320,11 @@ export default function NotificationCenter() {
   useEffect(() => {
     function handlePreferenceChange() { void loadNotifications(); }
     window.addEventListener(NOTIFICATION_PREFERENCE_EVENT, handlePreferenceChange);
-    return () => window.removeEventListener(NOTIFICATION_PREFERENCE_EVENT, handlePreferenceChange);
+    window.addEventListener(NOTIFICATIONS_CHANGED_EVENT, handlePreferenceChange);
+    return () => {
+      window.removeEventListener(NOTIFICATION_PREFERENCE_EVENT, handlePreferenceChange);
+      window.removeEventListener(NOTIFICATIONS_CHANGED_EVENT, handlePreferenceChange);
+    };
   }, [loadNotifications]);
 
   const markRead = useCallback(async (notificationIds: string[]) => {

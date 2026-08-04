@@ -1,5 +1,13 @@
 # Gongmu ERP - Project Context
 
+## Sprint 9-0 Realtime Collaboration Phase 1
+
+인증된 화면은 AppShell에서 `shared-workspace-realtime` 채널 하나만 생성합니다. `personal_notes`, `shared_item_members`, `share_invitations`, `shared_comments`, `activity_logs`, `notification_reads` 변경을 수신하고 기존 API를 통해 필요한 데이터만 다시 조회합니다. Realtime payload를 화면 데이터로 직접 사용하지 않으므로 기존 API와 RLS가 조회 권한을 다시 검증합니다.
+
+테이블 변경은 개인 일정·댓글·Timeline·공유·Notification 도메인 이벤트로 변환됩니다. 공통 스케줄러가 같은 도메인 이벤트를 150ms 동안 합쳐 DB trigger와 사용자 mutation에서 발생하는 연속 변경의 중복 재조회를 줄입니다. 별도 `notifications` 테이블은 존재하지 않아 구독하지 않으며, Notification Bell은 관련 원본과 `notification_reads` 변경에서 갱신합니다.
+
+`20260804180000_enable_shared_workspace_realtime.sql`은 Realtime publication만 확장하며 테이블이나 원본 복사본을 만들지 않습니다. 운영 DB 적용과 다중 사용자 UAT는 별도 수행해야 합니다.
+
 ## Sprint 8-9D Calendar UX Improvements
 
 월간 Calendar의 주 Row 높이는 각 주에서 개인 일정이 가장 많은 날짜의 카드 수와 회사 일정 lane 수를 함께 계산해 주별로 독립 확장합니다. 개인 일정 카드는 더 이상 일부만 자르지 않으며, 제목·날짜·작성자·공유 상태·댓글 수만 표시합니다.

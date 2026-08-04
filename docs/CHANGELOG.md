@@ -1,5 +1,13 @@
 # CHANGELOG
 
+## Sprint 9-0 Realtime Collaboration Phase 1
+
+- 인증된 AppShell에서 Shared Workspace용 Supabase Realtime 채널을 한 번만 구독
+- 일정·공유·댓글·Timeline·Notification 변경을 기존 화면별 재조회 이벤트와 통합
+- 연속 DB 변경과 로컬 변경 이벤트를 150ms debounce하여 중복 재조회 방지
+- 실제 존재하는 `notification_reads`를 포함한 6개 테이블의 Realtime publication migration과 검증 SQL 준비
+- 운영 DB에는 migration을 자동 적용하지 않음
+
 ## Sprint 8-9D Calendar UX Improvements
 
 - 월간 캘린더의 각 주 높이를 해당 주에서 일정이 가장 많은 날짜 기준으로 자동 확장

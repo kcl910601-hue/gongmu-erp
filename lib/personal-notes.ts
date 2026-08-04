@@ -21,7 +21,7 @@ export type PersonalNote = {
   sharing?: { sharedItemId: string; ownerName: string; permission: "owner" | "view" | "edit"; memberCount: number } | null;
 };
 
-export const PERSONAL_NOTES_CHANGED_EVENT = "personal-notes:changed";
+export { PERSONAL_NOTES_CHANGED_EVENT };
 export const NOTE_EDITOR_OPEN_EVENT = "note-editor:open";
 
 export type NoteEditorPreset = "memo" | "todo" | "sticky";
@@ -94,5 +94,6 @@ export function selectPersonalNotesForCalendar(notes: PersonalNote[], start: str
 }
 
 export function dispatchPersonalNotesChanged() {
-  window.dispatchEvent(new CustomEvent(PERSONAL_NOTES_CHANGED_EVENT));
+  scheduleCollaborationEvents([PERSONAL_NOTES_CHANGED_EVENT]);
 }
+import { PERSONAL_NOTES_CHANGED_EVENT, scheduleCollaborationEvents } from "./collaboration-events.ts";

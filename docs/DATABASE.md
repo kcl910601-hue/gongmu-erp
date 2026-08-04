@@ -1,5 +1,13 @@
 # ERP Database v1
 
+## Sprint 9-0 Realtime Collaboration
+
+- Migration: `20260804180000_enable_shared_workspace_realtime.sql`
+- Verification: `20260804181000_verify_shared_workspace_realtime.sql`
+- `supabase_realtime` publication 대상: `personal_notes`, `shared_item_members`, `share_invitations`, `shared_comments`, `activity_logs`, `notification_reads`
+- 각 테이블의 기존 RLS를 유지하며 Realtime 수신 후에도 API 재조회로 접근 권한을 검증합니다.
+- 운영 DB에는 migration을 자동 적용하지 않습니다.
+
 ## Sprint 8-9C Comment Count Aggregation
 
 `get_shared_comment_counts(uuid[])`는 조회된 원본 ID 배열의 댓글 수를 한 번에 집계합니다. SECURITY INVOKER로 실행되어 기존 `shared_comments` RLS를 그대로 적용하며 사용자별 집계 행이나 별도 count 컬럼을 저장하지 않습니다. 운영 DB에는 `20260804160000_add_shared_comment_counts.sql`을 자동 적용하지 않았습니다.

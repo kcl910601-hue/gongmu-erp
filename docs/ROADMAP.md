@@ -1,5 +1,13 @@
 # 개발 로드맵
 
+## Sprint 9-0
+
+- [x] Shared Workspace 공통 Supabase Realtime 구독
+- [x] Calendar·My Workspace·댓글·Timeline·공유·Notification 부분 재조회 연동
+- [x] Realtime 및 로컬 변경 이벤트 debounce 통합
+- [x] Realtime publication migration 및 검증 SQL 준비
+- [ ] 운영 Supabase migration 적용 및 다중 사용자 UAT
+
 ## Sprint 8-9D
 
 - [x] 월간 캘린더 주차별 일정 수 기반 Row 높이 자동 확장

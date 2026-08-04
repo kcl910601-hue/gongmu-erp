@@ -19,6 +19,7 @@ import {
 } from "@/lib/notifications";
 import { toast } from "@/lib/toast";
 import { deriveNotificationState } from "@/lib/notifications/engine";
+import { NOTIFICATIONS_CHANGED_EVENT } from "@/lib/collaboration-events";
 
 type Filter = "all" | "task" | "project" | "raw_material" | "personal" | "system";
 type ViewMode = "all" | "unread" | "read" | "pinned" | "hidden";
@@ -73,6 +74,11 @@ export default function NotificationsPage() {
       window.clearTimeout(timer);
       window.clearInterval(interval);
     };
+  }, [loadNotifications]);
+
+  useEffect(() => {
+    window.addEventListener(NOTIFICATIONS_CHANGED_EVENT, loadNotifications);
+    return () => window.removeEventListener(NOTIFICATIONS_CHANGED_EVENT, loadNotifications);
   }, [loadNotifications]);
 
   const applyReadState = useCallback((notificationIds: string[], readAt: string | null) => {

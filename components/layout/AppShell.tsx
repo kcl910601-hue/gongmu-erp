@@ -16,6 +16,7 @@ import { TaskDetailDialog } from "@/components/tasks/TaskDetailDialog";
 import NoteEditorModal from "@/components/workspace/NoteEditorModal";
 import { MaintenanceScreen } from "@/components/maintenance/MaintenanceScreen";
 import { getDefaultMaintenanceModeSetting, getMaintenanceModeSetting, MAINTENANCE_MODE_UPDATED_EVENT, shouldBlockForMaintenance, type MaintenanceModeSetting } from "@/lib/maintenance-mode";
+import { subscribeToRealtimeCollaboration } from "@/lib/realtime-collaboration";
 
 function getSidebarSnapshot() {
   if (typeof window === "undefined") return false;
@@ -118,6 +119,11 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     });
     return () => { active = false; };
   }, [employee, isPublicPage, pathname]);
+
+  useEffect(() => {
+    if (isPublicPage || !employee) return;
+    return subscribeToRealtimeCollaboration();
+  }, [employee, isPublicPage]);
 
   useEffect(() => {
     function handleMaintenanceUpdated(event: Event) {
