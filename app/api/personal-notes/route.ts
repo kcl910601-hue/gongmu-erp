@@ -41,16 +41,27 @@ export async function GET(request: Request) {
   if (memberResult.error || ownerResult.error) return Response.json({ error: memberResult.error?.message ?? ownerResult.error?.message }, { status: 500 });
   const members = memberResult.data ?? [];
   const commentCounts = new Map<string, number>();
-  const countResult = itemIds.length ? await supabase.rpc("get_shared_comment_counts", { p_item_ids: itemIds }) : { data: [], error: null };
+  const unreadCommentCounts = new Map<string, number>();
+  const countResult = itemIds.length ? await supabase.rpc("get_shared_comment_count_stats", { p_item_ids: itemIds }) : { data: [], error: null };
   if (countResult.error?.code === "PGRST202" || countResult.error?.code === "42883") {
-    const fallback = sharedIds.length ? await supabase.from("shared_comments").select("shared_item_id").in("shared_item_id", sharedIds) : { data: [], error: null };
+    const fallbackRpc = itemIds.length ? await supabase.rpc("get_shared_comment_counts", { p_item_ids: itemIds }) : { data: [], error: null };
+    if (!fallbackRpc.error) {
+      for (const count of fallbackRpc.data ?? []) {
+        const shared = sharedItems.find((item) => item.item_id === count.item_id);
+        if (shared) commentCounts.set(shared.id, Number(count.comment_count));
+      }
+    }
+    const fallback = fallbackRpc.error && sharedIds.length ? await supabase.from("shared_comments").select("shared_item_id").in("shared_item_id", sharedIds) : { data: [], error: null };
     const tableMissing = fallback.error?.code === "42P01" || fallback.error?.code === "PGRST205";
     if (fallback.error && !tableMissing) return Response.json({ error: fallback.error.message }, { status: 500 });
     for (const comment of fallback.data ?? []) commentCounts.set(comment.shared_item_id, (commentCounts.get(comment.shared_item_id) ?? 0) + 1);
   } else if (countResult.error) return Response.json({ error: countResult.error.message }, { status: 500 });
   else for (const count of countResult.data ?? []) {
     const shared = sharedItems.find((item) => item.item_id === count.item_id);
-    if (shared) commentCounts.set(shared.id, Number(count.comment_count));
+    if (shared) {
+      commentCounts.set(shared.id, Number(count.comment_count));
+      unreadCommentCounts.set(shared.id, Number(count.unread_count));
+    }
   }
   const ownerNames = new Map((ownerResult.data ?? []).map((owner) => [Number(owner.id), owner.name]));
   const sharedByItem = new Map(sharedItems.map((item) => [item.item_id, item]));
@@ -58,7 +69,7 @@ export async function GET(request: Request) {
     const shared = sharedByItem.get(note.id);
     if (!shared) return { ...note, comment_count: 0, sharing: null };
     const member = members.find((entry) => entry.shared_item_id === shared.id && Number(entry.employee_id) === employee.id);
-    return { ...note, comment_count: commentCounts.get(shared.id) ?? 0, sharing: { sharedItemId: shared.id, ownerName: ownerNames.get(Number(shared.owner_id)) ?? "-", permission: Number(shared.owner_id) === employee.id ? "owner" : member?.permission ?? "view", memberCount: members.filter((entry) => entry.shared_item_id === shared.id).length } };
+    return { ...note, comment_count: commentCounts.get(shared.id) ?? 0, unread_comment_count: unreadCommentCounts.get(shared.id) ?? 0, sharing: { sharedItemId: shared.id, ownerName: ownerNames.get(Number(shared.owner_id)) ?? "-", permission: Number(shared.owner_id) === employee.id ? "owner" : member?.permission ?? "view", memberCount: members.filter((entry) => entry.shared_item_id === shared.id).length } };
   }) });
 }
 

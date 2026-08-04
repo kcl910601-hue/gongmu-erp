@@ -18,6 +18,7 @@ export type PersonalNote = {
   created_at: string;
   updated_at: string;
   comment_count?: number;
+  unread_comment_count?: number;
   sharing?: { sharedItemId: string; ownerName: string; permission: "owner" | "view" | "edit"; memberCount: number } | null;
 };
 
@@ -32,6 +33,13 @@ export function getPersonalNoteAccess(note: PersonalNote) {
   const permission = note.sharing?.permission ?? "owner";
   const isOwner = permission === "owner";
   return { isOwner, canEdit: isOwner || permission === "edit", canShare: isOwner, canPin: isOwner, canDelete: isOwner, canComment: true, canViewTimeline: true };
+}
+
+export function getPersonalNoteCommentBadge(note: Pick<PersonalNote, "comment_count" | "unread_comment_count">) {
+  const total = note.comment_count ?? 0;
+  if (total <= 0) return null;
+  const unread = Math.max(0, note.unread_comment_count ?? 0);
+  return unread > 0 ? `${total} (${unread})` : String(total);
 }
 
 export function normalizeCalendarSourceFilter(value: string | null): CalendarSourceFilter {

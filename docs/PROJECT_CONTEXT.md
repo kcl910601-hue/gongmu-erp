@@ -1,5 +1,17 @@
 # Gongmu ERP - Project Context
 
+## Sprint 9-0B Unread Comments & Calendar Shared Tag
+
+댓글 읽음 정보는 `shared_comment_reads`에 `shared_item_id`, `employee_id`, `last_read_comment_id` 한 행만 저장합니다. 댓글이나 일정 복사본은 만들지 않습니다. `get_shared_comment_count_stats(uuid[])`는 전체 댓글 수와 현재 사용자가 작성하지 않았으며 마지막 읽음 ID보다 큰 댓글 수를 일괄 반환합니다.
+
+`CommentSection`이 댓글 API 응답을 화면에 표시한 뒤 응답에 포함된 마지막 댓글 ID까지만 `mark_shared_comments_read`로 기록합니다. 읽음 성공 시 현재 화면의 unread를 즉시 0으로 만들고, `shared_comment_reads` Realtime 변경으로 같은 사용자의 다른 화면도 count만 다시 조회합니다. Calendar 카드는 기존 날짜·작성자·댓글 정보를 유지하면서 소유자가 공유한 일정에는 `공유중`, 참여 일정에는 `공유받음` 태그를 표시합니다.
+
+## Sprint 9-0A Realtime Comment Performance Optimization
+
+댓글 작성·수정·삭제 성공 응답은 `CommentSection` 상태에 즉시 반영합니다. 생성·삭제 시에는 해당 원본 ID의 댓글 수 delta 이벤트를 debounce 없이 발생시켜 Calendar와 My Workspace의 Badge만 갱신하며 일정 목록 전체를 다시 조회하지 않습니다.
+
+로컬 댓글 mutation ID는 5초 동안 등록되고 같은 ID의 `shared_comments` Realtime echo가 도착하면 소비됩니다. 다른 사용자의 변경만 150ms 후 댓글 API를 재조회하며, 댓글 수는 `/api/comments/counts`에서 현재 화면의 원본 ID를 한 번에 집계합니다. Realtime payload는 ID와 작업 종류를 중복 판정에만 사용하고 댓글 화면 데이터는 계속 기존 API에서 조회합니다. Timeline과 Notification은 `activity_logs` Realtime debounce를 유지합니다.
+
 ## Sprint 9-0 Realtime Collaboration Phase 1
 
 인증된 화면은 AppShell에서 `shared-workspace-realtime` 채널 하나만 생성합니다. `personal_notes`, `shared_item_members`, `share_invitations`, `shared_comments`, `activity_logs`, `notification_reads` 변경을 수신하고 기존 API를 통해 필요한 데이터만 다시 조회합니다. Realtime payload를 화면 데이터로 직접 사용하지 않으므로 기존 API와 RLS가 조회 권한을 다시 검증합니다.

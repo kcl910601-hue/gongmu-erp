@@ -1,5 +1,14 @@
 # ERP Database v1
 
+## Sprint 9-0B Shared Comment Reads
+
+- Migration: `20260804190000_add_shared_comment_reads.sql`
+- Verification: `20260804191000_verify_shared_comment_reads.sql`
+- `shared_comment_reads`는 `(shared_item_id, employee_id)`별 `last_read_comment_id`와 읽은 시각만 저장합니다.
+- `get_shared_comment_count_stats(uuid[])`는 기존 RLS 아래에서 전체·미읽음 댓글 수를 일괄 집계합니다.
+- `mark_shared_comments_read(uuid,bigint)`는 현재 공유 참여 권한을 재검증하고 실제 해당 일정에 존재하는 댓글 ID까지만 읽음 처리합니다.
+- 테이블은 `supabase_realtime` publication에 포함되며 운영 DB에는 migration을 자동 적용하지 않습니다.
+
 ## Sprint 9-0 Realtime Collaboration
 
 - Migration: `20260804180000_enable_shared_workspace_realtime.sql`

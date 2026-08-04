@@ -1,5 +1,21 @@
 # CHANGELOG
 
+## Sprint 9-0B Unread Comments & Calendar Shared Tag
+
+- `shared_item + employee`별 마지막 확인 댓글 ID만 저장하는 최소 읽음 구조 추가
+- 전체 댓글 수와 본인 작성분을 제외한 미읽음 댓글 수를 한 번에 집계하는 RPC 및 API 확장
+- 댓글 영역 확인 후 읽음 처리와 Badge 즉시 갱신, 다른 화면 Realtime 동기화 추가
+- Calendar 카드에 소유자 공유 일정 `공유중`, 참여 일정 `공유받음` 태그 추가
+- 운영 DB에는 migration을 자동 적용하지 않음
+
+## Sprint 9-0A Realtime Comment Performance Optimization
+
+- 댓글 POST 성공 응답을 목록과 댓글 수 Badge에 debounce 없이 즉시 반영
+- 로컬 댓글 mutation ID를 등록하여 동일 ID의 Realtime echo 재조회 방지
+- 원격 댓글 변경은 댓글 목록과 일괄 댓글 개수만 재조회하고 Calendar·My Workspace 전체 재조회 제거
+- Realtime 댓글 갱신 중 기존 댓글과 입력 영역을 유지하고 등록 버튼만 Loading 처리
+- Timeline과 Notification은 기존 Activity 이벤트의 150ms debounce 유지
+
 ## Sprint 9-0 Realtime Collaboration Phase 1
 
 - 인증된 AppShell에서 Shared Workspace용 Supabase Realtime 채널을 한 번만 구독

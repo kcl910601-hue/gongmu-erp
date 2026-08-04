@@ -4,8 +4,7 @@ import { Pencil, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { COMMENT_MAX_LENGTH, type SharedComment } from "@/lib/comments";
 import { toast } from "@/lib/toast";
-import { dispatchPersonalNotesChanged } from "@/lib/personal-notes";
-import { COMMENTS_CHANGED_EVENT } from "@/lib/collaboration-events";
+import { clearLocalCommentMutation, COMMENTS_CHANGED_EVENT, dispatchCommentCountDelta, dispatchCommentUnreadCleared, markLocalCommentMutation } from "@/lib/collaboration-events";
 
 function formatCommentTime(value: string) {
   return new Intl.DateTimeFormat("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(value));
@@ -21,18 +20,27 @@ export function CommentSection({ itemId }: { itemId: string }) {
   const savingRef = useRef(false);
   const [error, setError] = useState("");
 
-  const load = useCallback(async () => {
-    setLoading(true); setError("");
+  const load = useCallback(async (showLoading = false) => {
+    if (showLoading) setLoading(true);
+    setError("");
     const response = await fetch(`/api/comments?itemId=${encodeURIComponent(itemId)}`, { cache: "no-store" });
     const result = await response.json() as { comments?: SharedComment[]; error?: string };
-    if (!response.ok) setError(result.error ?? "댓글을 불러오지 못했습니다."); else setComments(result.comments ?? []);
+    if (!response.ok) setError(result.error ?? "댓글을 불러오지 못했습니다."); else {
+      const loadedComments = result.comments ?? [];
+      setComments(loadedComments);
+      const lastCommentId = loadedComments.at(-1)?.id;
+      if (lastCommentId !== undefined) void fetch("/api/comments/read", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ itemId, lastCommentId }) }).then((readResponse) => {
+          if (readResponse.ok) dispatchCommentUnreadCleared(itemId);
+        });
+    }
     setLoading(false);
   }, [itemId]);
 
   useEffect(() => {
-    const timer = window.setTimeout(() => void load(), 0);
-    window.addEventListener(COMMENTS_CHANGED_EVENT, load);
-    return () => { window.clearTimeout(timer); window.removeEventListener(COMMENTS_CHANGED_EVENT, load); };
+    const timer = window.setTimeout(() => void load(true), 0);
+    const handleRealtimeChange = () => void load(false);
+    window.addEventListener(COMMENTS_CHANGED_EVENT, handleRealtimeChange);
+    return () => { window.clearTimeout(timer); window.removeEventListener(COMMENTS_CHANGED_EVENT, handleRealtimeChange); };
   }, [load]);
 
   async function createComment() {
@@ -42,28 +50,30 @@ export function CommentSection({ itemId }: { itemId: string }) {
     const response = await fetch("/api/comments", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ itemId, content: normalized }) });
     const result = await response.json() as { comment?: SharedComment; error?: string };
     if (!response.ok || !result.comment) setError(result.error ?? "댓글을 등록하지 못했습니다.");
-    else { setComments((current) => [...current, result.comment as SharedComment]); setContent(""); dispatchPersonalNotesChanged(); toast.success("댓글을 등록했습니다."); }
+    else { const saved = result.comment as SharedComment; markLocalCommentMutation(saved.id); setComments((current) => current.some((comment) => comment.id === saved.id) ? current : [...current, saved]); setContent(""); dispatchCommentCountDelta(itemId, 1); toast.success("댓글을 등록했습니다."); }
     savingRef.current = false; setSaving(false);
   }
 
   async function updateComment(comment: SharedComment) {
     const normalized = editingContent.trim();
     if (!normalized || savingRef.current) return;
+    markLocalCommentMutation(comment.id);
     savingRef.current = true; setSaving(true); setError("");
     const response = await fetch(`/api/comments/${comment.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ content: normalized }) });
     const result = await response.json() as { comment?: SharedComment; error?: string };
-    if (!response.ok || !result.comment) setError(result.error ?? "댓글을 수정하지 못했습니다.");
-    else { setComments((current) => current.map((item) => item.id === comment.id ? result.comment as SharedComment : item)); setEditingId(null); setEditingContent(""); dispatchPersonalNotesChanged(); toast.success("댓글을 수정했습니다."); }
+    if (!response.ok || !result.comment) { clearLocalCommentMutation(comment.id); setError(result.error ?? "댓글을 수정하지 못했습니다."); }
+    else { setComments((current) => current.map((item) => item.id === comment.id ? result.comment as SharedComment : item)); setEditingId(null); setEditingContent(""); toast.success("댓글을 수정했습니다."); }
     savingRef.current = false; setSaving(false);
   }
 
   async function deleteComment(comment: SharedComment) {
     if (!window.confirm("이 댓글을 삭제하시겠습니까?\n삭제한 댓글은 복구할 수 없습니다.")) return;
+    markLocalCommentMutation(comment.id);
     const response = await fetch(`/api/comments/${comment.id}`, { method: "DELETE" });
     const result = await response.json() as { error?: string };
-    if (!response.ok) { setError(result.error ?? "댓글을 삭제하지 못했습니다."); return; }
+    if (!response.ok) { clearLocalCommentMutation(comment.id); setError(result.error ?? "댓글을 삭제하지 못했습니다."); return; }
     setComments((current) => current.filter((item) => item.id !== comment.id));
-    dispatchPersonalNotesChanged();
+    dispatchCommentCountDelta(itemId, -1);
     toast.success("댓글을 삭제했습니다.");
   }
 

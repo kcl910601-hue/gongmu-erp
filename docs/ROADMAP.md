@@ -1,5 +1,21 @@
 # 개발 로드맵
 
+## Sprint 9-0B
+
+- [x] 일정별 전체·미읽음 댓글 수 일괄 집계
+- [x] Calendar 상세 및 My Workspace 댓글 확인 시 읽음 처리
+- [x] 본인 댓글 unread 제외 및 동일 사용자 Realtime 동기화
+- [x] Calendar `공유중`·`공유받음` 태그
+- [ ] 운영 migration 적용 및 다중 사용자 UAT
+
+## Sprint 9-0A
+
+- [x] 댓글 작성자 목록 및 Badge 즉시 반영
+- [x] 로컬 댓글 ID 기반 Realtime echo 중복 방지
+- [x] 댓글 수 전용 일괄 조회로 Calendar·My Workspace 전체 재조회 제거
+- [x] 원격 댓글·Timeline·Notification Realtime 유지
+- [ ] 운영 Realtime 환경 다중 사용자 성능 UAT
+
 ## Sprint 9-0
 
 - [x] Shared Workspace 공통 Supabase Realtime 구독

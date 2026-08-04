@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { getCalendarMonthRange, getNoteEditorDefaults, getPersonalNoteAccess, matchesCalendarSourceFilter, normalizeCalendarSourceFilter, PERSONAL_NOTE_COLORS, selectPersonalNotesForBrief, selectPersonalNotesForCalendar, sortPersonalNotes, type PersonalNote } from "./personal-notes.ts";
+import { getCalendarMonthRange, getNoteEditorDefaults, getPersonalNoteAccess, getPersonalNoteCommentBadge, matchesCalendarSourceFilter, normalizeCalendarSourceFilter, PERSONAL_NOTE_COLORS, selectPersonalNotesForBrief, selectPersonalNotesForCalendar, sortPersonalNotes, type PersonalNote } from "./personal-notes.ts";
 
 function note(id: string, values: Partial<PersonalNote>): PersonalNote {
   return {
@@ -81,4 +81,10 @@ test("개인 일정 액션 권한은 소유자, edit, view를 동일 기준으�
   assert.equal(editor.canEdit, true); assert.equal(editor.canShare || editor.canPin || editor.canDelete, false);
   assert.equal(viewer.canEdit || viewer.canShare || viewer.canPin || viewer.canDelete, false);
   assert.equal(editor.canComment && editor.canViewTimeline && viewer.canComment && viewer.canViewTimeline, true);
+});
+
+test("댓글 Badge는 전체 수와 0보다 큰 미읽음 수만 표시한다", () => {
+  assert.equal(getPersonalNoteCommentBadge({ comment_count: 5, unread_comment_count: 2 }), "5 (2)");
+  assert.equal(getPersonalNoteCommentBadge({ comment_count: 5, unread_comment_count: 0 }), "5");
+  assert.equal(getPersonalNoteCommentBadge({ comment_count: 0, unread_comment_count: 3 }), null);
 });

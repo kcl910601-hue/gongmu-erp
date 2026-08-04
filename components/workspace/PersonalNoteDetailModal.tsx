@@ -5,7 +5,7 @@ import { X } from "lucide-react";
 import { CommentSection } from "@/components/comments/CommentSection";
 import { TimelineSection } from "@/components/timeline/TimelineSection";
 import { PersonalNoteActions } from "@/components/workspace/PersonalNoteActions";
-import type { PersonalNote } from "@/lib/personal-notes";
+import { getPersonalNoteCommentBadge, type PersonalNote } from "@/lib/personal-notes";
 
 const noteTypeLabels: Record<PersonalNote["note_type"], string> = {
   memo: "메모",
@@ -70,7 +70,7 @@ export function PersonalNoteDetailModal({ note, authorName, onClose, onEdit, onS
           <div><dt className="text-xs text-slate-400">공유 상태</dt><dd className="mt-1 font-medium text-slate-700">{sharingLabel}</dd></div>
           <div><dt className="text-xs text-slate-400">내 권한</dt><dd className="mt-1 font-medium text-slate-700">{permissionLabel}</dd></div>
           <div><dt className="text-xs text-slate-400">참여자 수</dt><dd className="mt-1 font-medium text-slate-700">{note.sharing?.memberCount ?? 0}명</dd></div>
-          <div><dt className="text-xs text-slate-400">댓글 수</dt><dd className="mt-1 font-medium text-slate-700">{note.comment_count ?? 0}개</dd></div>
+          <div><dt className="text-xs text-slate-400">댓글 수</dt><dd className="mt-1 font-medium text-slate-700">{getPersonalNoteCommentBadge(note) ?? "0"}개</dd></div>
         </dl>
 
         {commentsOpen && <CommentSection itemId={note.id}/>} 
