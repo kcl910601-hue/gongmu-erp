@@ -1,5 +1,40 @@
 # CHANGELOG
 
+## Sprint 8-9D Calendar UX Improvements
+
+- 월간 캘린더의 각 주 높이를 해당 주에서 일정이 가장 많은 날짜 기준으로 자동 확장
+- 개인 일정 카드의 표시 정보를 제목·날짜·작성자·공유 상태·댓글 수로 간소화
+- Calendar 우측 선택 날짜 카드에서 권한별 수정·공유·고정·삭제·댓글·Timeline 액션을 바로 제공하고 월간 날짜 칸 내부 카드는 요약 정보만 표시
+- Dashboard 개인 일정 카드의 소유자와 공유 인원 표시를 복원
+- 월간 카드와 선택 날짜 카드 클릭 시 공통 개인 일정 상세 모달을 표시
+- 상세 모달에서 기존 수정·공유·고정·삭제·댓글·Timeline 컴포넌트와 권한 로직을 재사용
+
+## Sprint 8-9C Comment Badge & Calendar Action Parity
+
+- 개인 일정 조회 시 `shared_comments`를 shared item 기준 한 번에 집계해 댓글 수 반환
+- My Workspace와 Calendar의 수정·공유·고정·삭제·댓글·Timeline 액션을 공통 컴포넌트로 통합
+- Calendar 소유자 관리 액션과 유형·날짜·색상·완료·고정·소유자·권한·참여자 상세 정보 추가
+- 댓글 변경 후 기존 personal notes 변경 이벤트로 두 화면의 Badge와 목록 재조회
+- 사용자별 댓글 개수 컬럼이나 Calendar 전용 원본은 추가하지 않음
+
+## Sprint 8-9B Activity Timeline
+
+- 기존 `activity_logs`에 개인 일정 UUID 연결용 `source_item_id` 최소 확장
+- 일정 생성·수정·날짜 변경·삭제, 공유 요청/응답/권한/해제, 댓글 작성/수정/삭제 trigger 기록 추가
+- 원본 소유자와 현재 공유 참여자만 조회하는 RLS 및 Timeline API 추가
+- My Workspace와 Calendar에서 재사용하는 공통 Activity Timeline UI 추가
+- 사용자별 Activity 복사본 없이 원본 ID 기준 단일 이력 유지
+- 운영 DB에는 migration을 자동 적용하지 않음
+
+## Sprint 8-9A Shared Comments Phase 1
+
+- 원본 `personal_notes`를 복제하지 않고 `shared_items`에 연결되는 댓글 migration과 검증 SQL 추가
+- 소유자·edit·view 참여자의 댓글 조회/작성, 작성자 수정·삭제, 소유자 관리 삭제 구현
+- My Workspace와 Calendar에서 재사용하는 공통 댓글 UI 및 댓글 개수 표시 추가
+- 신규 댓글을 기존 Notification Center의 동적 알림 계산에 포함하고 작성자·공유 해제 사용자를 제외
+- Realtime과 댓글 Activity Timeline은 포함하지 않았으며 Sprint 8-9B 후속 범위로 유지
+- 운영 DB에는 migration을 자동 적용하지 않음
+
 ## Sprint 8-8A Shared Workspace & Smart Calendar Phase 1
 
 - `personal_notes` 원본을 복제하지 않는 공유 메타데이터, 초대, 참여자 migration 추가

@@ -3,13 +3,10 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   CalendarDays,
-  CheckSquare,
   ChevronLeft,
   ChevronRight,
-  Pin,
   Plus,
   RefreshCw,
-  StickyNote,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { recordRecentTask } from "@/lib/recent";
@@ -30,11 +27,14 @@ import {
 } from "@/lib/status";
 import { PROJECT_SELECT_FIELDS } from "@/lib/projects";
 import { persistRecalculatedTaskOrders } from "@/lib/task-ordering";
-import { getCalendarMonthRange, matchesCalendarSourceFilter, normalizeCalendarSourceFilter, PERSONAL_NOTES_CHANGED_EVENT, dispatchPersonalNotesChanged, openNoteEditor, selectPersonalNotesForCalendar, type CalendarSourceFilter, type PersonalNote, type PersonalNoteColor } from "@/lib/personal-notes";
+import { getCalendarMonthRange, matchesCalendarSourceFilter, normalizeCalendarSourceFilter, PERSONAL_NOTES_CHANGED_EVENT, dispatchPersonalNotesChanged, openNoteEditor, selectPersonalNotesForCalendar, type CalendarSourceFilter, type PersonalNote } from "@/lib/personal-notes";
 import { toast } from "@/lib/toast";
 import { getSundayFirstMonthDays } from "@/lib/calendar-grid";
 import { getDday } from "@/lib/dday";
 import { DdayBadge } from "@/components/ui/DdayBadge";
+import { PersonalNoteDetailModal } from "@/components/workspace/PersonalNoteDetailModal";
+import { PersonalNoteActions } from "@/components/workspace/PersonalNoteActions";
+import { ShareDialog } from "@/components/sharing/ShareDialog";
 
 type Project = IntegratedProject & {
   completion_due_date: string | null;
@@ -202,13 +202,6 @@ const typeList = ["전체", "업무일정"];
 const viewList = ["달력 보기", "타임라인 보기", "간트 보기"];
 const CALENDAR_SOURCE_FILTER_KEY = "calendar-source-filter";
 const sourceFilters: { value: CalendarSourceFilter; label: string }[] = [{ value: "all", label: "전체 일정" }, { value: "company", label: "회사 일정" }, { value: "my", label: "All Task" }, { value: "my_own", label: "My Task" }, { value: "shared_with_me", label: "Share Task" }];
-const personalNoteColorClass: Record<PersonalNoteColor, string> = {
-  default: "border-slate-300 bg-slate-100 text-slate-700",
-  yellow: "border-amber-300 bg-amber-100 text-amber-800",
-  green: "border-emerald-300 bg-emerald-100 text-emerald-800",
-  red: "border-red-300 bg-red-100 text-red-800",
-  blue: "border-blue-300 bg-blue-100 text-blue-800",
-};
 
 export default function CalendarPage() {
   const { can } = usePermission();
@@ -240,6 +233,8 @@ export default function CalendarPage() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [personalNotes, setPersonalNotes] = useState<PersonalNote[]>([]);
+  const [selectedPersonalNoteId, setSelectedPersonalNoteId] = useState<string | null>(null);
+  const [shareTarget, setShareTarget] = useState<PersonalNote | null>(null);
   const [selectedTask, setSelectedTask] = useState<GanttTaskDetail | null>(null);
   const [quickFilter, setQuickFilter] = useState<QuickFilter>("전체");
   const [showCompleted, setShowCompleted] = useState(false);
@@ -699,15 +694,8 @@ export default function CalendarPage() {
     return grouped;
   }, [displayedPersonalNotes]);
   const selectedDatePersonalNotes = [...(personalNotesByDate.get(selectedDate) ?? [])].sort((a, b) => Number(b.is_pinned) - Number(a.is_pinned) || Number(a.is_completed) - Number(b.is_completed) || b.created_at.localeCompare(a.created_at));
+  const selectedPersonalNote = selectedPersonalNoteId ? personalNotes.find((note) => note.id === selectedPersonalNoteId) ?? null : null;
 
-  async function togglePersonalTodo(note: PersonalNote) {
-    if (note.sharing?.permission === "view") return;
-    const previous = personalNotes;
-    setPersonalNotes((current) => current.map((item) => item.id === note.id ? { ...item, is_completed: !item.is_completed } : item));
-    const response = await fetch(`/api/personal-notes/${note.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ isCompleted: !note.is_completed }) });
-    if (!response.ok) { setPersonalNotes(previous); toast.error("Todo 상태를 저장하지 못했습니다."); return; }
-    dispatchPersonalNotesChanged();
-  }
   async function movePersonalNote(note: PersonalNote, dueDate: string) {
     if (!note.due_date || note.due_date === dueDate || note.sharing?.permission === "view") return;
     if (note.sharing && note.sharing.permission !== "owner" && !window.confirm(`공유 일정을 변경하시겠습니까?\n\n기존 일정: ${note.due_date}\n변경 일정: ${dueDate}\n\n참여자에게 동일하게 반영됩니다.`)) return;
@@ -717,6 +705,22 @@ export default function CalendarPage() {
     if (!response.ok) { setPersonalNotes(previous); toast.error("일정 날짜를 변경하지 못했습니다."); return; }
     dispatchPersonalNotesChanged();
     toast.success("일정 날짜를 변경했습니다.");
+  }
+  async function patchPersonalNote(note: PersonalNote, changes: Record<string, unknown>) {
+    const previous = personalNotes;
+    setPersonalNotes((current) => current.map((item) => item.id === note.id ? { ...item, is_pinned: typeof changes.isPinned === "boolean" ? changes.isPinned : item.is_pinned } : item));
+    const response = await fetch(`/api/personal-notes/${note.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(changes) });
+    if (!response.ok) { setPersonalNotes(previous); toast.error("변경사항을 저장하지 못했습니다."); return; }
+    dispatchPersonalNotesChanged();
+  }
+  async function deletePersonalNote(note: PersonalNote) {
+    if (!window.confirm("이 일정을 삭제하시겠습니까?")) return;
+    const previous = personalNotes;
+    setPersonalNotes((current) => current.filter((item) => item.id !== note.id));
+    const response = await fetch(`/api/personal-notes/${note.id}`, { method: "DELETE" });
+    if (!response.ok) { setPersonalNotes(previous); toast.error("일정을 삭제하지 못했습니다."); return; }
+    setSelectedPersonalNoteId(null);
+    dispatchPersonalNotesChanged(); toast.success("일정을 삭제했습니다.");
   }
   const legendItems: { label: string; variant: BadgeVariant }[] = [
     { label: "지연", variant: "danger" },
@@ -921,7 +925,10 @@ export default function CalendarPage() {
 
             <div className="col-span-7 space-y-1.5 sm:space-y-2">
               {calendarWeekLayouts.map((week) => {
-                const weekHeight = Math.max(140, 52 + week.laneCount * 34);
+                const maxPersonalNoteCount = sourceFilter !== "all" && sourceFilter !== "company"
+                  ? Math.max(0, ...week.days.map((date) => date ? personalNotesByDate.get(date)?.length ?? 0 : 0))
+                  : 0;
+                const weekHeight = Math.max(140, 52 + week.laneCount * 34, 76 + maxPersonalNoteCount * 40);
 
                 return (
                   <div
@@ -970,7 +977,7 @@ export default function CalendarPage() {
                             </div>
                           )}
                           {date && showPersonalSchedule && (personalNotesByDate.get(date)?.length ?? 0) > 0 && <button type="button" aria-label={`${date} 내 일정 보기`} onClick={(event) => { event.stopPropagation(); setSelectedDate(date); }} className="absolute right-2 top-10 z-20 rounded-full bg-violet-600 px-2 py-0.5 text-[10px] font-semibold text-white shadow-sm">📝 {personalNotesByDate.get(date)?.length}{(personalNotesByDate.get(date) ?? []).some((note) => note.sharing && note.sharing.permission !== "owner") ? " · 👥" : ""}</button>}
-                          {date && sourceFilter !== "all" && sourceFilter !== "company" && <div className="mt-9 space-y-1">{(personalNotesByDate.get(date) ?? []).slice(0, 2).map((note) => { const isSharedWithMe = Boolean(note.sharing && note.sharing.permission !== "owner"); const isSharedByMe = note.sharing?.permission === "owner" && note.sharing.memberCount > 0; return <div key={note.id} draggable={note.sharing?.permission !== "view"} onDragStart={(event) => { event.stopPropagation(); event.dataTransfer.setData("application/x-personal-note", note.id); event.dataTransfer.effectAllowed = "move"; }} title={isSharedWithMe ? `공유받음 · 소유자 ${note.sharing?.ownerName}` : isSharedByMe ? `공유 중 · 참여자 ${note.sharing?.memberCount}명` : "내 일정"} className={`truncate rounded-md border px-1.5 py-0.5 text-[10px] ${personalNoteColorClass[note.color]} ${note.note_type === "todo" && note.is_completed ? "line-through opacity-60" : ""} ${note.sharing ? "ring-1 ring-blue-300" : ""} ${note.sharing?.permission === "view" ? "cursor-not-allowed" : "cursor-grab"}`}>{isSharedWithMe ? "[공유받음] " : isSharedByMe ? "[공유 중] " : ""}{note.note_type === "sticky" ? "📌" : note.note_type === "todo" ? note.is_completed ? "☑" : "☐" : "📝"} {note.title || note.content}{isSharedWithMe ? ` · ${note.sharing?.ownerName}` : ""}</div>; })}</div>}
+                          {date && sourceFilter !== "all" && sourceFilter !== "company" && <div className="mt-9 space-y-1">{(personalNotesByDate.get(date) ?? []).map((note) => { const isSharedWithMe = Boolean(note.sharing && note.sharing.permission !== "owner"); const isSharedByMe = note.sharing?.permission === "owner" && note.sharing.memberCount > 0; const authorName = note.sharing?.ownerName ?? currentAssignee ?? "-"; return <div key={note.id} draggable={note.sharing?.permission !== "view"} onDragStart={(event) => { event.stopPropagation(); event.dataTransfer.setData("application/x-personal-note", note.id); event.dataTransfer.effectAllowed = "move"; }} className={`rounded-md border border-slate-200 bg-white px-1.5 py-1 text-[10px] text-slate-600 ${note.sharing?.permission === "view" ? "cursor-default" : "cursor-grab"}`}><button type="button" onClick={(event) => { event.stopPropagation(); setSelectedPersonalNoteId(note.id); }} className="block w-full text-left outline-none focus-visible:ring-2 focus-visible:ring-violet-200"><p className="truncate font-semibold text-slate-700">{note.title || note.content}</p><p className="truncate text-[9px] text-slate-400">{note.due_date} · {authorName} · {isSharedWithMe ? "공유받음" : isSharedByMe ? "공유 중" : "내 일정"}{(note.comment_count ?? 0) > 0 ? ` · 💬 ${note.comment_count}` : ""}</p></button></div>; })}</div>}
                         </div>;
                       })}
                     </div>
@@ -1167,7 +1174,7 @@ export default function CalendarPage() {
 
           {showPersonalSchedule && <div className="mb-5 min-w-0 rounded-2xl bg-violet-50 p-3.5">
             <div className="mb-3 flex items-center justify-between gap-3"><div><h3 className="text-sm font-semibold text-slate-800">내 일정</h3><p className="mt-0.5 text-xs text-slate-500">직접 만든 일정과 수락한 공유 일정</p></div><button type="button" onClick={() => openNoteEditor({ noteType: "todo", dueDate: selectedDate })} className="inline-flex items-center gap-1 rounded-xl bg-violet-600 px-3 py-2 text-xs font-semibold text-white hover:bg-violet-700"><Plus size={14}/>내 일정 추가</button></div>
-            {selectedDatePersonalNotes.length > 0 ? <div className="max-h-80 space-y-2 overflow-y-auto pr-1">{selectedDatePersonalNotes.map((note) => { const Icon = note.note_type === "sticky" ? Pin : note.note_type === "todo" ? CheckSquare : StickyNote; const isSharedWithMe = Boolean(note.sharing && note.sharing.permission !== "owner"); const isSharedByMe = note.sharing?.permission === "owner" && note.sharing.memberCount > 0; return <article key={note.id} className={`rounded-xl border p-3 ${personalNoteColorClass[note.color]} ${note.note_type === "todo" && note.is_completed ? "opacity-60" : ""}`}><div className="flex items-start gap-2">{note.note_type === "todo" ? <button type="button" disabled={note.sharing?.permission === "view"} aria-label="Todo 완료 전환" onClick={() => void togglePersonalTodo(note)} className="mt-0.5 shrink-0 disabled:cursor-not-allowed disabled:opacity-40"><CheckSquare size={16}/></button> : <Icon size={16} className="mt-0.5 shrink-0"/>}<div className="min-w-0"><p className={`text-sm font-semibold ${note.note_type === "todo" && note.is_completed ? "line-through" : ""}`}>{note.note_type === "todo" ? `${note.is_completed ? "☑" : "☐"} ` : note.note_type === "sticky" ? "📌 " : "📝 "}{note.title || note.content}</p>{note.title && note.content && <p className="mt-1 whitespace-pre-wrap text-xs opacity-80">{note.content}</p>}<div className="mt-1 flex flex-wrap gap-1"><span className="inline-block rounded-full bg-white/70 px-2 py-0.5 text-[10px]">{isSharedWithMe ? "공유받음" : isSharedByMe ? "공유 중" : "내 일정"}</span>{note.sharing && <><span className="inline-block rounded-full bg-white/70 px-2 py-0.5 text-[10px]">소유자: {note.sharing.ownerName}</span><span className="inline-block rounded-full bg-white/70 px-2 py-0.5 text-[10px]">내 권한: {note.sharing.permission === "view" ? "보기만 가능" : note.sharing.permission === "edit" ? "편집 가능" : "소유자"}</span></>}</div></div></div></article>; })}</div> : <EmptyState message="선택한 날짜에 개인 일정이 없습니다." className="rounded-xl bg-white p-6 text-center text-sm text-slate-400"/>}
+            {selectedDatePersonalNotes.length > 0 ? <div className="max-h-80 space-y-2 overflow-y-auto pr-1">{selectedDatePersonalNotes.map((note) => { const isSharedWithMe = Boolean(note.sharing && note.sharing.permission !== "owner"); const isSharedByMe = note.sharing?.permission === "owner" && note.sharing.memberCount > 0; const authorName = note.sharing?.ownerName ?? currentAssignee ?? "-"; return <article key={note.id} className="rounded-xl border border-slate-200 bg-white p-3"><div className="flex items-start gap-2"><button type="button" onClick={() => setSelectedPersonalNoteId(note.id)} className="min-w-0 flex-1 text-left outline-none focus-visible:ring-2 focus-visible:ring-violet-200"><p className="truncate text-sm font-semibold text-slate-800">{note.title || note.content}</p><div className="mt-1 flex flex-wrap gap-x-2 gap-y-1 text-[10px] text-slate-400"><span>{note.due_date ?? "날짜 없음"}</span><span>작성자 {authorName}</span><span>{isSharedWithMe ? "공유받음" : isSharedByMe ? "공유 중" : "내 일정"}</span>{(note.comment_count ?? 0) > 0 && <span>💬 {note.comment_count}</span>}</div></button><PersonalNoteActions note={note} commentsOpen={false} timelineOpen={false} onEdit={() => openNoteEditor({ note })} onShare={() => setShareTarget(note)} onTogglePin={() => void patchPersonalNote(note, { isPinned: !note.is_pinned })} onDelete={() => void deletePersonalNote(note)} onToggleComments={() => setSelectedPersonalNoteId(note.id)} onToggleTimeline={() => setSelectedPersonalNoteId(note.id)}/></div></article>; })}</div> : <EmptyState message="선택한 날짜에 개인 일정이 없습니다." className="rounded-xl bg-white p-6 text-center text-sm text-slate-400"/>}
           </div>}
 
           <div>
@@ -1190,6 +1197,22 @@ export default function CalendarPage() {
           onTaskUpdated={(updatedTask) => void handleCalendarTaskDetailUpdated(updatedTask)}
           onClose={() => setSelectedTask(null)}
         />
+      )}
+
+      {selectedPersonalNote && (
+        <PersonalNoteDetailModal
+          note={selectedPersonalNote}
+          authorName={selectedPersonalNote.sharing?.ownerName ?? currentAssignee ?? "-"}
+          onClose={() => setSelectedPersonalNoteId(null)}
+          onEdit={() => { setSelectedPersonalNoteId(null); openNoteEditor({ note: selectedPersonalNote }); }}
+          onShare={() => { setSelectedPersonalNoteId(null); setShareTarget(selectedPersonalNote); }}
+          onTogglePin={() => void patchPersonalNote(selectedPersonalNote, { isPinned: !selectedPersonalNote.is_pinned })}
+          onDelete={() => void deletePersonalNote(selectedPersonalNote)}
+        />
+      )}
+
+      {shareTarget && (
+        <ShareDialog note={shareTarget} onClose={() => setShareTarget(null)} onChanged={() => { dispatchPersonalNotesChanged(); setShareTarget(null); }}/>
       )}
 
     </div>

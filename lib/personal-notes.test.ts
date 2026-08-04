@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { getCalendarMonthRange, getNoteEditorDefaults, matchesCalendarSourceFilter, normalizeCalendarSourceFilter, PERSONAL_NOTE_COLORS, selectPersonalNotesForBrief, selectPersonalNotesForCalendar, sortPersonalNotes, type PersonalNote } from "./personal-notes.ts";
+import { getCalendarMonthRange, getNoteEditorDefaults, getPersonalNoteAccess, matchesCalendarSourceFilter, normalizeCalendarSourceFilter, PERSONAL_NOTE_COLORS, selectPersonalNotesForBrief, selectPersonalNotesForCalendar, sortPersonalNotes, type PersonalNote } from "./personal-notes.ts";
 
 function note(id: string, values: Partial<PersonalNote>): PersonalNote {
   return {
@@ -71,4 +71,14 @@ test("Calendar 내 일정과 내 일정만, 공유받은 일정을 소유권으�
   assert.deepEqual([own, sharedByMe, sharedWithMe].filter((item) => matchesCalendarSourceFilter(item, "my")).map((item) => item.id), ["own", "shared-by-me", "shared-with-me"]);
   assert.deepEqual([own, sharedByMe, sharedWithMe].filter((item) => matchesCalendarSourceFilter(item, "my_own")).map((item) => item.id), ["own", "shared-by-me"]);
   assert.deepEqual([own, sharedByMe, sharedWithMe].filter((item) => matchesCalendarSourceFilter(item, "shared_with_me")).map((item) => item.id), ["shared-with-me"]);
+});
+
+test("개인 일정 액션 권한은 소유자, edit, view를 동일 기준으로 구분한다", () => {
+  const owner = getPersonalNoteAccess(note("owner", {}));
+  const editor = getPersonalNoteAccess(note("editor", { sharing: { sharedItemId: "shared", ownerName: "A", permission: "edit", memberCount: 1 } }));
+  const viewer = getPersonalNoteAccess(note("viewer", { sharing: { sharedItemId: "shared", ownerName: "A", permission: "view", memberCount: 1 } }));
+  assert.equal(owner.canEdit && owner.canShare && owner.canPin && owner.canDelete, true);
+  assert.equal(editor.canEdit, true); assert.equal(editor.canShare || editor.canPin || editor.canDelete, false);
+  assert.equal(viewer.canEdit || viewer.canShare || viewer.canPin || viewer.canDelete, false);
+  assert.equal(editor.canComment && editor.canViewTimeline && viewer.canComment && viewer.canViewTimeline, true);
 });

@@ -18,7 +18,8 @@ export type NotificationType =
   | "shipment_scheduled"
   | "shipment_delayed"
   | "project_created"
-  | "employee_approval";
+  | "employee_approval"
+  | "shared_comment";
 
 type NotificationTask = {
   id: number;
@@ -585,12 +586,14 @@ export async function loadNotificationSummary(
   if (projectResult.error) return { data: null, error: projectResult.error };
 
   const weeklyRanges = getKoreanWeeklyRanges();
-  const [personalResult, contractResult, lmeResult] = await Promise.all([
+  const [personalResult, contractResult, lmeResult, commentResult] = await Promise.all([
     supabase.from("personal_notes").select("id, user_id, note_type, title, content, is_completed, is_pinned, color, due_date, sort_order, created_at, updated_at").or(`due_date.lte.${today},note_type.eq.sticky`).limit(100),
     supabase.from("raw_material_contracts").select("id, contract_name, effective_end_date, contract_quantity_ton, remaining_quantity_ton, status").eq("status", "active").limit(100),
     supabase.from("lme_market_prices").select("reference_date, domestic_lme_krw_per_kg").gte("reference_date", weeklyRanges.previousWeekStart).lte("reference_date", weeklyRanges.currentWeekEnd).order("reference_date", { ascending: true }).limit(100),
+    supabase.from("shared_comments").select("id,author_id,content,created_at,author:employees!shared_comments_author_id_fkey(name),shared_item:shared_items!inner(item_id,item:personal_notes!shared_items_item_id_fkey(title,content))").neq("author_id", currentEmployee.id).gte("created_at", recentCutoff).order("created_at", { ascending: false }).limit(50),
   ]);
-  const supplementalError = personalResult.error || contractResult.error || lmeResult.error;
+  const commentTableMissing = commentResult.error?.code === "42P01" || commentResult.error?.code === "PGRST205";
+  const supplementalError = personalResult.error || contractResult.error || lmeResult.error || (commentTableMissing ? null : commentResult.error);
   if (supplementalError) return { data: null, error: supplementalError };
   const weeklyLme = buildWeeklyLmeComparison(lmeResult.data ?? [], weeklyRanges);
 
@@ -606,6 +609,17 @@ export async function loadNotificationSummary(
       contracts: contractResult.data ?? [],
       weeklyLmeChangeRate: weeklyLme.differenceRate,
     });
+  const commentNotifications: NotificationItem[] = (commentResult.data ?? []).map((comment) => {
+    const author = Array.isArray(comment.author) ? comment.author[0] : comment.author;
+    const sharedItem = Array.isArray(comment.shared_item) ? comment.shared_item[0] : comment.shared_item;
+    const item = Array.isArray(sharedItem?.item) ? sharedItem.item[0] : sharedItem?.item;
+    const itemTitle = item?.title || item?.content || "공유 일정";
+    const preview = comment.content.length > 80 ? `${comment.content.slice(0, 80)}…` : comment.content;
+    return { id: `shared-comment-${comment.id}`, type: "shared_comment", category: "personal", title: `${author?.name ?? "참여자"}님이 ‘${itemTitle}’에 댓글을 남겼습니다.`, description: preview, date: comment.created_at, href: "/calendar", priority: 3, priorityLevel: "medium", severity: "info", projectName: "Shared Workspace", actor: author?.name ?? null, actionLabel: "댓글 확인", isRead: false, readAt: null };
+  });
+  summary.items = [...commentNotifications, ...summary.items].sort(compareNotifications).slice(0, limit);
+  summary.totalCount = summary.items.length;
+  summary.unreadCount = summary.items.length;
   const notificationIds = summary.items.map((item) => item.id);
   const readResult = notificationIds.length === 0
     ? { data: [], error: null }

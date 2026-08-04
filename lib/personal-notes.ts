@@ -17,6 +17,7 @@ export type PersonalNote = {
   sort_order: number;
   created_at: string;
   updated_at: string;
+  comment_count?: number;
   sharing?: { sharedItemId: string; ownerName: string; permission: "owner" | "view" | "edit"; memberCount: number } | null;
 };
 
@@ -24,8 +25,14 @@ export const PERSONAL_NOTES_CHANGED_EVENT = "personal-notes:changed";
 export const NOTE_EDITOR_OPEN_EVENT = "note-editor:open";
 
 export type NoteEditorPreset = "memo" | "todo" | "sticky";
-export type NoteEditorOpenOptions = { noteType?: NoteEditorPreset; dueDate?: string | null };
+export type NoteEditorOpenOptions = { noteType?: NoteEditorPreset; dueDate?: string | null; note?: PersonalNote };
 export type CalendarSourceFilter = "all" | "company" | "my" | "my_own" | "shared_with_me";
+
+export function getPersonalNoteAccess(note: PersonalNote) {
+  const permission = note.sharing?.permission ?? "owner";
+  const isOwner = permission === "owner";
+  return { isOwner, canEdit: isOwner || permission === "edit", canShare: isOwner, canPin: isOwner, canDelete: isOwner, canComment: true, canViewTimeline: true };
+}
 
 export function normalizeCalendarSourceFilter(value: string | null): CalendarSourceFilter {
   if (value === "company" || value === "my" || value === "my_own" || value === "shared_with_me") return value;
@@ -44,7 +51,7 @@ export function matchesCalendarSourceFilter(note: PersonalNote, filter: Calendar
 }
 
 export function openNoteEditor(input: NoteEditorPreset | NoteEditorOpenOptions = "memo") {
-  const detail = typeof input === "string" ? { preset: input } : { preset: input.noteType ?? "memo", dueDate: input.dueDate ?? null };
+  const detail = typeof input === "string" ? { preset: input } : { preset: input.note?.note_type ?? input.noteType ?? "memo", dueDate: input.note?.due_date ?? input.dueDate ?? null, note: input.note };
   window.dispatchEvent(new CustomEvent(NOTE_EDITOR_OPEN_EVENT, { detail }));
 }
 

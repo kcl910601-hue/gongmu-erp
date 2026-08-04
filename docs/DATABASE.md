@@ -1,5 +1,23 @@
 # ERP Database v1
 
+## Sprint 8-9C Comment Count Aggregation
+
+`get_shared_comment_counts(uuid[])`는 조회된 원본 ID 배열의 댓글 수를 한 번에 집계합니다. SECURITY INVOKER로 실행되어 기존 `shared_comments` RLS를 그대로 적용하며 사용자별 집계 행이나 별도 count 컬럼을 저장하지 않습니다. 운영 DB에는 `20260804160000_add_shared_comment_counts.sql`을 자동 적용하지 않았습니다.
+
+## Sprint 8-9B Activity Timeline
+
+기존 `activity_logs`에 UUID 원본을 식별하는 nullable `source_item_id`를 추가했습니다. 기존 bigint `target_id`와 프로젝트 Activity 구조는 유지합니다. 일정·공유·댓글 테이블 trigger가 같은 트랜잭션에서 활동을 기록하므로 Calendar 드래그와 view 참여자의 댓글도 동일하게 포함됩니다.
+
+`source_item_id`가 없는 기존 Activity는 기존 승인 사용자 조회 정책을 유지합니다. Shared Workspace Activity는 원본 소유자 또는 현재 `shared_item_members` 참여자만 RLS를 통과하며 공유 해제 후에는 조회할 수 없습니다. 운영 DB에는 `20260804140000_add_shared_activity_timeline.sql`을 자동 적용하지 않았습니다.
+
+## Sprint 8-9A Shared Comments Phase 1
+
+`20260804120000_create_shared_comments.sql`은 `shared_items.id(uuid)`에 연결되는 `shared_comments`를 추가합니다. 댓글은 사용자별로 복제하지 않으며 원본 `personal_notes`와 기존 공유 관계를 그대로 사용합니다. 작성자는 승인된 `employees.id(bigint)`로 서버에서 결정되고 내용은 trim 후 1~2,000자로 제한됩니다.
+
+소유자와 현재 `shared_item_members` 참여자는 view/edit 구분 없이 조회·작성할 수 있습니다. 수정은 작성자만, 삭제는 작성자 또는 원본 소유자만 허용하며 API와 RLS가 같은 조건을 재검증합니다. 공유되지 않은 개인 일정은 소유자가 첫 댓글을 작성할 때 `shared_items` 연결 행만 생성합니다. 원본 삭제 시 `personal_notes → shared_items → shared_comments` cascade로 댓글도 정리됩니다.
+
+댓글 신규 알림은 별도 알림 복제 테이블 없이 접근 가능한 `shared_comments`를 기존 Notification Center가 계산합니다. 작성자는 제외되고, 공유 해제 사용자는 RLS로 더 이상 댓글과 알림을 조회하지 못합니다. 운영 DB에는 migration을 자동 적용하지 않았습니다.
+
 ## Sprint 8-8A Shared Workspace Phase 1
 
 `20260803150000_create_shared_workspace.sql`은 기존 `personal_notes` 원본 행을 복제하지 않고 공유 메타데이터만 추가합니다. `shared_items.item_id`는 원본 `personal_notes.id`를 참조하며, `share_invitations`는 초대 이력과 상태를, `shared_item_members`는 수락한 참여자와 `view`/`edit` 권한을 저장합니다. 실제 `employees.id` bigint 타입과 `employees.auth_user_id = auth.uid()` 연결을 사용합니다.

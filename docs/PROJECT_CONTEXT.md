@@ -1,5 +1,31 @@
 # Gongmu ERP - Project Context
 
+## Sprint 8-9D Calendar UX Improvements
+
+월간 Calendar의 주 Row 높이는 각 주에서 개인 일정이 가장 많은 날짜의 카드 수와 회사 일정 lane 수를 함께 계산해 주별로 독립 확장합니다. 개인 일정 카드는 더 이상 일부만 자르지 않으며, 제목·날짜·작성자·공유 상태·댓글 수만 표시합니다.
+
+월간 카드와 선택 날짜 카드 모두 `PersonalNoteDetailModal`을 열고, 상세 모달은 기존 `PersonalNoteActions`, `CommentSection`, `TimelineSection`을 재사용합니다. 회사 일정은 기존 `GanttTaskDetailModal` 경로를 유지하므로 개인 일정 API와 연결되지 않습니다.
+
+Calendar 우측 선택 날짜 카드에서는 `PersonalNoteActions`를 직접 제공하며 소유자·edit·view 권한에 따라 Dashboard와 동일하게 액션을 제한합니다. 월간 날짜 칸 내부 카드는 액션 없이 요약 정보만 표시합니다. Dashboard 카드는 모든 개인 일정에 소유자와 현재 공유 인원을 표시합니다.
+
+## Sprint 8-9C Comment Badge & Calendar Action Parity
+
+`/api/personal-notes`는 조회된 shared item 전체의 댓글을 한 번에 집계해 `comment_count`를 반환합니다. My Workspace와 Calendar는 `PersonalNoteActions`와 공통 권한 판정을 사용하며, 소유자는 수정·공유·고정·삭제, edit 참여자는 수정, view 참여자는 원본 조회만 허용합니다. 댓글과 Timeline은 세 권한 모두 사용할 수 있습니다.
+
+댓글 변경은 기존 `PERSONAL_NOTES_CHANGED_EVENT`를 발생시켜 목록과 Badge를 재조회합니다. 댓글 수 저장 컬럼, 사용자별 집계 복사본, Calendar 전용 일정 원본은 만들지 않습니다.
+
+## Sprint 8-9B Activity Timeline
+
+Shared Workspace Timeline은 별도 로그 시스템을 만들지 않고 기존 `activity_logs`를 사용합니다. UUID인 `personal_notes.id`는 `source_item_id`로 연결하며 일정·공유·댓글 mutation을 DB trigger에서 기록합니다. My Workspace와 Calendar는 동일한 Timeline API와 컴포넌트를 사용합니다.
+
+기존 프로젝트 Activity 조회 정책은 유지되고, `source_item_id`가 있는 활동만 원본 소유자와 현재 공유 참여자로 제한됩니다. 공유 해제 사용자는 과거 협업 Activity를 더 이상 조회할 수 없습니다. 운영 migration과 실제 다중 사용자 UAT는 별도 적용이 필요합니다.
+
+## Sprint 8-9A Shared Comments
+
+Shared Workspace의 일정·TODO·메모는 계속 `personal_notes` 원본 1개를 사용하며, 댓글은 `shared_comments → shared_items → personal_notes`로 연결됩니다. 소유자와 수락된 view/edit 참여자는 댓글을 조회·작성할 수 있고 작성자는 본인 댓글만 수정하며 작성자 또는 소유자만 삭제할 수 있습니다. 공유되지 않은 원본은 첫 댓글 작성 시 공유 연결 메타데이터만 생성합니다.
+
+My Workspace와 Calendar는 같은 `CommentSection`과 댓글 API를 사용합니다. 신규 댓글 알림은 별도 알림 복제 없이 기존 Notification Center가 접근 가능한 댓글에서 계산합니다. Realtime과 댓글 Activity Timeline은 Sprint 8-9B 범위이며, `20260804120000_create_shared_comments.sql`은 운영 DB에 자동 적용하지 않았습니다.
+
 ## Sprint 7C LME Auto Sync
 
 한국비철금속협회 공개 HTML에서 Al 현물 USD/ton을 서버가 저빈도로 수집하는 구조를 추가했습니다. 최초 동기화는 2024-01-01까지 순차 탐색하고, 증분 동기화는 DB 최신일에서 중단합니다. 기존 가격은 덮어쓰지 않으며 가격 차이는 conflict로 기록합니다. 협회가 환율을 제공하지 않으므로 자동수집 행에는 환율·국내환산가를 만들지 않습니다. 자세한 운영 조건은 `docs/LME_SYNC.md`를 기준으로 합니다.
