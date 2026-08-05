@@ -306,3 +306,8 @@
 - 댓글 입력의 `@` 참여자 검색, 키보드/마우스 선택, 복수 멘션 Chip을 추가했다.
 - 멘션 직원 ID를 관계 테이블에 저장하고 참여 권한을 서버에서 재검증한다.
 - 멘션 Bell 알림, Realtime 갱신, Calendar 댓글 딥링크와 Timeline 기록을 추가했다.
+# Sprint 9-2A - Notification Auto Archive
+
+- Bell을 미처리 알림 중심 Inbox로 변경하고 Archive 전환 버튼을 추가했다.
+- 일반 알림은 읽는 즉시 자동 보관되며 Archive에서 다시 미읽음 처리할 수 있다.
+- pending 공유 요청은 Inbox에 유지하고 처리된 공유 요청은 Archive로 이동한다.

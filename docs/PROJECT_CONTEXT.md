@@ -1,5 +1,11 @@
 # Gongmu ERP - Project Context
 
+## Sprint 9-2A Notification Auto Archive
+
+Notification Bell은 Inbox와 Archive로 구분한다. 일반 알림은 읽는 즉시 기존 `notification_reads`의 `read_at`과 새 `archived_at`을 함께 기록해 Inbox에서 제거하며, 다시 미읽음 처리하면 두 값을 비워 Inbox로 복귀한다. Badge는 미읽음 Inbox와 처리 전 공유 요청만 계산한다.
+
+공유 요청은 별도 알림 복사본을 만들지 않고 기존 `share_invitations.status`를 기준으로 분류한다. pending 요청은 읽기와 관계없이 Inbox에 유지하고 accepted, rejected, cancelled 요청은 Archive에 표시한다. `notification_reads`와 공유 테이블의 기존 Realtime 이벤트를 그대로 사용한다.
+
 ## Sprint 9-2 Mentions & Smart Notification
 
 댓글 멘션은 `shared_comment_mentions`에 댓글 ID와 직원 ID만 저장한다. 댓글 작성 API는 선택된 직원 ID 배열을 RPC로 전달하며, RPC가 활성 직원인지와 해당 일정의 현재 소유자 또는 공유 참여자인지를 다시 검증한다. 같은 댓글의 같은 직원은 복합 기본키로 한 번만 기록된다.

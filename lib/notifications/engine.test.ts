@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { applyNotificationPreferences, buildNotificationCounts, buildNotificationReadRows, countUnreadNotifications, deriveNotificationState, generateNotifications, matchesNotificationSearch } from "./engine.ts";
+import { applyNotificationPreferences, buildNotificationCounts, buildNotificationReadRows, countUnreadNotifications, deriveNotificationState, generateNotifications, matchesNotificationSearch, splitNotificationMailbox } from "./engine.ts";
 
 const today = "2026-08-03";
 
@@ -33,19 +33,20 @@ test("priority sorting is critical, high, medium, low", () => {
 
 test("read, pin and hidden preferences are applied per notification", () => {
   const items = applyNotificationPreferences([{ id: "a" }, { id: "b" }, { id: "c" }], [
-    { notification_id: "a", is_read: true, read_at: "2026-08-03T00:00:00Z", is_pinned: false, is_hidden: false },
-    { notification_id: "b", is_read: false, read_at: null, is_pinned: true, is_hidden: false },
-    { notification_id: "c", is_read: false, read_at: null, is_pinned: false, is_hidden: true },
+    { notification_id: "a", is_read: true, read_at: "2026-08-03T00:00:00Z", archived_at: "2026-08-03T00:00:00Z", is_pinned: false, is_hidden: false },
+    { notification_id: "b", is_read: false, read_at: null, archived_at: null, is_pinned: true, is_hidden: false },
+    { notification_id: "c", is_read: false, read_at: null, archived_at: null, is_pinned: false, is_hidden: true },
   ]);
   assert.deepEqual(items.map((item) => item.id), ["b", "a"]);
   assert.equal(items[1].isRead, true);
+  assert.equal(items[1].isArchived, true);
 });
 
 test("hidden modes and unread count exclude hidden notifications", () => {
   const source = [{ id: "a" }, { id: "b" }];
   const preferences = [
-    { notification_id: "a", is_read: false, read_at: null, is_pinned: true, is_hidden: true },
-    { notification_id: "b", is_read: false, read_at: null, is_pinned: false, is_hidden: false },
+    { notification_id: "a", is_read: false, read_at: null, archived_at: null, is_pinned: true, is_hidden: true },
+    { notification_id: "b", is_read: false, read_at: null, archived_at: null, is_pinned: false, is_hidden: false },
   ];
   assert.deepEqual(applyNotificationPreferences(source, preferences).map((item) => item.id), ["b"]);
   assert.deepEqual(applyNotificationPreferences(source, preferences, { hiddenMode: "only" }).map((item) => item.id), ["a"]);
@@ -66,28 +67,39 @@ test("summary counts use the same visible collection", () => {
 test("batch read rows preserve pin and hidden preferences", () => {
   const rows = buildNotificationReadRows(["a", "b"], "user", [{ notification_id: "a", is_pinned: true, is_hidden: true }], "now");
   assert.deepEqual(rows, [
-    { auth_user_id: "user", notification_id: "a", is_read: true, read_at: "now", is_pinned: true, is_hidden: true },
-    { auth_user_id: "user", notification_id: "b", is_read: true, read_at: "now", is_pinned: false, is_hidden: false },
+    { auth_user_id: "user", notification_id: "a", is_read: true, read_at: "now", archived_at: "now", is_pinned: true, is_hidden: true },
+    { auth_user_id: "user", notification_id: "b", is_read: true, read_at: "now", archived_at: "now", is_pinned: false, is_hidden: false },
   ]);
 });
 
 test("batch unread rows preserve pin and hidden preferences", () => {
   const rows = buildNotificationReadRows(["a", "b"], "user", [{ notification_id: "a", is_pinned: true, is_hidden: true }], null);
   assert.deepEqual(rows, [
-    { auth_user_id: "user", notification_id: "a", is_read: false, read_at: null, is_pinned: true, is_hidden: true },
-    { auth_user_id: "user", notification_id: "b", is_read: false, read_at: null, is_pinned: false, is_hidden: false },
+    { auth_user_id: "user", notification_id: "a", is_read: false, read_at: null, archived_at: null, is_pinned: true, is_hidden: true },
+    { auth_user_id: "user", notification_id: "b", is_read: false, read_at: null, archived_at: null, is_pinned: false, is_hidden: false },
   ]);
 });
 
 test("read state is derived only from read_at", () => {
   const items = applyNotificationPreferences([{ id: "missing" }, { id: "null" }, { id: "read" }], [
-    { notification_id: "null", is_read: true, read_at: null, is_pinned: false, is_hidden: false },
-    { notification_id: "read", is_read: false, read_at: "2026-08-03T00:00:00Z", is_pinned: false, is_hidden: false },
+    { notification_id: "null", is_read: true, read_at: null, archived_at: null, is_pinned: false, is_hidden: false },
+    { notification_id: "read", is_read: false, read_at: "2026-08-03T00:00:00Z", archived_at: "2026-08-03T00:00:00Z", is_pinned: false, is_hidden: false },
   ], { hiddenMode: "include" });
   assert.deepEqual(items.map((item) => [item.id, item.isRead, item.isUnread]), [["missing", false, true], ["null", false, true], ["read", true, false]]);
   const state = deriveNotificationState(items.map((item) => ({ ...item, category: "task" })));
   assert.equal(state.unreadCount, 2);
   assert.equal(state.readItems.length, 1);
+});
+
+test("읽은 알림은 Archive로 이동하고 다시 미읽음 처리하면 Inbox로 복귀한다", () => {
+  const first = splitNotificationMailbox([
+    { id: "new", isRead: false, isArchived: false, archivedAt: null },
+    { id: "old", isRead: true, isArchived: true, archivedAt: "2026-08-05T10:00:00Z" },
+  ]);
+  assert.deepEqual(first.inbox.map((item) => item.id), ["new"]);
+  assert.deepEqual(first.archive.map((item) => item.id), ["old"]);
+  const restored = splitNotificationMailbox([{ id: "old", isRead: false, isArchived: false, archivedAt: null }]);
+  assert.deepEqual(restored.inbox.map((item) => item.id), ["old"]);
 });
 
 test("notification search matches title, content, project, category and priority", () => {

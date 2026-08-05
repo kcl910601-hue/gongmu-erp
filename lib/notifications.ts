@@ -85,6 +85,8 @@ export type NotificationItem = {
   actionLabel?: string;
   isRead: boolean;
   readAt: string | null;
+  isArchived?: boolean;
+  archivedAt?: string | null;
   isPinned?: boolean;
   isHidden?: boolean;
 };
@@ -111,6 +113,7 @@ type NotificationReadRow = {
   notification_id: string;
   is_read: boolean;
   read_at: string | null;
+  archived_at: string | null;
   is_pinned: boolean;
   is_hidden: boolean;
 };
@@ -187,19 +190,21 @@ export async function toggleNotificationRead(
     notification_id: notificationKey,
     is_read: readAt !== null,
     read_at: readAt,
+    archived_at: readAt,
     is_pinned: existingRow?.is_pinned ?? false,
     is_hidden: existingRow?.is_hidden ?? false,
   }, { onConflict: "auth_user_id,notification_id" });
   return { error, readAt: error ? currentReadAt : readAt };
 }
 
-export async function updateNotificationPreference(notificationId: string, currentEmployee: CurrentEmployee, values: { isPinned?: boolean; isHidden?: boolean; isRead: boolean; readAt: string | null }) {
+export async function updateNotificationPreference(notificationId: string, currentEmployee: CurrentEmployee, values: { isPinned?: boolean; isHidden?: boolean; isRead: boolean; readAt: string | null; archivedAt?: string | null }) {
   if (!currentEmployee.auth_user_id) return { error: new Error("로그인 사용자 정보를 확인할 수 없습니다.") };
   const { error } = await supabase.from("notification_reads").upsert({
     auth_user_id: currentEmployee.auth_user_id,
     notification_id: notificationId,
     is_read: values.isRead,
     read_at: values.readAt,
+    archived_at: values.archivedAt ?? values.readAt,
     ...(values.isPinned === undefined ? {} : { is_pinned: values.isPinned }),
     ...(values.isHidden === undefined ? {} : { is_hidden: values.isHidden }),
   }, { onConflict: "auth_user_id,notification_id" });
@@ -637,7 +642,7 @@ export async function loadNotificationSummary(
     ? { data: [], error: null }
     : await supabase
         .from("notification_reads")
-        .select("notification_id, is_read, read_at, is_pinned, is_hidden")
+        .select("notification_id, is_read, read_at, archived_at, is_pinned, is_hidden")
         .in("notification_id", notificationIds);
   if (readResult.error) return { data: null, error: readResult.error };
 

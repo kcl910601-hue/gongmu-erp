@@ -461,3 +461,9 @@ Tasks
 - 본문 문자열을 파싱하거나 사용자별 댓글 복사본을 만들지 않는다.
 - `create_shared_comment_with_mentions` RPC가 댓글 생성, 참여 권한 재검증, 중복 제거, 멘션 관계 및 Timeline 기록을 한 트랜잭션에서 처리한다.
 - `20260805140000_add_shared_comment_mentions.sql`은 운영 DB에 별도로 적용해야 하며 자동 적용하지 않는다.
+# Sprint 9-2A Notification Archive
+
+- `notification_reads.archived_at timestamptz`를 추가한다.
+- 기존 읽은 행은 migration에서 `archived_at = read_at`으로 보관 상태를 승계한다.
+- 원본 알림이나 사용자별 알림 복사본은 만들지 않는다.
+- `20260805150000_add_notification_archive.sql`은 운영 DB에 별도로 적용해야 하며 자동 적용하지 않는다.

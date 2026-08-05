@@ -44,12 +44,13 @@ import {
 import { formatActivityTime } from "@/lib/activity";
 import { useAppShellUser } from "@/contexts/AppShellUserContext";
 import { toast } from "@/lib/toast";
-import { deriveNotificationState, matchesNotificationSearch } from "@/lib/notifications/engine";
+import { deriveNotificationState, matchesNotificationSearch, splitNotificationMailbox } from "@/lib/notifications/engine";
 import { NOTIFICATIONS_CHANGED_EVENT } from "@/lib/collaboration-events";
 import { SHARE_PERMISSION_LABELS, type ShareInvitation, type SharingOverview } from "@/lib/sharing";
 import { dispatchPersonalNotesChanged } from "@/lib/personal-notes";
 
 type NotificationFilter = "all" | "task" | "project" | "raw_material" | "personal" | "system";
+type NotificationMailbox = "inbox" | "archive";
 
 const filters: { value: NotificationFilter; label: string }[] = [
   { value: "all", label: "전체" },
@@ -233,6 +234,7 @@ export default function NotificationCenter() {
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
   const [activeFilter, setActiveFilter] = useState<NotificationFilter>("all");
+  const [mailbox, setMailbox] = useState<NotificationMailbox>("inbox");
   const [showUnreadOnly, setShowUnreadOnly] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("");
@@ -248,9 +250,13 @@ export default function NotificationCenter() {
     setIsLoading(true);
     setErrorMessage("");
 
-    const [notificationResult, sharingResponse] = await Promise.all([loadNotificationSummary(30, employee), fetch("/api/sharing", { cache: "no-store" }).catch(() => null)]);
+    const [notificationResult, sharingResponse] = await Promise.all([loadNotificationSummary(100, employee), fetch("/api/sharing", { cache: "no-store" }).catch(() => null)]);
     const { data, error } = notificationResult;
-    if (sharingResponse?.ok) { const sharing = await sharingResponse.json() as SharingOverview; setShareInvitations([...sharing.received.filter((invitation) => invitation.status === "pending"), ...sharing.sent.filter((invitation) => invitation.status === "accepted" || invitation.status === "rejected").slice(0, 5)]); }
+    if (sharingResponse?.ok) {
+      const sharing = await sharingResponse.json() as SharingOverview;
+      const invitations = [...sharing.received, ...sharing.sent.filter((invitation) => invitation.status !== "pending")];
+      setShareInvitations([...new Map(invitations.map((invitation) => [invitation.id, invitation])).values()].slice(0, 100));
+    }
 
     if (error) {
       setSummary(null);
@@ -303,7 +309,7 @@ export default function NotificationCenter() {
     const idSet = new Set(notificationIds);
     setSummary((current) => {
       if (!current) return current;
-      const items = current.items.map((item) => idSet.has(item.id) ? { ...item, isRead: readAt !== null, isUnread: readAt === null, readAt } : item);
+      const items = current.items.map((item) => idSet.has(item.id) ? { ...item, isRead: readAt !== null, isUnread: readAt === null, readAt, isArchived: readAt !== null, archivedAt: readAt } : item);
       return { ...current, items, unreadCount: deriveNotificationState(items).unreadCount };
     });
   }, []);
@@ -383,19 +389,25 @@ export default function NotificationCenter() {
 
   const filteredItems = useMemo(() => {
     if (!summary) return [];
-    const categoryItems = summary.items.filter((item) => matchesFilter(item.category, activeFilter));
-    const unreadItems = showUnreadOnly ? categoryItems.filter((item) => !item.isRead) : categoryItems;
-    return unreadItems.filter((item) => matchesNotificationSearch(item, debouncedSearchQuery));
-  }, [activeFilter, debouncedSearchQuery, showUnreadOnly, summary]);
+    const mailboxes = splitNotificationMailbox(summary.items);
+    const mailboxItems = mailbox === "archive" ? mailboxes.archive : mailboxes.inbox;
+    const categoryItems = mailboxItems.filter((item) => matchesFilter(item.category, activeFilter));
+    const unreadItems = showUnreadOnly && mailbox === "inbox" ? categoryItems.filter((item) => !item.isRead) : categoryItems;
+    const searchedItems = mailbox === "archive" ? unreadItems : unreadItems.filter((item) => matchesNotificationSearch(item, debouncedSearchQuery));
+    return [...searchedItems].sort((left, right) => mailbox === "archive" ? (right.archivedAt ?? "").localeCompare(left.archivedAt ?? "") : 0);
+  }, [activeFilter, debouncedSearchQuery, mailbox, showUnreadOnly, summary]);
 
   const notificationState = useMemo(() => deriveNotificationState(summary?.items ?? []), [summary]);
   const unreadCount = notificationState.unreadCount;
   const pendingShareCount = shareInvitations.filter((invitation) => invitation.status === "pending").length;
+  const archivedItemsCount = (summary?.items.filter((item) => item.isArchived).length ?? 0) + shareInvitations.filter((invitation) => invitation.status !== "pending").length;
+  const visibleShareInvitations = shareInvitations.filter((invitation) => mailbox === "inbox" ? invitation.status === "pending" : invitation.status !== "pending");
+  const mailboxNotificationItems = summary ? (mailbox === "inbox" ? splitNotificationMailbox(summary.items).inbox : splitNotificationMailbox(summary.items).archive) : [];
   const badgeLabel = getBadgeLabel(unreadCount + pendingShareCount);
   async function respondToShare(invitation: ShareInvitation, action: "accept" | "reject") {
     const response = await fetch("/api/sharing", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action, invitationId: invitation.id }) });
     if (!response.ok) { toast.error("공유 요청을 처리하지 못했습니다."); return; }
-    setShareInvitations((current) => current.filter((item) => item.id !== invitation.id));
+    await loadNotifications();
     dispatchPersonalNotesChanged();
     toast.success(action === "accept" ? "공유 요청을 수락했습니다." : "공유 요청을 거절했습니다.");
   }
@@ -433,7 +445,7 @@ export default function NotificationCenter() {
             <div className="border-b border-slate-200 bg-white px-5 py-4 sm:rounded-t-2xl">
               <div className="flex items-center justify-between gap-3">
                 <div className="min-w-0">
-                  <h2 className="text-lg font-bold text-slate-950">알림</h2>
+                  <h2 className="text-lg font-bold text-slate-950">{mailbox === "inbox" ? "Inbox" : "Archive"}</h2>
                   <p className="mt-1 text-sm text-slate-500">
                     확인 필요 항목 {unreadCount}건
                     {summary ? ` · 전체 ${notificationState.totalCount}건` : ""}
@@ -463,11 +475,11 @@ export default function NotificationCenter() {
                 </div>
               </div>
 
-              <label className="mt-3 flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+              {mailbox === "inbox" && <label className="mt-3 flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
                 <Search size={15} className="text-slate-400" />
                 <input value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} placeholder="제목, 내용, 프로젝트, 카테고리, 우선순위 검색" aria-label="알림 검색" className="min-w-0 flex-1 bg-transparent text-sm text-slate-700 outline-none placeholder:text-slate-400" />
                 {searchQuery ? <button type="button" onClick={() => setSearchQuery("")} aria-label="알림 검색 초기화" title="검색 초기화" className="text-slate-400 hover:text-slate-700"><X size={14} /></button> : null}
-              </label>
+              </label>}
 
               <div className="mt-4 grid grid-cols-3 gap-1 rounded-2xl bg-slate-100 p-1 sm:grid-cols-6">
                 {filters.map((filter) => (
@@ -481,11 +493,11 @@ export default function NotificationCenter() {
                         : "text-slate-500 hover:text-slate-800"
                     }`}
                   >
-                    {filter.label} ({summary?.items.filter((item) => !item.isHidden && matchesFilter(item.category, filter.value)).length ?? 0})
+                    {filter.label} ({mailboxNotificationItems.filter((item) => !item.isHidden && matchesFilter(item.category, filter.value)).length})
                   </button>
                 ))}
               </div>
-              <div className="mt-3 flex items-center justify-between gap-3">
+              {mailbox === "inbox" && <div className="mt-3 flex items-center justify-between gap-3">
                 <label className="flex cursor-pointer items-center gap-2 text-xs font-medium text-slate-600">
                   <input
                     type="checkbox"
@@ -504,7 +516,7 @@ export default function NotificationCenter() {
                   <CheckCheck size={14} />
                   {isMarkingAll ? "처리 중..." : "모두 읽음"}
                 </button>
-              </div>
+              </div>}
             </div>
 
             <div className="flex-1 overflow-y-auto p-4">
@@ -515,9 +527,9 @@ export default function NotificationCenter() {
                   message={errorMessage}
                   onRetry={() => void loadNotifications()}
                 />
-              ) : filteredItems.length > 0 || ((activeFilter === "all" || activeFilter === "personal") && shareInvitations.length > 0) ? (
+              ) : filteredItems.length > 0 || ((activeFilter === "all" || activeFilter === "personal") && visibleShareInvitations.length > 0) ? (
                 <div className="space-y-3">
-                  {(activeFilter === "all" || activeFilter === "personal") && shareInvitations.map((invitation) => <article key={invitation.id} className="rounded-2xl border border-blue-200 bg-blue-50 p-4"><div className="flex items-center justify-between gap-2"><span className="rounded-full bg-blue-600 px-2 py-0.5 text-[10px] font-bold text-white">{invitation.status === "pending" ? "공유 요청" : "공유 응답"}</span><span className="text-xs text-blue-600">{SHARE_PERMISSION_LABELS[invitation.permission]}</span></div><p className="mt-2 text-sm font-semibold text-slate-900">{invitation.status === "pending" ? `${invitation.inviter?.name ?? "직원"}님이 항목을 공유했습니다.` : `${invitation.invitee?.name ?? "직원"}님이 공유 요청을 ${invitation.status === "accepted" ? "수락" : "거절"}했습니다.`}</p><p className="mt-1 text-xs text-slate-500">{invitation.shared_item?.item_type.toUpperCase() ?? "공유 항목"}</p>{invitation.status === "pending" && <div className="mt-3 flex gap-2"><button type="button" onClick={() => void respondToShare(invitation, "accept")} className="rounded-xl bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white">수락</button><button type="button" onClick={() => void respondToShare(invitation, "reject")} className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600">거절</button></div>}</article>)}
+                  {(activeFilter === "all" || activeFilter === "personal") && visibleShareInvitations.map((invitation) => <article key={invitation.id} className="rounded-2xl border border-blue-200 bg-blue-50 p-4"><div className="flex items-center justify-between gap-2"><span className="rounded-full bg-blue-600 px-2 py-0.5 text-[10px] font-bold text-white">{invitation.status === "pending" ? "공유 요청" : "공유 응답"}</span><span className="text-xs text-blue-600">{SHARE_PERMISSION_LABELS[invitation.permission]}</span></div><p className="mt-2 text-sm font-semibold text-slate-900">{invitation.status === "pending" ? `${invitation.inviter?.name ?? "직원"}님이 항목을 공유했습니다.` : `${invitation.invitee?.name ?? "직원"}님이 공유 요청을 ${invitation.status === "accepted" ? "수락" : invitation.status === "rejected" ? "거절" : "취소"}했습니다.`}</p><p className="mt-1 text-xs text-slate-500">{invitation.shared_item?.item_type.toUpperCase() ?? "공유 항목"}</p>{invitation.status === "pending" && <div className="mt-3 flex gap-2"><button type="button" onClick={() => void respondToShare(invitation, "accept")} className="rounded-xl bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white">수락</button><button type="button" onClick={() => void respondToShare(invitation, "reject")} className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600">거절</button></div>}</article>)}
                   {filteredItems.map((item) => (
                     <NotificationRow
                       key={item.id}
@@ -546,6 +558,13 @@ export default function NotificationCenter() {
               )}
             </div>
             <div className="border-t border-slate-200 bg-white p-3 text-center sm:rounded-b-2xl">
+              <button
+                type="button"
+                onClick={() => { setMailbox((current) => current === "inbox" ? "archive" : "inbox"); setSearchQuery(""); setShowUnreadOnly(false); }}
+                className="mr-4 text-sm font-semibold text-slate-600 hover:text-blue-700"
+              >
+                {mailbox === "inbox" ? `Archive (${archivedItemsCount})` : `Inbox (${unreadCount + pendingShareCount})`}
+              </button>
               <Link
                 href="/notifications"
                 onClick={() => setIsOpen(false)}

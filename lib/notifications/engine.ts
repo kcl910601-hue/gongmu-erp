@@ -26,13 +26,14 @@ export function sortNotifications(items: EngineNotification[]) {
 
 export type HiddenNotificationMode = "exclude" | "only" | "include";
 
-export function applyNotificationPreferences<T extends { id: string }>(items: T[], preferences: { notification_id: string; is_read: boolean; read_at: string | null; is_pinned: boolean; is_hidden: boolean }[], options: { hiddenMode?: HiddenNotificationMode } = {}) {
+export function applyNotificationPreferences<T extends { id: string }>(items: T[], preferences: { notification_id: string; is_read: boolean; read_at: string | null; archived_at: string | null; is_pinned: boolean; is_hidden: boolean }[], options: { hiddenMode?: HiddenNotificationMode } = {}) {
   const byId = new Map(preferences.map((preference) => [preference.notification_id, preference]));
   const hiddenMode = options.hiddenMode ?? "exclude";
   return items.map((entry) => {
     const preference = byId.get(entry.id);
     const readAt = preference?.read_at ?? null;
-    return { ...entry, isRead: readAt !== null, isUnread: readAt === null, readAt, isPinned: preference?.is_pinned ?? false, isHidden: preference?.is_hidden ?? false };
+    const archivedAt = preference?.archived_at ?? null;
+    return { ...entry, isRead: readAt !== null, isUnread: readAt === null, readAt, isArchived: archivedAt !== null, archivedAt, isPinned: preference?.is_pinned ?? false, isHidden: preference?.is_hidden ?? false };
   }).filter((entry) => hiddenMode === "include" || (hiddenMode === "only" ? entry.isHidden : !entry.isHidden)).sort((left, right) => Number(right.isPinned) - Number(left.isPinned));
 }
 
@@ -66,6 +67,12 @@ export function deriveNotificationState<T extends { category: string; isRead: bo
   return { visibleItems, unreadItems, readItems, hiddenItems, ...buildNotificationCounts(items) };
 }
 
+export function splitNotificationMailbox<T extends { isRead: boolean; isArchived?: boolean; archivedAt?: string | null }>(items: T[]) {
+  const inbox = items.filter((item) => !item.isRead && !item.isArchived);
+  const archive = items.filter((item) => item.isArchived).sort((left, right) => (right.archivedAt ?? "").localeCompare(left.archivedAt ?? ""));
+  return { inbox, archive };
+}
+
 export function matchesNotificationSearch(item: { title: string; description: string; projectName?: string | null; category: string; priority: string | number; priorityLevel?: string }, query: string) {
   const keyword = query.trim().toLocaleLowerCase("ko-KR");
   if (!keyword) return true;
@@ -80,6 +87,7 @@ export function buildNotificationReadRows(notificationIds: string[], authUserId:
     notification_id: notificationId,
     is_read: readAt !== null,
     read_at: readAt,
+    archived_at: readAt,
     is_pinned: existingById.get(notificationId)?.is_pinned ?? false,
     is_hidden: existingById.get(notificationId)?.is_hidden ?? false,
   }));
