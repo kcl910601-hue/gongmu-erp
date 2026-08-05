@@ -20,10 +20,14 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   const context = await getCommentContext(id);
   if ("error" in context) return context.error;
   if (Number(context.comment.author_id) !== context.employee.id) return Response.json({ error: "본인 댓글만 수정할 수 있습니다." }, { status: 403 });
-  const result = await context.supabase.from("shared_comments").update({ content: normalized.content }).eq("id", id).eq("author_id", context.employee.id).select("id,shared_item_id,author_id,content,created_at,updated_at,author:employees!shared_comments_author_id_fkey(id,name,position)").maybeSingle();
+  const result = await context.supabase.from("shared_comments").update({ content: normalized.content }).eq("id", id).eq("author_id", context.employee.id).select("id,shared_item_id,author_id,content,created_at,updated_at,author:employees!shared_comments_author_id_fkey(id,name,position),mentions:shared_comment_mentions(employee_id,employee:employees!shared_comment_mentions_employee_id_fkey(id,name,position))").maybeSingle();
   if (result.error) return Response.json({ error: result.error.message }, { status: 500 });
   if (!result.data) return Response.json({ error: "댓글을 찾을 수 없습니다." }, { status: 404 });
-  return Response.json({ comment: { ...result.data, canEdit: true, canDelete: true } });
+  const mentions = (result.data.mentions ?? []).flatMap((mention) => {
+    const employee = Array.isArray(mention.employee) ? mention.employee[0] : mention.employee;
+    return employee ? [{ employeeId: Number(mention.employee_id), name: employee.name, position: employee.position }] : [];
+  });
+  return Response.json({ comment: { ...result.data, mentions, canEdit: true, canDelete: true } });
 }
 
 export async function DELETE(_request: Request, { params }: { params: Promise<{ id: string }> }) {

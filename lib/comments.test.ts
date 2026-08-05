@@ -1,11 +1,17 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { COMMENT_MAX_LENGTH, canAccessComments, getCommentNotificationRecipientIds, getCommentPermissions, normalizeCommentContent } from "./comments.ts";
+import { COMMENT_MAX_LENGTH, canAccessComments, getCommentNotificationRecipientIds, getCommentPermissions, normalizeCommentContent, normalizeCommentMentionIds } from "./comments.ts";
 
 test("댓글 내용을 trim하고 공백 및 길이 초과를 차단한다", () => {
   assert.deepEqual(normalizeCommentContent("  확인했습니다.  "), { content: "확인했습니다.", error: null });
   assert.equal(normalizeCommentContent("   ").content, null);
   assert.equal(normalizeCommentContent("가".repeat(COMMENT_MAX_LENGTH + 1)).content, null);
+});
+
+test("멘션 직원 ID를 정수로 정규화하고 중복을 제거한다", () => {
+  assert.deepEqual(normalizeCommentMentionIds([3, "2", 3]), { mentionIds: [3, 2], error: null });
+  assert.equal(normalizeCommentMentionIds([0]).mentionIds, null);
+  assert.equal(normalizeCommentMentionIds("2").mentionIds, null);
 });
 
 test("작성자만 수정하고 작성자 또는 소유자만 삭제한다", () => {

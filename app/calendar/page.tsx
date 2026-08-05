@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   CalendarDays,
   ChevronLeft,
@@ -237,6 +237,7 @@ export default function CalendarPage() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [personalNotes, setPersonalNotes] = useState<PersonalNote[]>([]);
   const [selectedPersonalNoteId, setSelectedPersonalNoteId] = useState<string | null>(null);
+  const personalNoteDeepLinkHandledRef = useRef(false);
   const [shareTarget, setShareTarget] = useState<PersonalNote | null>(null);
   const [selectedTask, setSelectedTask] = useState<GanttTaskDetail | null>(null);
   const [quickFilter, setQuickFilter] = useState<QuickFilter>("전체");
@@ -699,6 +700,16 @@ export default function CalendarPage() {
   const selectedDatePersonalNotes = [...(personalNotesByDate.get(selectedDate) ?? [])].sort((a, b) => Number(b.is_pinned) - Number(a.is_pinned) || Number(a.is_completed) - Number(b.is_completed) || b.created_at.localeCompare(a.created_at));
   const selectedPersonalNote = selectedPersonalNoteId ? personalNotes.find((note) => note.id === selectedPersonalNoteId) ?? null : null;
   const personalNoteIdsKey = personalNotes.map((note) => note.id).join(",");
+
+  useEffect(() => {
+    if (personalNoteDeepLinkHandledRef.current) return;
+    const linkedId = new URLSearchParams(window.location.search).get("personalNote");
+    if (linkedId && personalNotes.some((note) => note.id === linkedId)) {
+      personalNoteDeepLinkHandledRef.current = true;
+      const timer = window.setTimeout(() => setSelectedPersonalNoteId(linkedId), 0);
+      return () => window.clearTimeout(timer);
+    }
+  }, [personalNotes]);
 
   useEffect(() => {
     function handleDelta(event: Event) {

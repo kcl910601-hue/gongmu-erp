@@ -1,5 +1,11 @@
 # Gongmu ERP - Project Context
 
+## Sprint 9-2 Mentions & Smart Notification
+
+댓글 멘션은 `shared_comment_mentions`에 댓글 ID와 직원 ID만 저장한다. 댓글 작성 API는 선택된 직원 ID 배열을 RPC로 전달하며, RPC가 활성 직원인지와 해당 일정의 현재 소유자 또는 공유 참여자인지를 다시 검증한다. 같은 댓글의 같은 직원은 복합 기본키로 한 번만 기록된다.
+
+댓글 입력창은 `@` 이후 이름·직책으로 참여자를 검색하고 키보드와 마우스 선택을 지원한다. 기존 Notification Center는 멘션 관계를 조회해 실시간 Bell 알림을 계산하며, 알림 링크는 Calendar의 기존 상세 모달과 해당 댓글 위치를 연다. 멘션 생성은 기존 `activity_logs` Timeline에 `shared_comment_mention` 활동으로 기록된다.
+
 ## Sprint 9-1B Hierarchical Delete Lock Check
 
 Project and task deletion now run through security-definer RPCs that preserve the existing delete permissions and inspect the current `editing_locks` rows inside the delete transaction. The transaction briefly takes a share-row-exclusive lock on `editing_locks`, removes expired entries, checks the hierarchy, and then either returns current lock details or performs the existing delete sequence. This closes the gap where a child lock could be created between a separate client-side check and deletion.

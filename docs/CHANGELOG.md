@@ -301,3 +301,8 @@
 - 기존 수기·CSV 기능과 확정 가격 불변 정책을 유지하며 환율은 임의 생성하지 않습니다.
 - LME 전용 동기화 내부를 Market Data Provider, Sync Orchestrator, Repository로 분리했습니다.
 - 향후 환율 Provider용 타입과 누락·유효성 상태를 구분하는 국내환산 계산 서비스를 추가했습니다. 환율 수집은 포함하지 않습니다.
+# Sprint 9-2 - Mentions & Smart Notification
+
+- 댓글 입력의 `@` 참여자 검색, 키보드/마우스 선택, 복수 멘션 Chip을 추가했다.
+- 멘션 직원 ID를 관계 테이블에 저장하고 참여 권한을 서버에서 재검증한다.
+- 멘션 Bell 알림, Realtime 갱신, Calendar 댓글 딥링크와 Timeline 기록을 추가했다.

@@ -455,3 +455,9 @@ Tasks
 - 수동 출고 등록이 프로젝트 없이 허용되는지 결정하고 `shipments.project_id` 정책을 정리합니다.
 - 프로젝트 삭제 정책을 `RESTRICT` 중심으로 유지할지, 애플리케이션에서 연관 데이터 정리를 더 엄격히 할지 결정합니다.
 - `project_files` 삭제 정책은 Storage object 정리 방식과 함께 별도 Sprint에서 검토합니다.
+# Sprint 9-2 댓글 멘션
+
+- `shared_comment_mentions`: `comment_id + employee_id` 복합 기본키로 댓글과 멘션 직원을 연결한다.
+- 본문 문자열을 파싱하거나 사용자별 댓글 복사본을 만들지 않는다.
+- `create_shared_comment_with_mentions` RPC가 댓글 생성, 참여 권한 재검증, 중복 제거, 멘션 관계 및 Timeline 기록을 한 트랜잭션에서 처리한다.
+- `20260805140000_add_shared_comment_mentions.sql`은 운영 DB에 별도로 적용해야 하며 자동 적용하지 않는다.
