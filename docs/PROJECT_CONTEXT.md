@@ -1,5 +1,11 @@
 # Gongmu ERP - Project Context
 
+## Sprint 9-3B-1 Gantt Presentation Header Layout Fix
+
+Gantt 프레젠테이션 루트는 `100dvh` 세로 flex 구조로 Toolbar, 상단 가로 스크롤 제어 행, Gantt viewport를 문서 흐름 안에서 분리한다. Toolbar는 고정 높이 대신 최소 높이와 줄바꿈을 사용하고, Gantt viewport는 `flex: 1; min-height: 0`으로 남은 높이만 사용하므로 화면 너비와 브라우저 확대율에 따라 Toolbar 높이가 바뀌어도 겹치지 않는다.
+
+필터 Popover Portal은 기존 fullscreen Gantt 루트 연결을 유지한다. 필터가 열리는 동안 상단 스크롤 제어 행이 Popover 높이를 예약하고, 닫히면 scrollbar 높이로 축소된다. 월·일 헤더는 별도 Gantt viewport 내부의 `top: 0` sticky 묶음으로 유지하며 Toolbar 높이를 sticky offset에 중복 반영하지 않는다.
+
 ## Sprint 9-3B Gantt Presentation Filter Overflow Fix
 
 Gantt 프레젠테이션 필터는 헤더 내부 absolute 메뉴 대신 공통 Radix Popover를 사용한다. 일반 화면에서는 기존처럼 body Portal을 사용하고, browser fullscreen 중에는 fullscreen 대상인 Gantt 프레젠테이션 루트를 Portal 컨테이너로 지정하여 `overflow-hidden` clipping과 fullscreen 외부 Portal 미표시 문제를 함께 방지한다.

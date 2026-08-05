@@ -2357,7 +2357,7 @@ export function IntegratedProjectGantt({
       onPointerLeave={() => clearMeetingFocus()}
       className={
         isPresentation
-          ? "relative h-screen overflow-hidden bg-white text-slate-900"
+          ? "relative flex h-dvh flex-col overflow-hidden bg-white text-slate-900"
           : "rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5"
       }
     >
@@ -2376,7 +2376,7 @@ export function IntegratedProjectGantt({
         />
       )}
       {isPresentation && (
-        <div className="relative z-50 flex h-14 items-center gap-2 border-b border-slate-200 bg-white px-3 shadow-sm">
+        <div className="relative z-50 flex min-h-14 shrink-0 flex-wrap items-center gap-2 overflow-visible border-b border-slate-200 bg-white px-3 py-2 shadow-sm">
           <Button type="button" size="sm" variant="secondary" onClick={scrollToToday}>
             <LocateFixed size={15} /> 오늘
           </Button>
@@ -2766,22 +2766,22 @@ export function IntegratedProjectGantt({
       {rows.length === 0 ? (
         <EmptyState
           message="조건에 맞는 프로젝트 일정이 없습니다."
-          className="rounded-2xl bg-slate-50 p-10 text-center text-sm text-slate-500"
+          className={`rounded-2xl bg-slate-50 p-10 text-center text-sm text-slate-500 ${isPresentation ? "min-h-0 flex-1" : ""}`}
         />
       ) : (
-        <div>
-          <div className="flex w-full min-w-0 border-x border-t border-slate-200 bg-white">
+        <div className={isPresentation ? "flex min-h-0 flex-1 flex-col" : ""}>
+          <div className={`flex w-full min-w-0 shrink-0 items-end border-x border-t border-slate-200 bg-white transition-[height] ${isPresentationFilterOpen ? "h-16" : "h-4"}`}>
             <div className="w-[430px] shrink-0 border-r border-slate-200" />
             <div
               ref={topScrollRef}
               aria-label="간트 상단 가로 스크롤"
               onScroll={(event) => syncHorizontalScroll(event.currentTarget.scrollLeft, "top")}
-              className="min-w-0 flex-1 overflow-x-auto overflow-y-hidden [scrollbar-width:thin]"
+              className="h-4 min-w-0 flex-1 overflow-x-auto overflow-y-hidden [scrollbar-width:thin]"
             >
               <div aria-hidden="true" className="h-3" style={{ width: timelineWidth }} />
             </div>
           </div>
-        <div ref={ganttSurfaceRef} data-gantt-focus-surface className={`overflow-x-hidden overflow-y-auto border border-slate-200 ${isPresentation ? "h-[calc(100vh-56px)] rounded-none border-x-0 border-b-0" : "max-h-[calc(100vh-220px)] rounded-b-2xl"}`}>
+        <div ref={ganttSurfaceRef} data-gantt-focus-surface className={`overflow-x-hidden overflow-y-auto border border-slate-200 ${isPresentation ? "min-h-0 flex-1 rounded-none border-x-0 border-b-0" : "max-h-[calc(100vh-220px)] rounded-b-2xl"}`}>
           <div className="sticky top-0 z-50 flex w-full min-w-0 bg-white shadow-sm">
             <div className="grid h-[74px] w-[430px] shrink-0 grid-cols-[minmax(0,1fr)_90px_70px] items-end gap-3 border-r border-b border-slate-200 bg-slate-50 px-4 pb-3 text-xs font-semibold text-slate-500">
               <span>프로젝트</span><span>수량</span><span>진행률</span>

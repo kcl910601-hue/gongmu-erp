@@ -1,5 +1,13 @@
 # CHANGELOG
 
+## Sprint 9-3B-1 Gantt Presentation Header Layout Fix
+
+- Changed the fullscreen Gantt root to a `100dvh` column flex layout with measured flow heights
+- Allowed the presentation toolbar to wrap and reserve its actual height without clipping controls
+- Gave the synchronized top scrollbar its own fixed-height row and expanded that row while the filter Popover is open
+- Replaced the Gantt viewport's hard-coded `100vh - 56px` height with `flex: 1` and `min-height: 0`
+- Kept month/day headers sticky at `top: 0` inside the isolated Gantt viewport
+
 ## Sprint 9-3B Gantt Presentation Filter Overflow Fix
 
 - Replaced the presentation filter's header-bound absolute menu with the shared Radix Popover
