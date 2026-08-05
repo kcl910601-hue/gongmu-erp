@@ -1,5 +1,21 @@
 # 개발 로드맵
 
+## Sprint 9-0C-1
+
+- [x] Register every Presence callback before subscribe
+- [x] Track only after SUBSCRIBED
+- [x] Serialize cleanup and replacement of the active Presence channel
+- [x] Keep cleanup idempotent and Presence failures isolated
+- [ ] Multi-browser Presence UAT
+
+## Sprint 9-0C
+
+- [x] AppShell 단일 Presence 채널 및 연결 lifecycle 처리
+- [x] employeeId 기준 다중 탭·기기 중복 제거
+- [x] Sidebar 온라인 인원 및 사용자 목록 UI
+- [x] Presence 오류 격리와 재연결 상태 처리
+- [ ] 실제 다중 브라우저 Presence UAT
+
 ## Sprint 9-0B
 
 - [x] 일정별 전체·미읽음 댓글 수 일괄 집계

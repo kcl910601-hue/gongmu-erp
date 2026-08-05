@@ -1,5 +1,22 @@
 # CHANGELOG
 
+## Sprint 9-0C-1 Presence Subscription Runtime Error Fix
+
+- Register Presence sync, join, and leave handlers before calling subscribe
+- Track the current user only after the channel reaches SUBSCRIBED
+- Serialize active-channel cleanup and replacement to handle Strict Mode and auth changes safely
+- Make cleanup idempotent and isolate Presence failures from the AppShell
+- No DB or migration changes
+
+## Sprint 9-0C Online User Presence
+
+- 인증된 AppShell에서 별도 `erp-online-users` Supabase Presence 채널 구독
+- 직원 ID·이름·직책·접속 시각만 Presence metadata로 등록
+- 여러 탭·기기 연결을 employeeId 기준 한 명으로 중복 제거
+- Sidebar 로그인 사용자 영역 위에 온라인 인원과 사용자 목록 Popover 추가
+- 연결 실패 상태를 격리하여 기존 ERP와 Realtime Collaboration 기능 유지
+- DB 및 migration 변경 없음
+
 ## Sprint 9-0B Unread Comments & Calendar Shared Tag
 
 - `shared_item + employee`별 마지막 확인 댓글 ID만 저장하는 최소 읽음 구조 추가

@@ -17,6 +17,8 @@ import NoteEditorModal from "@/components/workspace/NoteEditorModal";
 import { MaintenanceScreen } from "@/components/maintenance/MaintenanceScreen";
 import { getDefaultMaintenanceModeSetting, getMaintenanceModeSetting, MAINTENANCE_MODE_UPDATED_EVENT, shouldBlockForMaintenance, type MaintenanceModeSetting } from "@/lib/maintenance-mode";
 import { subscribeToRealtimeCollaboration } from "@/lib/realtime-collaboration";
+import { subscribeToOnlinePresence } from "@/lib/presence-subscription";
+import type { OnlineUser, PresenceConnectionState } from "@/lib/online-presence";
 
 function getSidebarSnapshot() {
   if (typeof window === "undefined") return false;
@@ -37,6 +39,8 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const isPublicPage = pathname === "/login" || pathname === "/signup";
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [employee, setEmployee] = useState<CurrentEmployee | null>(null);
+  const [onlineUsers, setOnlineUsers] = useState<OnlineUser[]>([]);
+  const [presenceConnection, setPresenceConnection] = useState<PresenceConnectionState>("connecting");
   const [authUserId, setAuthUserId] = useState<string | null>(null);
   const [authEmail, setAuthEmail] = useState<string | null>(null);
   const [isUserLoading, setIsUserLoading] = useState(!isPublicPage);
@@ -126,6 +130,11 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   }, [employee, isPublicPage]);
 
   useEffect(() => {
+    if (isPublicPage || !employee) return;
+    return subscribeToOnlinePresence(employee, setOnlineUsers, setPresenceConnection);
+  }, [employee, isPublicPage]);
+
+  useEffect(() => {
     function handleMaintenanceUpdated(event: Event) {
       setMaintenanceSetting((event as CustomEvent<MaintenanceModeSetting>).detail);
     }
@@ -134,8 +143,8 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   }, []);
 
   const userContextValue = useMemo(
-    () => ({ employee, authUserId, authEmail, isLoading: isUserLoading }),
-    [authEmail, authUserId, employee, isUserLoading]
+    () => ({ employee, authUserId, authEmail, isLoading: isUserLoading, onlineUsers, presenceConnection }),
+    [authEmail, authUserId, employee, isUserLoading, onlineUsers, presenceConnection]
   );
 
   const openSearch = useCallback(() => {

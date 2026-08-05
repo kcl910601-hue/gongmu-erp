@@ -36,6 +36,7 @@ import {
   type FavoriteProject,
   type RecentWorkspaceItem,
 } from "@/lib/recent";
+import { OnlineUsersPopover } from "@/components/presence/OnlineUsersPopover";
 
 type MenuItem = {
   href: string;
@@ -306,6 +307,7 @@ export default function Sidebar() {
       )}
 
       <div className="border-t border-slate-200 p-2.5">
+        <div className="mb-2"><OnlineUsersPopover collapsed={isCollapsed}/></div>
         {!isCollapsed ? (
           <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3 shadow-sm">
             <p className="truncate text-sm font-semibold text-slate-950">

@@ -1,5 +1,17 @@
 # Gongmu ERP - Project Context
 
+## Sprint 9-0C-1 Presence Subscription Runtime Error Fix
+
+The online Presence subscription creates a fresh channel only after the previous active channel has completed cleanup. It registers sync, join, and leave callbacks before subscribe, then tracks the authenticated employee only after SUBSCRIBED.
+
+Module-level transition serialization, subscription ownership, and idempotent cleanup prevent Strict Mode and authentication changes from overlapping same-topic channels. Cleanup runs untrack before removeChannel, while Presence failures update only the online-status UI and do not interrupt the AppShell or other ERP features. No DB changes are required.
+
+## Sprint 9-0C Online User Presence
+
+인증된 AppShell은 기존 `shared-workspace-realtime` 데이터 변경 채널과 별도로 `erp-online-users` Presence 채널 하나를 생성합니다. 각 브라우저 연결은 고유 Presence key를 사용하고 `employeeId`, 이름, 직책, 접속 시각만 track합니다. DB에는 온라인 상태를 저장하지 않습니다.
+
+Presence sync 결과는 employeeId 기준으로 합쳐 여러 탭과 여러 기기를 한 명으로 표시합니다. 마지막 연결이 untrack되거나 Realtime 연결이 끊기면 Supabase Presence에서 자동 제거됩니다. Sidebar 로그인 사용자 영역 위의 Popover에서 온라인 인원과 목록을 확인하며, 연결 오류는 Presence UI에만 표시하고 ERP 기능에는 영향을 주지 않습니다.
+
 ## Sprint 9-0B Unread Comments & Calendar Shared Tag
 
 댓글 읽음 정보는 `shared_comment_reads`에 `shared_item_id`, `employee_id`, `last_read_comment_id` 한 행만 저장합니다. 댓글이나 일정 복사본은 만들지 않습니다. `get_shared_comment_count_stats(uuid[])`는 전체 댓글 수와 현재 사용자가 작성하지 않았으며 마지막 읽음 ID보다 큰 댓글 수를 일괄 반환합니다.
