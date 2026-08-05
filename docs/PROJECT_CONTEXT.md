@@ -1,5 +1,11 @@
 # Gongmu ERP - Project Context
 
+## Sprint 9-3 Add to My Tasks
+
+`reference_tasks`는 사용자별 작업 상태와 `comment_id`, `shared_item_id` 참조만 저장하며 댓글 내용이나 일정 제목을 복사하지 않는다. 조회 API가 현재 댓글·작성자·일정 원본을 매번 조인하므로 원본 수정이 그대로 표시된다. 원본 삭제 시 FK는 `SET NULL`로 변경되어 작업은 유지되고 “삭제된 원본”으로 표시된다.
+
+같은 사용자의 같은 댓글은 partial unique index와 생성 RPC의 upsert로 한 번만 추가된다. 생성 시 현재 소유자 또는 공유 참여자인지 서버에서 재검증한다. `reference_tasks` Realtime은 해당 사용자의 My Workspace만 갱신하고, 댓글 Realtime은 참조 목록의 최신 원본 내용을 다시 조회한다.
+
 ## Sprint 9-2A Notification Auto Archive
 
 Notification Bell은 Inbox와 Archive로 구분한다. 일반 알림은 읽는 즉시 기존 `notification_reads`의 `read_at`과 새 `archived_at`을 함께 기록해 Inbox에서 제거하며, 다시 미읽음 처리하면 두 값을 비워 Inbox로 복귀한다. Badge는 미읽음 Inbox와 처리 전 공유 요청만 계산한다.

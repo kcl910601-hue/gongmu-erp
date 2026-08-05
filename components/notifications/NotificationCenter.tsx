@@ -48,6 +48,8 @@ import { deriveNotificationState, matchesNotificationSearch, splitNotificationMa
 import { NOTIFICATIONS_CHANGED_EVENT } from "@/lib/collaboration-events";
 import { SHARE_PERMISSION_LABELS, type ShareInvitation, type SharingOverview } from "@/lib/sharing";
 import { dispatchPersonalNotesChanged } from "@/lib/personal-notes";
+import { AddReferenceTaskButton } from "@/components/workspace/AddReferenceTaskButton";
+import type { ReferenceTask } from "@/lib/reference-tasks";
 
 type NotificationFilter = "all" | "task" | "project" | "raw_material" | "personal" | "system";
 type NotificationMailbox = "inbox" | "archive";
@@ -150,6 +152,8 @@ export function NotificationRow({
   isMarkingRead = false,
   onTogglePin,
   onHide,
+  referenceTaskAdded = false,
+  onReferenceTaskAdded,
 }: {
   item: NotificationItem;
   onSelect: () => void | Promise<void>;
@@ -157,6 +161,8 @@ export function NotificationRow({
   isMarkingRead?: boolean;
   onTogglePin?: () => void | Promise<void>;
   onHide?: () => void | Promise<void>;
+  referenceTaskAdded?: boolean;
+  onReferenceTaskAdded?: (commentId: number) => void;
 }) {
   const router = useRouter();
   return (
@@ -223,6 +229,7 @@ export function NotificationRow({
       ) : null}
       {onTogglePin ? <button type="button" onClick={(event) => { event.preventDefault(); event.stopPropagation(); void onTogglePin(); }} aria-label={item.isPinned ? "고정 해제" : "고정"} title={item.isPinned ? "고정 해제" : "고정"} className={`absolute right-12 top-3 flex h-8 w-8 items-center justify-center rounded-xl border bg-white ${item.isPinned ? "border-blue-200 text-blue-600" : "border-slate-200 text-slate-400"}`}><Pin size={14} className={item.isPinned ? "fill-current" : ""} /></button> : null}
       {onHide ? <button type="button" onClick={(event) => { event.preventDefault(); event.stopPropagation(); void onHide(); }} aria-label={item.isHidden ? "알림 복원" : "알림 숨기기"} title={item.isHidden ? "복원" : "숨기기"} className="absolute right-3 bottom-3 flex h-8 w-8 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-400 hover:text-red-600">{item.isHidden ? <RotateCcw size={14} /> : <EyeOff size={14} />}</button> : null}
+      {item.referenceCommentId ? <div className="absolute bottom-3 right-12"><AddReferenceTaskButton key={`${item.referenceCommentId}-${referenceTaskAdded}`} commentId={item.referenceCommentId} added={referenceTaskAdded} onAdded={onReferenceTaskAdded}/></div> : null}
     </div>
   );
 }
@@ -241,6 +248,7 @@ export default function NotificationCenter() {
   const [markingIds, setMarkingIds] = useState<Set<string>>(() => new Set());
   const [isMarkingAll, setIsMarkingAll] = useState(false);
   const [shareInvitations, setShareInvitations] = useState<ShareInvitation[]>([]);
+  const [referenceCommentIds, setReferenceCommentIds] = useState<Set<number>>(() => new Set());
   const requestInFlightRef = useRef(false);
   const hasLoadedRef = useRef(false);
 
@@ -250,12 +258,16 @@ export default function NotificationCenter() {
     setIsLoading(true);
     setErrorMessage("");
 
-    const [notificationResult, sharingResponse] = await Promise.all([loadNotificationSummary(100, employee), fetch("/api/sharing", { cache: "no-store" }).catch(() => null)]);
+    const [notificationResult, sharingResponse, referenceResponse] = await Promise.all([loadNotificationSummary(100, employee), fetch("/api/sharing", { cache: "no-store" }).catch(() => null), fetch("/api/reference-tasks", { cache: "no-store" }).catch(() => null)]);
     const { data, error } = notificationResult;
     if (sharingResponse?.ok) {
       const sharing = await sharingResponse.json() as SharingOverview;
       const invitations = [...sharing.received, ...sharing.sent.filter((invitation) => invitation.status !== "pending")];
       setShareInvitations([...new Map(invitations.map((invitation) => [invitation.id, invitation])).values()].slice(0, 100));
+    }
+    if (referenceResponse?.ok) {
+      const references = await referenceResponse.json() as { tasks?: ReferenceTask[] };
+      setReferenceCommentIds(new Set((references.tasks ?? []).flatMap((task) => task.commentId === null ? [] : [task.commentId])));
     }
 
     if (error) {
@@ -538,6 +550,8 @@ export default function NotificationCenter() {
                       onToggleRead={() => toggleOneRead(item)}
                       onTogglePin={() => setPreference(item, { isPinned: !item.isPinned })}
                       onHide={() => setPreference(item, { isHidden: true })}
+                      referenceTaskAdded={item.referenceCommentId ? referenceCommentIds.has(item.referenceCommentId) : false}
+                      onReferenceTaskAdded={(commentId) => setReferenceCommentIds((current) => new Set(current).add(commentId))}
                       onSelect={async () => {
                         if (!item.isRead) await toggleOneRead(item);
                         setIsOpen(false);

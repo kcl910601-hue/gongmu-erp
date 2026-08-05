@@ -311,3 +311,8 @@
 - Bell을 미처리 알림 중심 Inbox로 변경하고 Archive 전환 버튼을 추가했다.
 - 일반 알림은 읽는 즉시 자동 보관되며 Archive에서 다시 미읽음 처리할 수 있다.
 - pending 공유 요청은 Inbox에 유지하고 처리된 공유 요청은 Archive로 이동한다.
+# Sprint 9-3 - Add to My Tasks
+
+- 댓글과 댓글·멘션 Notification에 `내 할 일에 추가` 기능을 추가했다.
+- My Workspace에 원본 댓글을 참조하는 `요청받은 작업` 영역을 추가했다.
+- 참조 작업 완료·삭제, 중복 방지, 삭제된 원본 안내와 Realtime 갱신을 지원한다.

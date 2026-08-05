@@ -467,3 +467,10 @@ Tasks
 - 기존 읽은 행은 migration에서 `archived_at = read_at`으로 보관 상태를 승계한다.
 - 원본 알림이나 사용자별 알림 복사본은 만들지 않는다.
 - `20260805150000_add_notification_archive.sql`은 운영 DB에 별도로 적용해야 하며 자동 적용하지 않는다.
+# Sprint 9-3 Reference Tasks
+
+- `reference_tasks`: `comment_id`, `shared_item_id`, `created_by`, `assigned_to`, 상태와 완료 시각만 저장한다.
+- 댓글과 공유 원본 FK는 삭제 시 `SET NULL`로 처리해 참조 작업을 자동 삭제하지 않는다.
+- `(assigned_to, comment_id)` partial unique index로 사용자별 중복 추가를 방지한다.
+- 생성·완료·삭제 RPC가 현재 사용자와 공유 접근 권한을 재검증한다.
+- `20260805160000_add_reference_tasks.sql`은 운영 DB에 자동 적용하지 않는다.
