@@ -8,6 +8,7 @@ import { useAppShellUser } from "@/contexts/AppShellUserContext";
 import { canManageMaintenanceMode, getDefaultMaintenanceModeSetting, getMaintenanceModeSetting, MAINTENANCE_MODE_UPDATED_EVENT, updateMaintenanceModeSetting, type MaintenanceModeSetting } from "@/lib/maintenance-mode";
 import { supabase } from "@/lib/supabase";
 import { toast } from "@/lib/toast";
+import { withShortEditingLock } from "@/lib/editing-locks";
 
 export default function MaintenanceSettingsPage() {
   const { employee, authUserId } = useAppShellUser();
@@ -35,12 +36,12 @@ export default function MaintenanceSettingsPage() {
     if (!canManage || !employee || !authUserId || isSaving) return;
     setIsSaving(true);
     try {
-      const next = await updateMaintenanceModeSetting(supabase, {
+      const next = await withShortEditingLock("setting", "maintenance-mode", () => updateMaintenanceModeSetting(supabase, {
         enabled,
         message,
         authUserId,
         updatedByName: employee.name,
-      });
+      }));
       setSetting(next);
       setMessage(next.message);
       window.dispatchEvent(new CustomEvent(MAINTENANCE_MODE_UPDATED_EVENT, { detail: next }));

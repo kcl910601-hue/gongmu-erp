@@ -3,6 +3,7 @@ import { recordRecentWorkspaceItem } from "@/lib/recent";
 import { supabase } from "@/lib/supabase";
 import { getLocalDateString, type PrioritizableTask } from "@/lib/task-priority";
 import { isTaskCompleted } from "@/lib/status";
+import { formatHierarchicalDeleteLockMessage, withShortEditingLock, type HierarchicalDeleteResult } from "@/lib/editing-locks";
 
 export type TaskUpdatePatch = Partial<
   Pick<
@@ -11,7 +12,8 @@ export type TaskUpdatePatch = Partial<
   >
 >;
 
-export async function completeTask(task: PrioritizableTask) {
+export async function completeTask(task: PrioritizableTask, useShortLock = true): Promise<PrioritizableTask> {
+  if (useShortLock) return withShortEditingLock("task", task.id, () => completeTask(task, false));
   const completedDate = getLocalDateString();
   const { error } = await supabase
     .from("tasks")
@@ -55,14 +57,16 @@ export async function completeTask(task: PrioritizableTask) {
 
 export async function updateTask(
   task: PrioritizableTask,
-  patch: TaskUpdatePatch
-) {
+  patch: TaskUpdatePatch,
+  useShortLock = true,
+): Promise<PrioritizableTask> {
+  if (useShortLock) return withShortEditingLock("task", task.id, () => updateTask(task, patch, false));
   if (
     patch.status &&
     isTaskCompleted(patch.status) &&
     patch.completed_date === undefined
   ) {
-    return completeTask(task);
+    return completeTask(task, false);
   }
 
   const payload: TaskUpdatePatch = { ...patch };
@@ -125,8 +129,10 @@ export async function updateTask(
 }
 
 export async function deleteTask(task: PrioritizableTask) {
-  const { error } = await supabase.from("tasks").delete().eq("id", task.id);
+  const { data, error } = await supabase.rpc("delete_project_task", { p_task_id: task.id });
   if (error) throw error;
+  const result = data as HierarchicalDeleteResult | null;
+  if (!result?.deleted) throw new Error(formatHierarchicalDeleteLockMessage(result ?? {}));
 
   await logActivity({
     type: "task_delete",

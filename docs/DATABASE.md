@@ -1,5 +1,23 @@
 # ERP Database v1
 
+## Sprint 9-1B Hierarchical Delete Lock Check
+
+- Migration: `20260805130000_add_hierarchical_delete_lock_check.sql`
+- Verification: `20260805131000_verify_hierarchical_delete_lock_check.sql`
+- `delete_project_with_lock_check(bigint)` checks project/task/shipment locks and performs the existing project delete sequence atomically.
+- `delete_project_task(bigint)` now checks the task and linked shipment locks before unlinking shipments and deleting the task.
+- A short table-level lock is used only during delete validation and execution so a new editing lock cannot appear between the check and delete.
+- No new lock table is introduced and the migration was not applied automatically.
+
+## Sprint 9-1 Universal Live Editing Lock
+
+- Migration: `20260805120000_create_universal_editing_locks.sql`
+- Verification: `20260805121000_verify_universal_editing_locks.sql`
+- `editing_locks` stores only temporary lock ownership and expiry metadata with a unique `(resource_type, resource_id)` key.
+- Direct table access is revoked; authenticated users use permission-checking acquire, heartbeat, release, and status functions.
+- Lock lifetime is 60 seconds and long forms send a heartbeat every 20 seconds.
+- The migration is prepared for review and was not applied automatically.
+
 ## Sprint 9-0B Shared Comment Reads
 
 - Migration: `20260804190000_add_shared_comment_reads.sql`

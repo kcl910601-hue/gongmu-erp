@@ -1,5 +1,23 @@
 # Gongmu ERP - Project Context
 
+## Sprint 9-1B Hierarchical Delete Lock Check
+
+Project and task deletion now run through security-definer RPCs that preserve the existing delete permissions and inspect the current `editing_locks` rows inside the delete transaction. The transaction briefly takes a share-row-exclusive lock on `editing_locks`, removes expired entries, checks the hierarchy, and then either returns current lock details or performs the existing delete sequence. This closes the gap where a child lock could be created between a separate client-side check and deletion.
+
+Project hierarchy checks cover the project record, tasks with the project ID, and shipments with the project ID. Task hierarchy checks cover the task and shipments whose `task_id` references it. `personal_notes` is not included because the current schema does not contain a project, task, or shipment relationship.
+
+## Sprint 9-1A Live Editing Completion
+
+Short edits reuse the existing acquire and release endpoints without heartbeat. `withShortEditingLock` holds one record lock only for the mutation, while `withShortEditingLocks` sorts keys before acquiring multiple affected task records to avoid inconsistent acquisition order. Both always release acquired tokens in `finally`.
+
+Calendar personal-note moves and Gantt task schedule changes optimistically update the UI and restore the previous state when acquisition or persistence fails. Task completion, status, assignee, personal-note completion/pin, partner active state, and maintenance-mode changes use the same short-lock path. Partner inline editing and Gantt task detail editing use the existing heartbeat hook.
+
+## Sprint 9-1 Universal Live Editing Lock
+
+Live editing uses one temporary `editing_locks` table. Its unique key is `(resource_type, resource_id)`, so unrelated projects, tasks, shipments, notes, employees, comments, and settings remain independently editable. The table never stores editable copies of source records.
+
+The shared API acquires a 60-second lock, refreshes it every 20 seconds while a long edit UI remains open, and releases it on save, cancel, or unmount. Expired locks are reclaimed during acquisition and status checks. Database functions re-check the existing authorization rule for each resource type; Presence is not used to decide lock ownership.
+
 ## Sprint 9-0C-1 Presence Subscription Runtime Error Fix
 
 The online Presence subscription creates a fresh channel only after the previous active channel has completed cleanup. It registers sync, join, and leave callbacks before subscribe, then tracks the authenticated employee only after SUBSCRIBED.

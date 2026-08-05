@@ -1,5 +1,29 @@
 # 개발 로드맵
 
+## Sprint 9-1B
+
+- [x] Project delete checks project, task, and shipment locks
+- [x] Task delete checks task and linked shipment locks
+- [x] Expired locks do not block deletion
+- [x] Blocked delete summarizes up to five locks
+- [ ] Apply reviewed migrations and run multi-user delete UAT
+
+## Sprint 9-1A
+
+- [x] Settings inline editing uses the existing record lock
+- [x] Calendar and Gantt moves use short locks with rollback
+- [x] Completion, pin, status, assignee, and order changes use short locks
+- [x] Multi-record changes acquire locks in deterministic key order
+- [ ] Multi-browser concurrency UAT after the existing lock migration is applied
+
+## Sprint 9-1
+
+- [x] Common resource type and resource ID lock schema
+- [x] Shared lock APIs, heartbeat hook, and conflict notice
+- [x] Resource-specific authorization for core editable records
+- [x] Record-level integration for primary long edit forms
+- [ ] Apply migration and complete multi-user UAT in the target environment
+
 ## Sprint 9-0C-1
 
 - [x] Register every Presence callback before subscribe

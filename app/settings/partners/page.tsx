@@ -7,6 +7,9 @@ import { usePermission } from "@/hooks/usePermission";
 import type { SettingsItemActionResult } from "@/lib/settings-deletion";
 import { toast } from "@/lib/toast";
 import { PARTNER_TYPE_LABELS, PARTNER_TYPES, type PartnerType } from "@/lib/partners";
+import { EditingLockNotice } from "@/components/editing/EditingLockNotice";
+import { useEditingLock } from "@/hooks/useEditingLock";
+import { withShortEditingLock } from "@/lib/editing-locks";
 
 type Partner = {
   id: number;
@@ -37,6 +40,7 @@ export default function PartnerOrganizationsPage() {
   const [deleting, setDeleting] = useState(false);
   const { role } = usePermission();
   const canDelete = role === "admin";
+  const editingLock = useEditingLock("setting", editingId === null ? null : `partner:${editingId}`, editingId !== null);
   const visiblePartners = useMemo(
     () => partners.filter((partner) => (showInactive || partner.is_active) && (typeFilter === "all" || partner.partner_type === typeFilter)),
     [partners, showInactive, typeFilter]
@@ -92,7 +96,7 @@ export default function PartnerOrganizationsPage() {
   }
 
   async function savePartner(partner: Partner, active = partner.is_active) {
-    if (!editingName.trim() || saving) return;
+    if (!editingName.trim() || saving || !editingLock.canEdit) return;
     setSaving(true);
     setErrorMessage("");
     setMessage("");
@@ -124,18 +128,19 @@ export default function PartnerOrganizationsPage() {
     setSaving(true);
     setErrorMessage("");
     try {
-      const response = await fetch("/api/partner-organizations", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: partner.id, name: partner.name, partner_type: partner.partner_type, sort_order: partner.sort_order, is_active: !partner.is_active }),
+      await withShortEditingLock("setting", `partner:${partner.id}`, async () => {
+        const response = await fetch("/api/partner-organizations", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id: partner.id, name: partner.name, partner_type: partner.partner_type, sort_order: partner.sort_order, is_active: !partner.is_active }),
+        });
+        const result = (await response.json()) as { error?: string };
+        if (!response.ok) throw new Error(result.error ?? "사용 여부를 변경하지 못했습니다.");
       });
-      const result = (await response.json()) as { error?: string };
-      if (!response.ok) {
-        setErrorMessage(result.error ?? "사용 여부를 변경하지 못했습니다.");
-        return;
-      }
       setMessage(partner.is_active ? "협력업체를 비활성화했습니다." : "협력업체를 활성화했습니다.");
       await loadPartners();
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "사용 여부를 변경하지 못했습니다.");
     } finally {
       setSaving(false);
     }
@@ -219,6 +224,7 @@ export default function PartnerOrganizationsPage() {
 
       {errorMessage && <p className="rounded-xl bg-red-50 p-3 text-sm text-red-700">{errorMessage}</p>}
       {message && <p className="rounded-xl bg-emerald-50 p-3 text-sm text-emerald-700">{message}</p>}
+      {editingId !== null && <EditingLockNotice state={editingLock.state} lock={editingLock.lock} error={editingLock.error}/>}
 
       <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
         <h2 className="text-lg font-semibold">협력업체 추가</h2>
@@ -256,7 +262,7 @@ export default function PartnerOrganizationsPage() {
                     </td>
                     <td className="px-4 py-3 text-right">
                       {editingId === partner.id ? <>
-                        <button type="button" disabled={saving} onClick={() => void savePartner(partner)} className="mr-2 rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white">저장</button>
+                        <button type="button" disabled={saving || !editingLock.canEdit} onClick={() => void savePartner(partner)} className="mr-2 rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white">저장</button>
                         <button type="button" onClick={() => setEditingId(null)} className="rounded-lg border px-3 py-1.5 text-xs">취소</button>
                       </> : <div className="flex justify-end gap-2">
                         <button type="button" onClick={() => { setEditingId(partner.id); setEditingName(partner.name); setEditingSortOrder(partner.sort_order); }} className="rounded-lg border px-3 py-1.5 text-xs">수정</button>

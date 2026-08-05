@@ -5,6 +5,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { COMMENT_MAX_LENGTH, type SharedComment } from "@/lib/comments";
 import { toast } from "@/lib/toast";
 import { clearLocalCommentMutation, COMMENTS_CHANGED_EVENT, dispatchCommentCountDelta, dispatchCommentUnreadCleared, markLocalCommentMutation } from "@/lib/collaboration-events";
+import { EditingLockNotice } from "@/components/editing/EditingLockNotice";
+import { useEditingLock } from "@/hooks/useEditingLock";
 
 function formatCommentTime(value: string) {
   return new Intl.DateTimeFormat("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(value));
@@ -19,6 +21,7 @@ export function CommentSection({ itemId }: { itemId: string }) {
   const [saving, setSaving] = useState(false);
   const savingRef = useRef(false);
   const [error, setError] = useState("");
+  const editingLock = useEditingLock("comment", editingId, editingId !== null);
 
   const load = useCallback(async (showLoading = false) => {
     if (showLoading) setLoading(true);
@@ -55,6 +58,7 @@ export function CommentSection({ itemId }: { itemId: string }) {
   }
 
   async function updateComment(comment: SharedComment) {
+    if (!editingLock.canEdit) return;
     const normalized = editingContent.trim();
     if (!normalized || savingRef.current) return;
     markLocalCommentMutation(comment.id);
@@ -78,6 +82,7 @@ export function CommentSection({ itemId }: { itemId: string }) {
   }
 
   return <section className="mt-3 border-t border-slate-200/70 pt-3" onClick={(event) => event.stopPropagation()}>
+    {editingId !== null && <EditingLockNotice state={editingLock.state} lock={editingLock.lock} error={editingLock.error}/>}
     <h4 className="text-xs font-bold text-slate-700">댓글 {comments.length}</h4>
     {loading ? <p className="py-3 text-xs text-slate-400">댓글을 불러오는 중...</p> : comments.length === 0 ? <p className="py-3 text-xs text-slate-400">아직 댓글이 없습니다. 첫 댓글을 남겨보세요.</p> : <div className="mt-2 max-h-64 space-y-2 overflow-y-auto">{comments.map((comment) => <article key={comment.id} className="rounded-xl bg-white/80 p-3 text-xs shadow-sm">
       <div className="flex items-center gap-2"><span className="font-bold text-slate-700">{comment.author?.name ?? "알 수 없음"}</span>{comment.author?.position && <span className="text-slate-400">{comment.author.position}</span>}<span className="ml-auto text-[10px] text-slate-400">{formatCommentTime(comment.created_at)}{comment.updated_at !== comment.created_at ? " · 수정됨" : ""}</span></div>

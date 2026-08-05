@@ -18,6 +18,8 @@ import { getActiveEmployeeOptionsByFunction } from "@/lib/employee-master-data";
 import { isTaskCompleted, normalizeTaskStatus } from "@/lib/status";
 import { supabase } from "@/lib/supabase";
 import { toast } from "@/lib/toast";
+import { EditingLockNotice } from "@/components/editing/EditingLockNotice";
+import { useEditingLock } from "@/hooks/useEditingLock";
 
 type EditForm = {
   assignee: string;
@@ -44,6 +46,7 @@ export function TaskDetailDialog({ canEdit = true }: { canEdit?: boolean }) {
   const [errorMessage, setErrorMessage] = useState("");
   const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
   const today = getLocalDateString();
+  const editingLock = useEditingLock("task", taskId, isEditing);
 
   const loadTask = useCallback(async (nextTaskId: number) => {
     setIsLoading(true);
@@ -156,7 +159,7 @@ export function TaskDetailDialog({ canEdit = true }: { canEdit?: boolean }) {
   }
 
   async function saveChanges() {
-    if (!task || isSaving) return;
+    if (!task || isSaving || !editingLock.canEdit) return;
     setIsSaving(true);
     try {
       const patch: TaskUpdatePatch = {
@@ -165,7 +168,7 @@ export function TaskDetailDialog({ canEdit = true }: { canEdit?: boolean }) {
         start_date: form.start_date || null,
         due_date: form.due_date || null,
       };
-      const updated = await updateTask(task, patch);
+      const updated = await updateTask(task, patch, false);
       const nextTask: TaskDetailData = { ...task, ...updated };
       setTask(nextTask);
       setForm({
@@ -190,7 +193,7 @@ export function TaskDetailDialog({ canEdit = true }: { canEdit?: boolean }) {
     if (!task || isSaving) return;
     setIsSaving(true);
     try {
-      const updated = await completeTask(task);
+      const updated = await completeTask(task, false);
       const nextTask: TaskDetailData = { ...task, ...updated };
       setTask(nextTask);
       setForm((current) => ({ ...current, status: "completed" }));
@@ -253,6 +256,7 @@ export function TaskDetailDialog({ canEdit = true }: { canEdit?: boolean }) {
             />
           ) : task && isEditing ? (
             <div>
+              <EditingLockNotice state={editingLock.state} lock={editingLock.lock} error={editingLock.error}/>
               <h2 className="text-xl font-bold text-slate-950">
                 {task.task_name || "업무명 없음"}
               </h2>
@@ -344,7 +348,7 @@ export function TaskDetailDialog({ canEdit = true }: { canEdit?: boolean }) {
                   <Button
                     variant="primary"
                     onClick={() => void saveChanges()}
-                    disabled={isSaving || !isDirty}
+                    disabled={isSaving || !isDirty || !editingLock.canEdit}
                   >
                     {isSaving ? "저장 중..." : "저장"}
                   </Button>

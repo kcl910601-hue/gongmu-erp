@@ -30,7 +30,8 @@ import { supabase } from "@/lib/supabase";
 import { logActivity } from "@/lib/activity";
 import { TASK_TAGS, getTaskTagDefinition, type TaskTagCode } from "@/lib/task-tags";
 import { formatProjectQuantity } from "@/lib/project-quantity";
-import { compareTasksBySchedule, persistRecalculatedTaskOrders } from "@/lib/task-ordering";
+import { compareTasksBySchedule, persistRecalculatedTaskOrders, recalculateTaskOrders } from "@/lib/task-ordering";
+import { withShortEditingLock, withShortEditingLocks } from "@/lib/editing-locks";
 import { getDday } from "@/lib/dday";
 import {
   getProjectStatusLabel,
@@ -1053,7 +1054,15 @@ export function IntegratedProjectGantt({
   }
 
   const persistAndPublishTaskOrders = useCallback(async (nextTasks: IntegratedTask[]) => {
-    const orderResult = await persistRecalculatedTaskOrders(nextTasks);
+    const normalized = recalculateTaskOrders(nextTasks);
+    const changed = normalized.filter((task) => nextTasks.find((current) => current.id === task.id)?.task_order !== task.task_order);
+    let orderResult;
+    try {
+      orderResult = await withShortEditingLocks(changed.map((task) => ({ resourceType: "task" as const, resourceId: task.id })), () => persistRecalculatedTaskOrders(nextTasks));
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : "업무 순서를 저장하지 못했습니다.");
+      return false;
+    }
     if (orderResult.error) {
       window.alert(`업무 순서를 저장하지 못했습니다.\n${orderResult.error.message}`);
       return false;
@@ -1109,9 +1118,17 @@ export function IntegratedProjectGantt({
       const task = tasks.find((item) => item.id === change.taskId);
       if (task) onTaskUpdated({ ...task, start_date: change.after.startDate, due_date: change.after.dueDate });
     });
-    const results = await Promise.all(changes.map((change) =>
-      supabase.from("tasks").update({ start_date: change.after.startDate, due_date: change.after.dueDate }).eq("id", change.taskId)
-    ));
+    let results;
+    try {
+      results = await withShortEditingLocks(changes.map((change) => ({ resourceType: "task" as const, resourceId: change.taskId })), () => Promise.all(changes.map((change) =>
+        supabase.from("tasks").update({ start_date: change.after.startDate, due_date: change.after.dueDate }).eq("id", change.taskId)
+      )));
+    } catch (error) {
+      changes.forEach((change) => { const task = tasks.find((item) => item.id === change.taskId); if (task) onTaskUpdated(task); });
+      setSavingTaskId(null);
+      window.alert(error instanceof Error ? error.message : "업무 일정을 변경하지 못했습니다.");
+      return false;
+    }
     const failed = results.find((result) => result.error);
     if (failed?.error) {
       console.error("Gantt schedule batch update error:", { changes, error: failed.error });
@@ -1343,10 +1360,13 @@ export function IntegratedProjectGantt({
 
     const optimisticTask = { ...task, assignee };
     onTaskUpdated(optimisticTask);
-    const { error } = await supabase
-      .from("tasks")
-      .update({ assignee })
-      .eq("id", task.id);
+    let error: { message: string } | null = null;
+    try {
+      const result = await withShortEditingLock("task", task.id, () => supabase.from("tasks").update({ assignee }).eq("id", task.id));
+      error = result.error;
+    } catch (cause) {
+      error = { message: cause instanceof Error ? cause.message : "담당자를 변경하지 못했습니다." };
+    }
 
     if (error) {
       console.error("Gantt task assignee update error:", {
@@ -1391,10 +1411,13 @@ export function IntegratedProjectGantt({
     setSavingTaskId(task.id);
     onTaskUpdated(optimisticTask);
 
-    const { error } = await supabase
-      .from("tasks")
-      .update({ status: nextStatus, completed_date: nextCompletedDate })
-      .eq("id", task.id);
+    let error: { message: string } | null = null;
+    try {
+      const result = await withShortEditingLock("task", task.id, () => supabase.from("tasks").update({ status: nextStatus, completed_date: nextCompletedDate }).eq("id", task.id));
+      error = result.error;
+    } catch (cause) {
+      error = { message: cause instanceof Error ? cause.message : "업무 상태를 변경하지 못했습니다." };
+    }
 
     if (error) {
       console.error("Gantt task status update error:", {
@@ -1498,9 +1521,18 @@ export function IntegratedProjectGantt({
     setIsHistoryApplying(true);
     setSavingTaskId(scheduleItems[0]?.task.id || null);
     scheduleItems.forEach((item) => onTaskUpdated({ ...item.task, start_date: item.target.startDate, due_date: item.target.dueDate }));
-    const results = await Promise.all(scheduleItems.map((item) =>
-      supabase.from("tasks").update({ start_date: item.target.startDate, due_date: item.target.dueDate }).eq("id", item.task.id)
-    ));
+    let results;
+    try {
+      results = await withShortEditingLocks(scheduleItems.map((item) => ({ resourceType: "task" as const, resourceId: item.task.id })), () => Promise.all(scheduleItems.map((item) =>
+        supabase.from("tasks").update({ start_date: item.target.startDate, due_date: item.target.dueDate }).eq("id", item.task.id)
+      )));
+    } catch (error) {
+      scheduleItems.forEach((item) => onTaskUpdated(item.task));
+      setSavingTaskId(null);
+      setIsHistoryApplying(false);
+      window.alert(error instanceof Error ? error.message : "업무 일정을 변경하지 못했습니다.");
+      return;
+    }
     const failedResult = results.find((result) => result.error);
 
     if (failedResult?.error) {
@@ -2145,7 +2177,7 @@ export function IntegratedProjectGantt({
           const nextCompletedDate = isTaskCompleted(nextStatus) ? today : null;
           const optimisticTask = { ...task, status: nextStatus, completed_date: nextCompletedDate };
           onTaskUpdated(optimisticTask);
-          const { error } = await supabase.from("tasks").update({ status: nextStatus, completed_date: nextCompletedDate }).eq("id", task.id);
+          const { error } = await withShortEditingLock("task", task.id, () => supabase.from("tasks").update({ status: nextStatus, completed_date: nextCompletedDate }).eq("id", task.id));
           if (error) {
             onTaskUpdated(task);
             console.error("Gantt bulk task status update error:", { taskId: task.id, previousStatus, nextStatus, error });

@@ -11,6 +11,8 @@ import type { ProjectListItem } from "@/lib/projects";
 import { getActiveProcessTypes, normalizeProcessTypeCode } from "@/lib/process-types";
 import { toast } from "@/lib/toast";
 import { formatProjectQuantity, parseProjectQuantity } from "@/lib/project-quantity";
+import { EditingLockNotice } from "@/components/editing/EditingLockNotice";
+import { useEditingLock } from "@/hooks/useEditingLock";
 
 type Props = {
   project: ProjectListItem;
@@ -22,6 +24,7 @@ type Props = {
 const inputClass = "mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100";
 
 export function ProjectEditForm({ project, onCancel, onSaved, onDirtyChange }: Props) {
+  const editingLock = useEditingLock("project", project.id);
   const initial = useMemo(() => ({
     project_code: project.project_code ?? "",
     project_name: project.project_name,
@@ -61,7 +64,7 @@ export function ProjectEditForm({ project, onCancel, onSaved, onDirtyChange }: P
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
-    if (saving) return;
+    if (saving || !editingLock.canEdit) return;
     if (!form.project_code.trim() || !form.project_name.trim()) {
       toast.warning("프로젝트 코드와 프로젝트명은 필수입니다.");
       return;
@@ -117,6 +120,7 @@ export function ProjectEditForm({ project, onCancel, onSaved, onDirtyChange }: P
   }
 
   return <form onSubmit={submit} className="space-y-5">
+    <EditingLockNotice state={editingLock.state} lock={editingLock.lock} error={editingLock.error}/>
     <div className="grid gap-3 sm:grid-cols-2">
       <label className="text-sm font-semibold text-slate-700">프로젝트 코드 *<input className={inputClass} value={form.project_code} onChange={(e) => field("project_code", e.target.value)} /></label>
       <label className="text-sm font-semibold text-slate-700">프로젝트명 *<input className={inputClass} value={form.project_name} onChange={(e) => field("project_name", e.target.value)} /></label>
@@ -134,7 +138,7 @@ export function ProjectEditForm({ project, onCancel, onSaved, onDirtyChange }: P
     </div>
     <div className="sticky bottom-0 flex justify-end gap-2 border-t border-slate-200 bg-white py-3">
       <button type="button" onClick={onCancel} disabled={saving} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-50">취소</button>
-      <button type="submit" disabled={saving} className="flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:bg-slate-300">{saving && <Loader2 size={15} className="animate-spin" />}{saving ? "저장 중..." : "저장"}</button>
+      <button type="submit" disabled={saving || !editingLock.canEdit} className="flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:bg-slate-300">{saving && <Loader2 size={15} className="animate-spin" />}{saving ? "저장 중..." : "저장"}</button>
     </div>
   </form>;
 }

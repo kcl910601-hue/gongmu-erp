@@ -13,6 +13,8 @@ import { TableSkeleton } from "@/components/ui/Skeleton";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Button } from "@/components/ui/Button";
 import { usePersistentState } from "@/hooks/usePersistentState";
+import { useEditingLock } from "@/hooks/useEditingLock";
+import { EditingLockNotice } from "@/components/editing/EditingLockNotice";
 import {
   paginateRows,
   sortRows,
@@ -58,6 +60,7 @@ export default function ShipmentsPage() {
   const [errorMessage, setErrorMessage] = useState("");
   const [showModal, setShowModal] = useState(false);
   const [editingShipment, setEditingShipment] = useState<Shipment | null>(null);
+  const editingLock = useEditingLock("shipment", editingShipment?.id ?? null, showModal && Boolean(editingShipment));
   const [statusFilter, setStatusFilter] = usePersistentState(
     "erp:table:shipments:status",
     "출고대기"
@@ -177,6 +180,7 @@ export default function ShipmentsPage() {
 
   async function saveShipment() {
     if (isSaving) return;
+    if (editingShipment && !editingLock.canEdit) return;
 
     if (!form.site_name.trim() || !form.item_name.trim()) {
       toast.warning("현장명과 품목은 필수입니다.");
@@ -601,6 +605,7 @@ export default function ShipmentsPage() {
             <h2 className="text-2xl font-bold mb-5">
               {editingShipment ? "출고 정보 수정" : "출고 등록"}
             </h2>
+            <EditingLockNotice state={editingLock.state} lock={editingLock.lock} error={editingLock.error}/>
 
             <div className="grid grid-cols-2 gap-3">
               <input
@@ -708,7 +713,7 @@ export default function ShipmentsPage() {
 
               <button
                 onClick={saveShipment}
-                disabled={isSaving}
+                disabled={isSaving || (Boolean(editingShipment) && !editingLock.canEdit)}
                 className="bg-blue-600 text-white px-4 py-2 rounded disabled:bg-gray-400"
               >
                 {isSaving ? "저장 중..." : "저장"}

@@ -37,6 +37,7 @@ import { DdayBadge } from "@/components/ui/DdayBadge";
 import { TableSkeleton } from "@/components/ui/Skeleton";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { usePersistentState } from "@/hooks/usePersistentState";
+import { formatHierarchicalDeleteLockMessage, type HierarchicalDeleteResult } from "@/lib/editing-locks";
 import {
   paginateRows,
   type SortDirection,
@@ -370,44 +371,14 @@ const loadRole = useCallback(async function loadRole() {
 
   async function deleteProject(projectId: number) {
     const targetProject = projects.find((project) => project.id === projectId);
-
-    const { error: shipmentError } = await supabase
-      .from("shipments")
-      .delete()
-      .eq("project_id", projectId);
-
-    if (shipmentError) {
-      toast.error(shipmentError.message);
+    const { data, error } = await supabase.rpc("delete_project_with_lock_check", { p_project_id: projectId });
+    if (error) {
+      toast.error(error.code === "PGRST202" ? "계층 삭제 잠금 migration을 먼저 적용해주세요." : error.message);
       return;
     }
-
-    const { error: taskError } = await supabase
-      .from("tasks")
-      .delete()
-      .eq("project_id", projectId);
-
-    if (taskError) {
-      toast.error(taskError.message);
-      return;
-    }
-
-    const { error: sectionError } = await supabase
-      .from("project_sections")
-      .delete()
-      .eq("project_id", projectId);
-
-    if (sectionError) {
-      toast.error(sectionError.message);
-      return;
-    }
-
-    const { error: projectError } = await supabase
-      .from("projects")
-      .delete()
-      .eq("id", projectId);
-
-    if (projectError) {
-      toast.error(projectError.message);
+    const result = data as HierarchicalDeleteResult | null;
+    if (!result?.deleted) {
+      toast.error(formatHierarchicalDeleteLockMessage(result ?? {}));
       return;
     }
 

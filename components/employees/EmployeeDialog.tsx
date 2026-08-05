@@ -6,6 +6,8 @@ import { saveEmployee } from "@/lib/employees";
 import { normalizeRole } from "@/lib/permissions";
 import { toast } from "@/lib/toast";
 import type { Employee, EmployeeAccountInfo, EmployeeOrganizationOption } from "@/types/employee";
+import { EditingLockNotice } from "@/components/editing/EditingLockNotice";
+import { useEditingLock } from "@/hooks/useEditingLock";
 
 function getInitialForm(employee: Employee | null): EmployeeFormValue {
   return {
@@ -29,6 +31,7 @@ export function EmployeeDialog({ mode, employee, organizations, accountInfo, onA
   onClose: () => void;
   onSaved: () => void;
 }) {
+  const editingLock = useEditingLock("employee", employee?.id ?? null, mode === "edit");
   const [initialForm] = useState<EmployeeFormValue>(() => getInitialForm(employee));
   const [form, setForm] = useState<EmployeeFormValue>(initialForm);
   const [isSaving, setIsSaving] = useState(false);
@@ -51,6 +54,7 @@ export function EmployeeDialog({ mode, employee, organizations, accountInfo, onA
   }, [requestClose]);
 
   async function handleSave() {
+    if (mode === "edit" && !editingLock.canEdit) return;
     setErrorMessage("");
     if (!form.name.trim()) return setErrorMessage("이름을 입력해주세요.");
     const organization = organizations.find((item) => item.id === Number(form.organization_id));
@@ -77,7 +81,8 @@ export function EmployeeDialog({ mode, employee, organizations, accountInfo, onA
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/40 p-4" role="dialog" aria-modal="true" aria-labelledby="employee-dialog-title" onMouseDown={(event) => { if (event.target === event.currentTarget) requestClose(); }}>
       <div className="max-h-[92vh] w-full max-w-[700px] overflow-y-auto rounded-2xl bg-white p-6 shadow-xl">
         <h2 id="employee-dialog-title" className="text-xl font-semibold text-slate-900">{mode === "create" ? "신규 직원 등록" : "직원 정보 수정"}</h2>
-        <div className="mt-5"><EmployeeForm value={form} organizations={organizations} disabled={isSaving} onChange={setForm} /></div>
+        <EditingLockNotice state={editingLock.state} lock={editingLock.lock} error={editingLock.error}/>
+        <div className="mt-5"><EmployeeForm value={form} organizations={organizations} disabled={isSaving || (mode === "edit" && !editingLock.canEdit)} onChange={setForm} /></div>
         {mode === "edit" && employee && (
           <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm">
             <h3 className="font-semibold text-slate-800">계정정보</h3>
@@ -86,7 +91,7 @@ export function EmployeeDialog({ mode, employee, organizations, accountInfo, onA
           </div>
         )}
         {errorMessage && <p className="mt-4 rounded-xl bg-red-50 p-3 text-sm text-red-700">{errorMessage}</p>}
-        <div className="mt-6 flex justify-end gap-2"><button type="button" onClick={requestClose} disabled={isSaving} className="rounded-xl border border-slate-300 px-4 py-2 text-sm">취소</button><button type="button" onClick={() => void handleSave()} disabled={isSaving} className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white disabled:bg-slate-400">{isSaving ? "저장 중..." : mode === "create" ? "등록" : "저장"}</button></div>
+        <div className="mt-6 flex justify-end gap-2"><button type="button" onClick={requestClose} disabled={isSaving} className="rounded-xl border border-slate-300 px-4 py-2 text-sm">취소</button><button type="button" onClick={() => void handleSave()} disabled={isSaving || (mode === "edit" && !editingLock.canEdit)} className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white disabled:bg-slate-400">{isSaving ? "저장 중..." : mode === "create" ? "등록" : "저장"}</button></div>
       </div>
     </div>
   );

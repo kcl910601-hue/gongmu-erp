@@ -48,10 +48,11 @@ import { formatProjectQuantity, parseProjectQuantity } from "@/lib/project-quant
 import { PROJECT_SELECT_FIELDS } from "@/lib/projects";
 import { getShipmentQuantitySummary, isShipmentQuantityTask, resolveShipmentQuantity } from "@/lib/shipment-quantity";
 import { getTaskFormRule } from "@/lib/task-form-rules";
-import { assignTaskOrdersByCurrentSequence, persistRecalculatedTaskOrders, sortTasksBySchedule } from "@/lib/task-ordering";
+import { assignTaskOrdersByCurrentSequence, persistRecalculatedTaskOrders, recalculateTaskOrders, sortTasksBySchedule } from "@/lib/task-ordering";
 import type { ProcessType } from "@/types/process-type";
 import type { ProjectAssemblyVendor, ProjectSection } from "@/types/project-section";
 import { dispatchPersonalNotesChanged } from "@/lib/personal-notes";
+import { formatHierarchicalDeleteLockMessage, withShortEditingLock, withShortEditingLocks, type HierarchicalDeleteResult } from "@/lib/editing-locks";
 import { DdayBadge } from "@/components/ui/DdayBadge";
 import {
   getProjectStatusLabel,
@@ -709,10 +710,16 @@ export default function ProjectDetail() {
 
     if (normalizeProjectStatus(project.status) === nextProjectStatus) return;
 
-    const { error } = await supabase
-      .from("projects")
-      .update({ status: nextProjectStatus })
-      .eq("id", project.id);
+    let error: { message: string } | null = null;
+    try {
+      const result = await withShortEditingLock("project", project.id, () => supabase
+        .from("projects")
+        .update({ status: nextProjectStatus })
+        .eq("id", project.id));
+      error = result.error;
+    } catch (cause) {
+      error = { message: cause instanceof Error ? cause.message : "프로젝트 상태를 변경하지 못했습니다." };
+    }
 
     if (error) {
       alert(error.message);
@@ -744,7 +751,15 @@ export default function ProjectDetail() {
   }
 
   async function saveTaskOrders(nextTasks: Task[]) {
-    const result = await persistRecalculatedTaskOrders(nextTasks);
+    const normalized = recalculateTaskOrders(nextTasks);
+    const changed = normalized.filter((task) => nextTasks.find((current) => current.id === task.id)?.task_order !== task.task_order);
+    let result;
+    try {
+      result = await withShortEditingLocks(changed.map((task) => ({ resourceType: "task" as const, resourceId: task.id })), () => persistRecalculatedTaskOrders(nextTasks));
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "업무 순서를 저장하지 못했습니다.");
+      return null;
+    }
     if (result.error) {
       alert(result.error.message);
       return null;
@@ -1096,10 +1111,16 @@ export default function ProjectDetail() {
 
     const savedAssignee = newAssignee === "미배정" ? null : newAssignee;
 
-    const { error } = await supabase
-      .from("tasks")
-      .update({ assignee: savedAssignee })
-      .eq("id", taskId);
+    let error: { message: string } | null = null;
+    try {
+      const result = await withShortEditingLock("task", taskId, () => supabase
+        .from("tasks")
+        .update({ assignee: savedAssignee })
+        .eq("id", taskId));
+      error = result.error;
+    } catch (cause) {
+      error = { message: cause instanceof Error ? cause.message : "담당자를 변경하지 못했습니다." };
+    }
 
     if (error) {
       alert(error.message);
@@ -1311,13 +1332,19 @@ export default function ProjectDetail() {
       task.id === taskId ? updatedTask : task
     );
 
-    const { error } = await supabase
-      .from("tasks")
-      .update({
-        status: newStatus,
-        completed_date: isTaskCompleted(newStatus) ? today : null,
-      })
-      .eq("id", taskId);
+    let error: { message: string } | null = null;
+    try {
+      const result = await withShortEditingLock("task", taskId, () => supabase
+        .from("tasks")
+        .update({
+          status: newStatus,
+          completed_date: isTaskCompleted(newStatus) ? today : null,
+        })
+        .eq("id", taskId));
+      error = result.error;
+    } catch (cause) {
+      error = { message: cause instanceof Error ? cause.message : "업무 상태를 변경하지 못했습니다." };
+    }
 
     if (error) {
       alert(error.message);
@@ -1401,7 +1428,8 @@ export default function ProjectDetail() {
         throw new Error("업무 삭제 DB migration이 적용되지 않았습니다. delete_project_task RPC를 먼저 배포해 주세요.");
       }
       if (error) throw new Error(error.message);
-      const result = data as { deleted_task_id?: number; project_status?: string; unlinked_shipment_count?: number } | null;
+      const result = data as (HierarchicalDeleteResult & { deleted_task_id?: number; project_status?: string; unlinked_shipment_count?: number }) | null;
+      if (!result?.deleted) throw new Error(formatHierarchicalDeleteLockMessage(result ?? {}));
       if (Number(result?.deleted_task_id) !== taskId) throw new Error("업무 삭제 결과를 확인할 수 없습니다.");
 
       const nextTasks = tasks.filter((task) => task.id !== taskId);

@@ -1,5 +1,32 @@
 # CHANGELOG
 
+## Sprint 9-1B Hierarchical Delete Lock Check
+
+- Project deletion now atomically checks project, task, and shipment editing locks on the server
+- Task deletion checks its own lock and locks on shipments linked by `task_id`
+- Expired locks are removed before checking; active lock acquisition is paused for the delete transaction
+- Blocked deletion reports up to five editor/resource pairs plus the remaining count
+- Personal notes are excluded because the current schema has no project, task, or shipment relation
+- Existing `editing_locks` is reused; no new lock table or API was added
+
+## Sprint 9-1A Live Editing Completion
+
+- Reused the common lock API for short acquire-mutate-release operations
+- Added deterministic multi-record lock acquisition for task order and multi-task schedule changes
+- Added rollback and lock-owner feedback to Calendar and Gantt schedule moves
+- Protected task completion, status, assignee, personal-note pin/completion, and setting state changes
+- Connected partner inline editing and the Gantt task detail editor to the existing long-form lock hook
+- No new lock table, API, hook, or DB migration
+
+## Sprint 9-1 Universal Live Editing Lock
+
+- Added one `editing_locks` structure keyed by resource type and normalized resource ID
+- Added shared acquire, heartbeat, release, and status APIs plus one reusable React hook and lock notice
+- Enforced resource-specific authorization inside security-definer lock functions
+- Applied long-form locks to project, task, personal note, shipment, employee, and comment editing
+- Kept short mutations independent from long-running heartbeat locks
+- Migration prepared only; production DB was not changed
+
 ## Sprint 9-0C-1 Presence Subscription Runtime Error Fix
 
 - Register Presence sync, join, and leave handlers before calling subscribe

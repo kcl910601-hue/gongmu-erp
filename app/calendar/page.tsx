@@ -37,6 +37,7 @@ import { PersonalNoteActions } from "@/components/workspace/PersonalNoteActions"
 import { ShareDialog } from "@/components/sharing/ShareDialog";
 import { COMMENT_COUNT_DELTA_EVENT, COMMENT_COUNTS_INVALIDATED_EVENT, COMMENT_UNREAD_CLEARED_EVENT } from "@/lib/collaboration-events";
 import { applyCommentCounts, loadCommentCounts } from "@/lib/comment-counts";
+import { withShortEditingLock } from "@/lib/editing-locks";
 
 type Project = IntegratedProject & {
   completion_due_date: string | null;
@@ -730,16 +731,24 @@ export default function CalendarPage() {
     if (note.sharing && note.sharing.permission !== "owner" && !window.confirm(`공유 일정을 변경하시겠습니까?\n\n기존 일정: ${note.due_date}\n변경 일정: ${dueDate}\n\n참여자에게 동일하게 반영됩니다.`)) return;
     const previous = personalNotes;
     setPersonalNotes((current) => current.map((item) => item.id === note.id ? { ...item, due_date: dueDate } : item));
-    const response = await fetch(`/api/personal-notes/${note.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ dueDate }) });
-    if (!response.ok) { setPersonalNotes(previous); toast.error("일정 날짜를 변경하지 못했습니다."); return; }
+    try {
+      await withShortEditingLock("personal_note", note.id, async () => {
+        const response = await fetch(`/api/personal-notes/${note.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ dueDate }) });
+        if (!response.ok) { const result = await response.json() as { error?: string }; throw new Error(result.error ?? "일정 날짜를 변경하지 못했습니다."); }
+      });
+    } catch (error) { setPersonalNotes(previous); toast.error(error instanceof Error ? error.message : "일정 날짜를 변경하지 못했습니다."); return; }
     dispatchPersonalNotesChanged();
     toast.success("일정 날짜를 변경했습니다.");
   }
   async function patchPersonalNote(note: PersonalNote, changes: Record<string, unknown>) {
     const previous = personalNotes;
     setPersonalNotes((current) => current.map((item) => item.id === note.id ? { ...item, is_pinned: typeof changes.isPinned === "boolean" ? changes.isPinned : item.is_pinned } : item));
-    const response = await fetch(`/api/personal-notes/${note.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(changes) });
-    if (!response.ok) { setPersonalNotes(previous); toast.error("변경사항을 저장하지 못했습니다."); return; }
+    try {
+      await withShortEditingLock("personal_note", note.id, async () => {
+        const response = await fetch(`/api/personal-notes/${note.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(changes) });
+        if (!response.ok) { const result = await response.json() as { error?: string }; throw new Error(result.error ?? "변경사항을 저장하지 못했습니다."); }
+      });
+    } catch (error) { setPersonalNotes(previous); toast.error(error instanceof Error ? error.message : "변경사항을 저장하지 못했습니다."); return; }
     dispatchPersonalNotesChanged();
   }
   async function deletePersonalNote(note: PersonalNote) {
