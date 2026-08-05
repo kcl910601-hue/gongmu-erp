@@ -45,7 +45,7 @@ import { formatActivityTime } from "@/lib/activity";
 import { useAppShellUser } from "@/contexts/AppShellUserContext";
 import { toast } from "@/lib/toast";
 import { deriveNotificationState, matchesNotificationSearch, splitNotificationMailbox } from "@/lib/notifications/engine";
-import { NOTIFICATIONS_CHANGED_EVENT } from "@/lib/collaboration-events";
+import { NOTIFICATIONS_CHANGED_EVENT, REFERENCE_TASKS_CHANGED_EVENT } from "@/lib/collaboration-events";
 import { SHARE_PERMISSION_LABELS, type ShareInvitation, type SharingOverview } from "@/lib/sharing";
 import { dispatchPersonalNotesChanged } from "@/lib/personal-notes";
 import { AddReferenceTaskButton } from "@/components/workspace/AddReferenceTaskButton";
@@ -152,8 +152,7 @@ export function NotificationRow({
   isMarkingRead = false,
   onTogglePin,
   onHide,
-  referenceTaskAdded = false,
-  onReferenceTaskAdded,
+  navigateOnSelect = true,
 }: {
   item: NotificationItem;
   onSelect: () => void | Promise<void>;
@@ -161,8 +160,7 @@ export function NotificationRow({
   isMarkingRead?: boolean;
   onTogglePin?: () => void | Promise<void>;
   onHide?: () => void | Promise<void>;
-  referenceTaskAdded?: boolean;
-  onReferenceTaskAdded?: (commentId: number) => void;
+  navigateOnSelect?: boolean;
 }) {
   const router = useRouter();
   return (
@@ -175,7 +173,7 @@ export function NotificationRow({
           if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
           event.preventDefault();
           await onSelect();
-          router.push(item.href);
+          if (navigateOnSelect) router.push(item.href);
         }}
         className="block p-3.5 pr-28 text-left focus:outline-none focus:ring-2 focus:ring-blue-100"
       >
@@ -229,7 +227,6 @@ export function NotificationRow({
       ) : null}
       {onTogglePin ? <button type="button" onClick={(event) => { event.preventDefault(); event.stopPropagation(); void onTogglePin(); }} aria-label={item.isPinned ? "고정 해제" : "고정"} title={item.isPinned ? "고정 해제" : "고정"} className={`absolute right-12 top-3 flex h-8 w-8 items-center justify-center rounded-xl border bg-white ${item.isPinned ? "border-blue-200 text-blue-600" : "border-slate-200 text-slate-400"}`}><Pin size={14} className={item.isPinned ? "fill-current" : ""} /></button> : null}
       {onHide ? <button type="button" onClick={(event) => { event.preventDefault(); event.stopPropagation(); void onHide(); }} aria-label={item.isHidden ? "알림 복원" : "알림 숨기기"} title={item.isHidden ? "복원" : "숨기기"} className="absolute right-3 bottom-3 flex h-8 w-8 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-400 hover:text-red-600">{item.isHidden ? <RotateCcw size={14} /> : <EyeOff size={14} />}</button> : null}
-      {item.referenceCommentId ? <div className="absolute bottom-3 right-12"><AddReferenceTaskButton key={`${item.referenceCommentId}-${referenceTaskAdded}`} commentId={item.referenceCommentId} added={referenceTaskAdded} onAdded={onReferenceTaskAdded}/></div> : null}
     </div>
   );
 }
@@ -249,6 +246,7 @@ export default function NotificationCenter() {
   const [isMarkingAll, setIsMarkingAll] = useState(false);
   const [shareInvitations, setShareInvitations] = useState<ShareInvitation[]>([]);
   const [referenceCommentIds, setReferenceCommentIds] = useState<Set<number>>(() => new Set());
+  const [selectedNotification, setSelectedNotification] = useState<NotificationItem | null>(null);
   const requestInFlightRef = useRef(false);
   const hasLoadedRef = useRef(false);
 
@@ -344,6 +342,17 @@ export default function NotificationCenter() {
       window.removeEventListener(NOTIFICATIONS_CHANGED_EVENT, handlePreferenceChange);
     };
   }, [loadNotifications]);
+
+  useEffect(() => {
+    async function refreshReferenceTasks() {
+      const response = await fetch("/api/reference-tasks", { cache: "no-store" });
+      if (!response.ok) return;
+      const result = await response.json() as { tasks?: ReferenceTask[] };
+      setReferenceCommentIds(new Set((result.tasks ?? []).flatMap((task) => task.commentId === null ? [] : [task.commentId])));
+    }
+    window.addEventListener(REFERENCE_TASKS_CHANGED_EVENT, refreshReferenceTasks);
+    return () => window.removeEventListener(REFERENCE_TASKS_CHANGED_EVENT, refreshReferenceTasks);
+  }, []);
 
   const markRead = useCallback(async (notificationIds: string[]) => {
     if (!employee || notificationIds.length === 0) return false;
@@ -550,11 +559,10 @@ export default function NotificationCenter() {
                       onToggleRead={() => toggleOneRead(item)}
                       onTogglePin={() => setPreference(item, { isPinned: !item.isPinned })}
                       onHide={() => setPreference(item, { isHidden: true })}
-                      referenceTaskAdded={item.referenceCommentId ? referenceCommentIds.has(item.referenceCommentId) : false}
-                      onReferenceTaskAdded={(commentId) => setReferenceCommentIds((current) => new Set(current).add(commentId))}
+                      navigateOnSelect={false}
                       onSelect={async () => {
                         if (!item.isRead) await toggleOneRead(item);
-                        setIsOpen(false);
+                        setSelectedNotification(item);
                       }}
                     />
                   ))}
@@ -588,6 +596,7 @@ export default function NotificationCenter() {
               </Link>
             </div>
           </aside>
+          {selectedNotification && <div className="fixed inset-0 z-[130] flex items-center justify-center bg-slate-950/40 p-4" onMouseDown={(event) => { if (event.target === event.currentTarget) setSelectedNotification(null); }}><section role="dialog" aria-modal="true" aria-label="알림 상세" className="w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl"><div className="flex items-center justify-between"><div><p className="text-xs font-semibold text-blue-600">{selectedNotification.type}</p><h2 className="mt-1 text-lg font-bold text-slate-900">알림 상세</h2></div><button type="button" onClick={() => setSelectedNotification(null)} className="rounded-lg p-1 text-slate-400"><X size={18}/></button></div><dl className="mt-4 space-y-3 text-sm"><div><dt className="text-xs text-slate-400">작성자</dt><dd className="mt-0.5 font-medium text-slate-700">{selectedNotification.actor ?? "시스템"}</dd></div><div><dt className="text-xs text-slate-400">원본</dt><dd className="mt-0.5 font-medium text-slate-700">{selectedNotification.projectName}</dd></div><div><dt className="text-xs text-slate-400">알림 내용</dt><dd className="mt-0.5 whitespace-pre-wrap rounded-xl bg-slate-50 p-3 text-slate-700">{selectedNotification.description}</dd></div><div><dt className="text-xs text-slate-400">발생 시간</dt><dd className="mt-0.5 text-slate-600">{selectedNotification.date?.includes("T") ? formatActivityTime(selectedNotification.date) : formatDisplayDate(selectedNotification.date)}</dd></div></dl><div className="mt-5 flex flex-wrap justify-end gap-2">{selectedNotification.referenceCommentId && <AddReferenceTaskButton key={`${selectedNotification.referenceCommentId}-${referenceCommentIds.has(selectedNotification.referenceCommentId)}`} commentId={selectedNotification.referenceCommentId} defaultTitle={selectedNotification.description} added={referenceCommentIds.has(selectedNotification.referenceCommentId)} onAdded={(commentId) => setReferenceCommentIds((current) => new Set(current).add(commentId))}/>}<Link href={selectedNotification.href} onClick={() => { setSelectedNotification(null); setIsOpen(false); }} className="rounded-xl bg-blue-600 px-3 py-2 text-sm font-semibold text-white">원본 열기</Link></div></section></div>}
             </div>,
             document.body
           )

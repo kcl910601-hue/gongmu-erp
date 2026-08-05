@@ -316,3 +316,8 @@
 - 댓글과 댓글·멘션 Notification에 `내 할 일에 추가` 기능을 추가했다.
 - My Workspace에 원본 댓글을 참조하는 `요청받은 작업` 영역을 추가했다.
 - 참조 작업 완료·삭제, 중복 방지, 삭제된 원본 안내와 Realtime 갱신을 지원한다.
+# Sprint 9-3A - Notification Popup & Reference Task Options
+
+- Notification 상세 Dialog와 원본 열기 액션을 추가했다.
+- 내 할 일 추가 시 제목, 마감일, 우선순위를 설정하는 공통 Dialog를 추가했다.
+- My Workspace Reference Task 카드에 마감 상태와 우선순위를 표시하고 개인 설정 수정을 지원한다.

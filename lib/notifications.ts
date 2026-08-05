@@ -625,15 +625,17 @@ export async function loadNotificationSummary(
     const item = Array.isArray(sharedItem?.item) ? sharedItem.item[0] : sharedItem?.item;
     const itemTitle = item?.title || item?.content || "공유 일정";
     const preview = comment.content.length > 80 ? `${comment.content.slice(0, 80)}…` : comment.content;
-    return { id: `shared-comment-${comment.id}`, type: "shared_comment", category: "personal", title: `${author?.name ?? "참여자"}님이 ‘${itemTitle}’에 댓글을 남겼습니다.`, description: preview, date: comment.created_at, href: "/calendar", priority: 3, priorityLevel: "medium", severity: "info", projectName: "Shared Workspace", actor: author?.name ?? null, actionLabel: "댓글 확인", isRead: false, readAt: null, referenceCommentId: Number(comment.id) };
+    return { id: `shared-comment-${comment.id}`, type: "shared_comment", category: "personal", title: `${author?.name ?? "참여자"}님이 ‘${itemTitle}’에 댓글을 남겼습니다.`, description: preview, date: comment.created_at, href: "/calendar", priority: 3, priorityLevel: "medium", severity: "info", projectName: itemTitle, actor: author?.name ?? null, actionLabel: "댓글 확인", isRead: false, readAt: null, referenceCommentId: Number(comment.id) };
   });
   const mentionNotifications: NotificationItem[] = (mentionResult.data ?? []).flatMap((mention) => {
     const comment = Array.isArray(mention.comment) ? mention.comment[0] : mention.comment;
     if (!comment) return [];
     const author = Array.isArray(comment.author) ? comment.author[0] : comment.author;
     const sharedItem = Array.isArray(comment.shared_item) ? comment.shared_item[0] : comment.shared_item;
+    const item = Array.isArray(sharedItem?.item) ? sharedItem.item[0] : sharedItem?.item;
+    const itemTitle = item?.title || item?.content || "공유 일정";
     const preview = comment.content.length > 80 ? `${comment.content.slice(0, 80)}…` : comment.content;
-    return [{ id: `shared-comment-mention-${comment.id}-${currentEmployee.id}`, type: "shared_comment_mention" as const, category: "personal" as const, title: `${author?.name ?? "참여자"}님이 회원님을 언급했습니다.`, description: preview, date: comment.created_at, href: `/calendar?personalNote=${sharedItem?.item_id ?? ""}#comment-${comment.id}`, priority: 2, priorityLevel: "high" as const, severity: "info" as const, projectName: "Shared Workspace", actor: author?.name ?? null, actionLabel: "멘션 확인", isRead: false, readAt: null, referenceCommentId: Number(comment.id) }];
+    return [{ id: `shared-comment-mention-${comment.id}-${currentEmployee.id}`, type: "shared_comment_mention" as const, category: "personal" as const, title: `${author?.name ?? "참여자"}님이 회원님을 언급했습니다.`, description: preview, date: comment.created_at, href: `/calendar?personalNote=${sharedItem?.item_id ?? ""}#comment-${comment.id}`, priority: 2, priorityLevel: "high" as const, severity: "info" as const, projectName: itemTitle, actor: author?.name ?? null, actionLabel: "멘션 확인", isRead: false, readAt: null, referenceCommentId: Number(comment.id) }];
   });
   summary.items = [...mentionNotifications, ...commentNotifications, ...summary.items].sort(compareNotifications).slice(0, limit);
   summary.totalCount = summary.items.length;

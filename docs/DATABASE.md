@@ -474,3 +474,11 @@ Tasks
 - `(assigned_to, comment_id)` partial unique index로 사용자별 중복 추가를 방지한다.
 - 생성·완료·삭제 RPC가 현재 사용자와 공유 접근 권한을 재검증한다.
 - `20260805160000_add_reference_tasks.sql`은 운영 DB에 자동 적용하지 않는다.
+# Sprint 9-3A Reference Task Options
+
+- `reference_tasks.title`: 개인 작업 구분용 제목, 1~200자
+- `reference_tasks.due_date`: 선택 마감일
+- `reference_tasks.priority`: `low`, `normal`, `high`
+- `create_reference_task(bigint,text,date,text)`는 원본 접근 권한과 입력값을 재검증하고 중복이면 기존 행을 반환한다.
+- `update_reference_task(uuid,text,date,text,boolean)`는 본인 작업의 개인 관리 필드와 완료 상태만 변경한다.
+- migration과 verification SQL은 생성만 하며 운영 DB에는 자동 적용하지 않는다.

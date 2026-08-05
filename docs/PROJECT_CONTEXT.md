@@ -1,5 +1,11 @@
 # Gongmu ERP - Project Context
 
+## Sprint 9-3A Notification Popup & Reference Task Options
+
+Notification Bell 항목은 바로 이동하지 않고 작성자, 원본, 내용, 발생 시간과 원본 열기 액션을 제공하는 상세 Dialog를 연다. 댓글 기반 알림은 같은 Dialog에서 Reference Task 설정 Dialog를 열 수 있으며 알림의 Inbox/Archive 상태와 작업 추가 상태는 서로 영향을 주지 않는다.
+
+Reference Task에는 개인 관리용 `title`, `due_date`, `priority`만 추가한다. 원본 댓글과 일정은 기존 참조를 매번 조회하며 개인 제목 변경은 원본에 반영되지 않는다. My Workspace는 개인 제목, 원본 요약, 마감 상태, 우선순위와 완료 상태를 표시하고 같은 설정 Dialog로 개인 관리 필드만 수정한다.
+
 ## Sprint 9-3 Add to My Tasks
 
 `reference_tasks`는 사용자별 작업 상태와 `comment_id`, `shared_item_id` 참조만 저장하며 댓글 내용이나 일정 제목을 복사하지 않는다. 조회 API가 현재 댓글·작성자·일정 원본을 매번 조인하므로 원본 수정이 그대로 표시된다. 원본 삭제 시 FK는 `SET NULL`로 변경되어 작업은 유지되고 “삭제된 원본”으로 표시된다.
