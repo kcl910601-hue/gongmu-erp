@@ -20,6 +20,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Badge, type BadgeVariant } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/Popover";
 import { GanttTaskDetailModal } from "@/components/gantt/GanttTaskDetailModal";
 import { GanttMemoModal, type GanttMemoTarget } from "@/components/gantt/GanttMemoModal";
 import { GanttAssigneeModal } from "@/components/gantt/GanttAssigneeModal";
@@ -2413,9 +2418,29 @@ export function IntegratedProjectGantt({
               className="h-9 w-full rounded-lg border border-slate-200 pl-9 pr-3 text-sm outline-none focus:border-blue-400"
             />
           </div>
-          <Button type="button" size="sm" variant="secondary" onClick={() => setIsPresentationFilterOpen((current) => !current)}>
-            <SlidersHorizontal size={15} /> 필터
-          </Button>
+          <Popover
+            open={isPresentationFilterOpen}
+            onOpenChange={setIsPresentationFilterOpen}
+          >
+            <PopoverTrigger asChild>
+              <Button type="button" size="sm" variant="secondary">
+                <SlidersHorizontal size={15} /> 필터
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent
+              portalContainer={presentationRef.current}
+              align="end"
+              side="bottom"
+              sideOffset={8}
+              collisionPadding={12}
+              avoidCollisions
+              className="z-[110] flex max-h-[calc(100vh-24px)] max-w-[calc(100vw-24px)] flex-wrap gap-2 overflow-y-auto rounded-xl"
+            >
+              <select value={assigneeFilter} onChange={(event) => setAssigneeFilter(event.target.value)} className="h-9 rounded-lg border px-2 text-sm">{assigneeOptions.map((value) => <option key={value}>{value}</option>)}</select>
+              <select value={taskTypeFilter} onChange={(event) => setTaskTypeFilter(event.target.value)} className="h-9 rounded-lg border px-2 text-sm">{taskTypeOptions.map((value) => <option key={value}>{value}</option>)}</select>
+              <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as GanttStatusFilter)} className="h-9 rounded-lg border px-2 text-sm">{statusFilterOptions.map((value) => <option key={value.value} value={value.value}>{value.label}</option>)}</select>
+            </PopoverContent>
+          </Popover>
           <Button type="button" size="sm" variant={meetingFocus ? "primary" : "secondary"} onClick={() => {
             const next = !meetingFocus;
             setMeetingFocus(next);
@@ -2497,13 +2522,6 @@ export function IntegratedProjectGantt({
           <Button type="button" size="sm" variant="danger" onClick={() => void exitPresentation()}>
             <X size={15} /> 종료
           </Button>
-          {isPresentationFilterOpen && (
-            <div className="absolute right-40 top-12 flex gap-2 rounded-xl border border-slate-200 bg-white p-3 shadow-xl">
-              <select value={assigneeFilter} onChange={(event) => setAssigneeFilter(event.target.value)} className="h-9 rounded-lg border px-2 text-sm">{assigneeOptions.map((value) => <option key={value}>{value}</option>)}</select>
-              <select value={taskTypeFilter} onChange={(event) => setTaskTypeFilter(event.target.value)} className="h-9 rounded-lg border px-2 text-sm">{taskTypeOptions.map((value) => <option key={value}>{value}</option>)}</select>
-              <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as GanttStatusFilter)} className="h-9 rounded-lg border px-2 text-sm">{statusFilterOptions.map((value) => <option key={value.value} value={value.value}>{value.label}</option>)}</select>
-            </div>
-          )}
         </div>
       )}
       {!isPresentation && (

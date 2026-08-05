@@ -1,5 +1,12 @@
 # CHANGELOG
 
+## Sprint 9-3B Gantt Presentation Filter Overflow Fix
+
+- Replaced the presentation filter's header-bound absolute menu with the shared Radix Popover
+- Portaled fullscreen content into the Gantt presentation root so browser fullscreen and overflow clipping are both respected
+- Added viewport collision padding, automatic side flipping, constrained sizing, and a z-index above presentation overlays
+- Kept the Gantt scroll containers and existing filter state unchanged; no DB migration was added
+
 ## Sprint 9-1B Hierarchical Delete Lock Check
 
 - Project deletion now atomically checks project, task, and shipment editing locks on the server

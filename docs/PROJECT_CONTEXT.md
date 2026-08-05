@@ -1,5 +1,11 @@
 # Gongmu ERP - Project Context
 
+## Sprint 9-3B Gantt Presentation Filter Overflow Fix
+
+Gantt 프레젠테이션 필터는 헤더 내부 absolute 메뉴 대신 공통 Radix Popover를 사용한다. 일반 화면에서는 기존처럼 body Portal을 사용하고, browser fullscreen 중에는 fullscreen 대상인 Gantt 프레젠테이션 루트를 Portal 컨테이너로 지정하여 `overflow-hidden` clipping과 fullscreen 외부 Portal 미표시 문제를 함께 방지한다.
+
+Popover는 트리거 우측 정렬, viewport collision padding, 자동 방향 전환, 화면 기준 최대 크기와 프레젠테이션 오버레이보다 높은 z-index를 사용한다. Gantt 데이터, 필터 상태, 가로·세로 스크롤 컨테이너는 변경하지 않는다.
+
 ## Sprint 9-3A Notification Popup & Reference Task Options
 
 Notification Bell 항목은 바로 이동하지 않고 작성자, 원본, 내용, 발생 시간과 원본 열기 액션을 제공하는 상세 Dialog를 연다. 댓글 기반 알림은 같은 Dialog에서 Reference Task 설정 Dialog를 열 수 있으며 알림의 Inbox/Archive 상태와 작업 추가 상태는 서로 영향을 주지 않는다.
