@@ -54,6 +54,7 @@ export function MorningBrief({
   currentUserRole,
   isLoading,
   onTaskCompleted,
+  embedded = false,
 }: {
   tasks: DashboardFocusTask[];
   shipments: MorningBriefShipment[];
@@ -61,6 +62,7 @@ export function MorningBrief({
   currentUserRole: string;
   isLoading: boolean;
   onTaskCompleted: (taskId: number) => void;
+  embedded?: boolean;
 }) {
   const [hour, setHour] = useState<number | null>(null);
   const [isExpanded, setIsExpanded] = useState(true);
@@ -70,6 +72,7 @@ export function MorningBrief({
   const { employee } = useAppShellUser();
   const today = getLocalDateString();
   const isAdmin = currentUserRole === "admin";
+  const expanded = embedded || isExpanded;
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -208,7 +211,7 @@ export function MorningBrief({
           </h2>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          {!isExpanded && (
+          {!expanded && (
             <p className="text-xs font-medium text-slate-500">
               오늘 {briefTasks.length} · 마감 {dueToday.length} · 지연{" "}
               {overdue.length}
@@ -232,11 +235,11 @@ export function MorningBrief({
             ))}
           </div>
           )}
-          <button
+          {!embedded && <button
             type="button"
-            aria-expanded={isExpanded}
+            aria-expanded={expanded}
             aria-controls="morning-brief-content"
-            aria-label={isExpanded ? "업무 브리핑 접기" : "업무 브리핑 펼치기"}
+            aria-label={expanded ? "업무 브리핑 접기" : "업무 브리핑 펼치기"}
             onClick={() => {
               const nextValue = !isExpanded;
               setIsExpanded(nextValue);
@@ -244,7 +247,7 @@ export function MorningBrief({
             }}
             className="inline-flex h-9 items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-600 hover:bg-slate-50 focus:ring-2 focus:ring-blue-100"
           >
-            {isExpanded ? (
+            {expanded ? (
               <>
                 접기 <ChevronUp size={14} />
               </>
@@ -253,22 +256,22 @@ export function MorningBrief({
                 펼치기 <ChevronDown size={14} />
               </>
             )}
-          </button>
+          </button>}
         </div>
       </div>
 
       <div
         id="morning-brief-content"
-        aria-hidden={!isExpanded}
-        inert={!isExpanded}
+        aria-hidden={!expanded}
+        inert={!expanded}
         className={`grid transition-[grid-template-rows,opacity] duration-200 motion-reduce:transition-none ${
-          isExpanded
+          expanded
             ? "grid-rows-[1fr] opacity-100"
             : "grid-rows-[0fr] opacity-0"
         }`}
       >
       <div className="overflow-hidden">
-      <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+      <div className="dashboard-morning-summary-grid mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
         {summary.map((item) => {
           const Icon = item.icon;
           return (

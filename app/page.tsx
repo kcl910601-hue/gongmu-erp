@@ -25,6 +25,7 @@ import { ProgressBar } from "@/components/ui/ProgressBar";
 import ActivityTimeline from "@/components/activity/ActivityTimeline";
 import MyWorkspaceRecent from "@/components/recent/MyWorkspaceRecent";
 import DashboardSearch from "@/components/dashboard/DashboardSearch";
+import { DashboardCard, DashboardCustomization } from "@/components/dashboard/DashboardCustomization";
 import { Skeleton } from "@/components/ui/Skeleton";
 import {
   MorningBrief,
@@ -1048,42 +1049,6 @@ export default function Home() {
 
   return (
     <div className="min-h-screen bg-slate-50 px-6 py-5 text-slate-900 lg:px-8">
-      <MorningBrief
-        tasks={morningBriefTasks}
-        shipments={shipments}
-        currentUserName={currentUserName}
-        currentUserRole={currentUserRole}
-        isLoading={isLoading}
-        onTaskCompleted={(taskId) => {
-          setTasks((current) => {
-            const nextTasks = current.map((task) =>
-              task.id === taskId
-                ? { ...task, status: "completed", completed_date: today }
-                : task
-            );
-
-            if (process.env.NODE_ENV === "development") {
-              console.table(
-                nextTasks
-                  .filter((task) => task.id === taskId)
-                  .map((task) => ({
-                    id: task.id,
-                    status: task.status,
-                    completed: isTaskCompleted(task.status),
-                    dueDate: task.due_date,
-                    delayed:
-                      !isTaskCompleted(task.status) &&
-                      task.due_date !== null &&
-                      task.due_date < today,
-                  }))
-              );
-            }
-
-            return nextTasks;
-          });
-        }}
-      />
-
       <DashboardSearch />
 
       {isLoading ? (
@@ -1098,11 +1063,28 @@ export default function Home() {
         </div>
       ) : (
         <>
-          <div className="grid gap-4 xl:grid-cols-[minmax(0,0.9fr)_minmax(420px,1.1fr)]">
+          <DashboardCustomization>
+          <DashboardCard cardId="today_tasks" summary={`${todayDueTasks}건`}>
+            <MorningBrief
+              tasks={morningBriefTasks}
+              shipments={shipments}
+              currentUserName={currentUserName}
+              currentUserRole={currentUserRole}
+              isLoading={isLoading}
+              embedded
+              onTaskCompleted={(taskId) => {
+                setTasks((current) => current.map((task) => task.id === taskId ? { ...task, status: "completed", completed_date: today } : task));
+              }}
+            />
+          </DashboardCard>
+          <DashboardCard cardId="workspace">
+          <div className="dashboard-workspace-grid grid gap-4 xl:grid-cols-[minmax(0,0.9fr)_minmax(420px,1.1fr)]">
             <div id="my-workspace"><MyWorkspaceRecent /></div>
             <PersonalWorkspace />
           </div>
-          <div className="mb-3 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+          </DashboardCard>
+          <DashboardCard cardId="kpi" summary={`${totalProjects}개 프로젝트`}>
+          <div className="dashboard-kpi-grid mb-3 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
             <Link
               href="/projects"
               role="button"
@@ -1223,8 +1205,10 @@ export default function Home() {
             </div>
             <WeeklyLmeCard comparison={weeklyLme}/>
           </div>
+          </DashboardCard>
 
-          <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+          <DashboardCard cardId="shipments" summary={`대기 ${waitingShipments}건`}>
+          <div className="dashboard-shipment-grid mb-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
             <Link
               href="/tasks?filter=today"
               role="button"
@@ -1310,7 +1294,9 @@ export default function Home() {
               </div>
             </div>
           </div>
+          </DashboardCard>
 
+          <DashboardCard cardId="progress">
           {currentUserRole === "admin" && (
             <section className="mb-5 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
               <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
@@ -1737,7 +1723,7 @@ export default function Home() {
             </section>
           )}
 
-          <div className="mb-5 grid grid-cols-1 gap-5 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.35fr)]">
+          <div className="dashboard-progress-grid mb-5 grid grid-cols-1 gap-5 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.35fr)]">
             <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
               <div className="mb-4 flex items-center justify-between gap-3">
                 <div className="min-w-0">
@@ -1979,8 +1965,10 @@ export default function Home() {
             </div>
           </div>
 
-          <div className="mb-5 grid grid-cols-1 gap-4 xl:grid-cols-12 xl:items-start">
-          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm xl:col-span-8">
+          </DashboardCard>
+
+          <DashboardCard cardId="recent_projects" summary={`${recentProjects.length}건`}>
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
             <div className="mb-4 flex items-center justify-between gap-3">
               <div>
                 <h2 className="text-lg font-bold tracking-tight text-slate-950">최근 프로젝트</h2>
@@ -1993,7 +1981,18 @@ export default function Home() {
               </span>
             </div>
 
-            <div className="overflow-x-auto">
+            <div className="dashboard-recent-project-list space-y-2">
+              {recentProjects.map((project) => (
+                <Link key={project.id} href={`/projects/${project.id}`} title={project.project_name} className="block min-w-0 rounded-xl border border-slate-200 bg-slate-50 p-3 hover:border-blue-200 hover:bg-blue-50">
+                  <p className="line-clamp-2 break-words text-sm font-semibold text-blue-700">{project.project_name}</p>
+                  <div className="mt-2 flex min-w-0 flex-wrap items-center gap-1.5 text-[11px] text-slate-500"><Badge variant={getStatusBadgeVariant(project.dueStatus)}>{project.dueStatus}</Badge><span className="min-w-0 truncate" title={project.task_manager || "담당자 미지정"}>담당 {project.task_manager || "-"}</span></div>
+                  <div className="mt-2 flex min-w-0 items-center gap-2"><ProgressBar percent={project.progress} className="h-1.5 min-w-0 flex-1"/><span className="shrink-0 text-xs font-semibold text-slate-600">{project.progress}%</span></div>
+                  <p className="mt-1 text-[11px] text-slate-400">종료 {getProjectEndDate(project) || "-"}</p>
+                </Link>
+              ))}
+              {recentProjects.length === 0 && <EmptyState message="조회된 프로젝트가 없습니다." className="p-5 text-center text-xs text-slate-400"/>}
+            </div>
+            <div className="dashboard-recent-project-table overflow-x-auto">
               <table className="w-full min-w-[1000px]">
                 <thead>
                   <tr className="border-y border-slate-200 bg-slate-50 text-xs font-medium text-slate-500">
@@ -2074,7 +2073,9 @@ export default function Home() {
               </table>
             </div>
           </div>
-          <aside className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm xl:col-span-4 xl:sticky xl:top-4">
+          </DashboardCard>
+          <DashboardCard cardId="recent_activity" summary={`최근 ${showAllActivities ? 20 : 2}건`}>
+          <aside className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
             <div className="mb-3 flex items-center justify-between gap-3">
               <div className="flex min-w-0 items-center gap-2">
                 <h2 className="text-lg font-bold tracking-tight text-slate-950">
@@ -2127,7 +2128,8 @@ export default function Home() {
               </button>
             </div>
           </aside>
-          </div>
+          </DashboardCard>
+          </DashboardCustomization>
         </>
       )}
     </div>

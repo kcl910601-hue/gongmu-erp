@@ -482,3 +482,8 @@ Tasks
 - `create_reference_task(bigint,text,date,text)`는 원본 접근 권한과 입력값을 재검증하고 중복이면 기존 행을 반환한다.
 - `update_reference_task(uuid,text,date,text,boolean)`는 본인 작업의 개인 관리 필드와 완료 상태만 변경한다.
 - migration과 verification SQL은 생성만 하며 운영 DB에는 자동 적용하지 않는다.
+# Sprint 9-4 Dashboard Preferences
+
+`dashboard_preferences`는 `employee_id`를 기본키로 사용하고 카드 순서, 크기, 숨김, 접힘 상태를 `cards jsonb` 배열에 저장한다. 직원 삭제 시 개인 설정만 함께 정리되며 Dashboard 원본 데이터는 저장하지 않는다.
+
+RLS는 `employees.auth_user_id = auth.uid()`이면서 활성·승인된 본인 직원 행에 대해서만 select/insert/update/delete를 허용한다. Migration `20260806100000_create_dashboard_preferences.sql`과 검증 SQL `20260806101000_verify_dashboard_preferences.sql`은 준비만 하며 운영 DB에는 자동 적용하지 않는다.

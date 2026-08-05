@@ -1,5 +1,17 @@
 # Gongmu ERP - Project Context
 
+## Sprint 9-4A Dashboard Card Responsive Layout Fix
+
+Dashboard 카드 wrapper는 저장된 크기를 `data-dashboard-size="small|medium|large"`로 본문에 전달한다. Small은 viewport breakpoint와 별개로 카드별 내부 Grid를 1~2열로 재배치하고 padding, gap, KPI 숫자 크기, 긴 텍스트 줄바꿈을 조정한다. 모바일에서는 저장 크기와 관계없이 내부 요약 Grid도 한 열을 우선한다.
+
+최근 프로젝트는 Small에서 `min-w-[1000px]` 표를 사용하지 않고 프로젝트명, 상태·담당자, 종료일, 진행률을 담은 세로 목록을 렌더링한다. 최근 활동은 기존 Activity List를 유지하되 제목은 최대 두 줄, 설명은 자연 줄바꿈으로 표시한다. Medium/Large의 기존 표와 상세 UI는 유지한다.
+
+## Sprint 9-4 Dashboard Customization
+
+Dashboard 본문의 실제 7개 영역은 `today_tasks`, `workspace`, `kpi`, `shipments`, `progress`, `recent_projects`, `recent_activity`의 안정적인 카드 ID를 사용한다. 현재 본문에 독립 알림 카드는 없으므로 Header Notification Center를 복제하거나 신규 카드를 만들지 않는다.
+
+사용자 설정은 `dashboard_preferences`에 직원별 JSONB 한 행으로만 저장한다. 공통 Dashboard 데이터나 프로젝트·업무·일정 원본에는 영향을 주지 않으며 RLS와 API 모두 현재 인증 사용자에 연결된 활성 승인 직원의 행만 허용한다. 네이티브 HTML5 Drag & Drop과 키보드 위·아래 이동, Small/Medium/Large grid span, 숨김 복원, 일반 보기 접기, 확인 Dialog 기반 초기화를 지원한다. Realtime은 사용하지 않는다.
+
 ## Sprint 9-3B-1 Gantt Presentation Header Layout Fix
 
 Gantt 프레젠테이션 루트는 `100dvh` 세로 flex 구조로 Toolbar, 상단 가로 스크롤 제어 행, Gantt viewport를 문서 흐름 안에서 분리한다. Toolbar는 고정 높이 대신 최소 높이와 줄바꿈을 사용하고, Gantt viewport는 `flex: 1; min-height: 0`으로 남은 높이만 사용하므로 화면 너비와 브라우저 확대율에 따라 Toolbar 높이가 바뀌어도 겹치지 않는다.

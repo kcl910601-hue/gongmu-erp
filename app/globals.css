@@ -66,3 +66,99 @@ textarea {
     animation: none;
   }
 }
+
+.dashboard-recent-project-list {
+  display: none;
+}
+
+[data-dashboard-size="small"] {
+  min-width: 0;
+}
+
+[data-dashboard-size="small"] .dashboard-card-body,
+[data-dashboard-size="small"] .dashboard-card-body > * {
+  min-width: 0;
+  max-width: 100%;
+}
+
+[data-dashboard-size="small"] .dashboard-card-body p,
+[data-dashboard-size="small"] .dashboard-card-body h2,
+[data-dashboard-size="small"] .dashboard-card-body h3,
+[data-dashboard-size="small"] .dashboard-card-body span {
+  overflow-wrap: anywhere;
+}
+
+[data-dashboard-size="small"] .dashboard-card-body section,
+[data-dashboard-size="small"] .dashboard-card-body aside,
+[data-dashboard-size="small"] .dashboard-card-body > div {
+  padding-left: 0.75rem;
+  padding-right: 0.75rem;
+}
+
+[data-dashboard-size="small"] .dashboard-workspace-grid,
+[data-dashboard-size="small"] .dashboard-progress-grid {
+  grid-template-columns: minmax(0, 1fr) !important;
+}
+
+[data-dashboard-card="progress"][data-dashboard-size="small"] .dashboard-card-body .grid {
+  grid-template-columns: minmax(0, 1fr) !important;
+}
+
+[data-dashboard-size="small"] .dashboard-kpi-grid,
+[data-dashboard-size="small"] .dashboard-shipment-grid,
+[data-dashboard-size="small"] .dashboard-morning-summary-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  gap: 0.5rem;
+}
+
+[data-dashboard-size="small"] .dashboard-kpi-grid > *,
+[data-dashboard-size="small"] .dashboard-shipment-grid > * {
+  height: auto;
+  min-height: 5.5rem;
+  padding: 0.75rem;
+}
+
+[data-dashboard-size="small"] .dashboard-kpi-grid p[class*="text-3xl"],
+[data-dashboard-size="small"] .dashboard-kpi-grid p[class*="text-2xl"],
+[data-dashboard-size="small"] .dashboard-shipment-grid p[class*="text-2xl"] {
+  font-size: 1.25rem;
+  line-height: 1.5rem;
+}
+
+[data-dashboard-card="recent_projects"][data-dashboard-size="small"] .dashboard-recent-project-list {
+  display: block;
+}
+
+[data-dashboard-card="recent_projects"][data-dashboard-size="small"] .dashboard-recent-project-table {
+  display: none;
+}
+
+[data-dashboard-card="recent_activity"][data-dashboard-size="small"] article p {
+  white-space: normal;
+}
+
+[data-dashboard-card="recent_activity"][data-dashboard-size="small"] article p:first-child {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+[data-dashboard-card="recent_activity"][data-dashboard-size="small"] aside > div:first-child {
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+
+[data-dashboard-card="workspace"][data-dashboard-size="small"] article > div,
+[data-dashboard-card="today_tasks"][data-dashboard-size="small"] .dashboard-card-body section > div:first-child {
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+@media (max-width: 639px) {
+  [data-dashboard-size] .dashboard-kpi-grid,
+  [data-dashboard-size] .dashboard-shipment-grid,
+  [data-dashboard-size] .dashboard-morning-summary-grid {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+}

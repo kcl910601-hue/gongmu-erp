@@ -1,5 +1,22 @@
 # CHANGELOG
 
+## Sprint 9-4A Dashboard Card Responsive Layout Fix
+
+- Exposed each saved card size through a stable `data-dashboard-size` variant
+- Reflowed Small KPI, shipment, Morning Brief, workspace, and progress content into one or two columns
+- Added compact typography, spacing, wrapping, and intrinsic-width safeguards for Small cards
+- Replaced the recent-project minimum-width table with a Small-only vertical summary list
+- Adapted recent activity to a two-line title and wrapping list layout without clipping content
+- Kept Medium/Large rendering and Dashboard preference persistence unchanged; no DB migration was added
+
+## Sprint 9-4 Dashboard Customization
+
+- Added per-employee Dashboard card order, size, visibility, and collapsed preferences
+- Added edit mode with native drag-and-drop, insertion feedback, keyboard reordering, size controls, and hiding
+- Added hidden-card restoration and confirmed reset to the default layout
+- Added normal-mode collapse controls that skip rendering collapsed card bodies
+- Added `dashboard_preferences` migration, own-row RLS, API, validation helpers, and verification SQL without applying production DB changes
+
 ## Sprint 9-3B-1 Gantt Presentation Header Layout Fix
 
 - Changed the fullscreen Gantt root to a `100dvh` column flex layout with measured flow heights
