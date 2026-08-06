@@ -29,6 +29,12 @@ export type NoteEditorPreset = "memo" | "todo" | "sticky";
 export type NoteEditorOpenOptions = { noteType?: NoteEditorPreset; dueDate?: string | null; note?: PersonalNote };
 export type CalendarSourceFilter = "all" | "company" | "my" | "my_own" | "shared_with_me";
 
+export const COMPLETED_PERSONAL_SCHEDULE_STYLES = {
+  card: "border-slate-200/70 bg-white/65 saturate-50 hover:bg-white/85 hover:saturate-75",
+  title: "text-slate-500 line-through decoration-slate-400",
+  meta: "text-slate-500",
+} as const;
+
 export function getPersonalNoteAccess(note: PersonalNote) {
   const permission = note.sharing?.permission ?? "owner";
   const isOwner = permission === "owner";
@@ -56,6 +62,32 @@ export function matchesCalendarSourceFilter(note: PersonalNote, filter: Calendar
   if (filter === "my_own") return isOwnedByMe;
   if (filter === "shared_with_me") return isSharedWithMe;
   return true;
+}
+
+export function normalizeShowCompletedPersonalSchedules(value: string | null) {
+  return value === null ? true : value !== "false";
+}
+
+export function matchesCompletedPersonalScheduleFilter(note: PersonalNote, showCompleted: boolean) {
+  return showCompleted || note.is_completed !== true;
+}
+
+export type PersonalTodoDateBucket = "completed" | "overdue" | "today" | "upcoming" | "unscheduled";
+
+export function getPersonalTodoDateBucket(note: Pick<PersonalNote, "note_type" | "is_completed" | "due_date">, today: string): PersonalTodoDateBucket {
+  if (note.is_completed) return "completed";
+  if (note.note_type !== "todo" || note.due_date === null) return "unscheduled";
+  if (note.due_date < today) return "overdue";
+  if (note.due_date === today) return "today";
+  return "upcoming";
+}
+
+export function isTodayPersonalTodo(note: Pick<PersonalNote, "note_type" | "is_completed" | "due_date">, today: string) {
+  return getPersonalTodoDateBucket(note, today) === "today";
+}
+
+export function isOverduePersonalTodo(note: Pick<PersonalNote, "note_type" | "is_completed" | "due_date">, today: string) {
+  return getPersonalTodoDateBucket(note, today) === "overdue";
 }
 
 export function openNoteEditor(input: NoteEditorPreset | NoteEditorOpenOptions = "memo") {

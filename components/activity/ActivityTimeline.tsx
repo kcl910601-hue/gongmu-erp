@@ -200,8 +200,8 @@ export default function ActivityTimeline({
                   </span>
                   <div className="min-w-0 flex-1">
                     <p
-                      className={`truncate font-semibold text-slate-900 ${
-                        compact ? "text-sm leading-5" : "text-base"
+                      className={`font-semibold text-slate-900 ${
+                        compact ? "truncate text-sm leading-5" : "break-words text-base"
                       }`}
                     >
                       {activity.title}
@@ -209,7 +209,7 @@ export default function ActivityTimeline({
                     {activity.description && (
                       <p
                         className={`mt-0.5 text-slate-600 ${
-                          compact ? "truncate text-[12px] leading-4" : "text-sm"
+                          compact ? "truncate text-[12px] leading-4" : "break-words text-sm"
                         }`}
                       >
                         {activity.description}

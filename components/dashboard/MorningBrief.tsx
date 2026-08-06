@@ -111,17 +111,19 @@ export function MorningBrief({
   }, [employee, generatedNotifications]);
   const briefNotifications = useMemo(() => generatedNotifications.filter((item) => !hiddenNotificationIds.has(item.id)), [generatedNotifications, hiddenNotificationIds]);
   const hiddenTaskIds = useMemo(() => new Set(generatedNotifications.filter((item) => item.category === "task" && hiddenNotificationIds.has(item.id)).map((item) => Number(item.id.split("-").at(-1)))), [generatedNotifications, hiddenNotificationIds]);
-  const briefTaskIds = useMemo(() => new Set(briefNotifications.filter((item) => item.category === "task").map((item) => Number(item.id.split("-").at(-1)))), [briefNotifications]);
-  const briefTasks = useMemo(() => scopedTasks.filter((task) => briefTaskIds.has(task.id) || (isTaskCompleted(task.status) && task.completed_date === today)), [briefTaskIds, scopedTasks, today]);
-  const openTasks = useMemo(
+  const todayTasks = useMemo(
     () =>
       sortTasksByPriority(
-        scopedTasks.filter((task) => !isTaskCompleted(task.status) && !hiddenTaskIds.has(task.id)),
+        scopedTasks.filter((task) => !isTaskCompleted(task.status) && task.due_date === today && !hiddenTaskIds.has(task.id)),
         today
       ).slice(0, 5),
     [hiddenTaskIds, scopedTasks, today]
   );
-  const completedToday = briefTasks.filter(
+  const overdueTasks = useMemo(
+    () => sortTasksByPriority(scopedTasks.filter((task) => !isTaskCompleted(task.status) && task.due_date !== null && task.due_date < today && !hiddenTaskIds.has(task.id)), today).slice(0, 5),
+    [hiddenTaskIds, scopedTasks, today]
+  );
+  const completedToday = scopedTasks.filter(
     (task) =>
       isTaskCompleted(task.status) && task.completed_date === today
   );
@@ -163,8 +165,8 @@ export function MorningBrief({
 
   const summary = [
     {
-      label: "오늘 해야 할 업무",
-      value: briefTasks.length,
+      label: "오늘 회사 업무",
+      value: todayTasks.length,
       href: "/tasks?filter=today",
       icon: CalendarCheck,
       color: "text-blue-600",
@@ -213,7 +215,7 @@ export function MorningBrief({
         <div className="flex flex-wrap items-center gap-2">
           {!expanded && (
             <p className="text-xs font-medium text-slate-500">
-              오늘 {briefTasks.length} · 마감 {dueToday.length} · 지연{" "}
+              오늘 {todayTasks.length} · 마감 {dueToday.length} · 지연{" "}
               {overdue.length}
             </p>
           )}
@@ -300,7 +302,7 @@ export function MorningBrief({
           <span className="text-xs text-slate-400">최대 5건</span>
         </div>
         <TodayTaskList
-          tasks={openTasks}
+          tasks={todayTasks}
           today={today}
           showAssignee={isAdmin && adminScope === "all"}
           completingTaskId={completingTaskId}
@@ -312,6 +314,7 @@ export function MorningBrief({
           showAssignee={isAdmin && adminScope === "all"}
           onOpenTask={(task) => openTaskDetail(task.id)}
         />
+        {overdueTasks.length > 0 && <div className="mt-4 border-t border-red-100 pt-4"><div className="mb-2 flex items-center justify-between"><h3 className="text-sm font-semibold text-red-700">지연 업무</h3><span className="text-xs text-red-500">오늘 할 일과 분리 · 최대 5건</span></div><TodayTaskList tasks={overdueTasks} today={today} showAssignee={isAdmin && adminScope === "all"} completingTaskId={completingTaskId} onComplete={(task) => void handleComplete(task)} onOpenTask={(task) => openTaskDetail(task.id)}/></div>}
       </div>
       <MorningBriefWorkspaceSummary />
       </div>

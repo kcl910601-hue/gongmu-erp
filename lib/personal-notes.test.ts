@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { getCalendarMonthRange, getNoteEditorDefaults, getPersonalNoteAccess, getPersonalNoteCommentBadge, matchesCalendarSourceFilter, normalizeCalendarSourceFilter, PERSONAL_NOTE_COLORS, selectPersonalNotesForBrief, selectPersonalNotesForCalendar, sortPersonalNotes, type PersonalNote } from "./personal-notes.ts";
+import { getCalendarMonthRange, getNoteEditorDefaults, getPersonalNoteAccess, getPersonalNoteCommentBadge, getPersonalTodoDateBucket, isOverduePersonalTodo, isTodayPersonalTodo, matchesCalendarSourceFilter, matchesCompletedPersonalScheduleFilter, normalizeCalendarSourceFilter, normalizeShowCompletedPersonalSchedules, PERSONAL_NOTE_COLORS, selectPersonalNotesForBrief, selectPersonalNotesForCalendar, sortPersonalNotes, type PersonalNote } from "./personal-notes.ts";
 
 function note(id: string, values: Partial<PersonalNote>): PersonalNote {
   return {
@@ -71,6 +71,27 @@ test("Calendar 내 일정과 내 일정만, 공유받은 일정을 소유권으�
   assert.deepEqual([own, sharedByMe, sharedWithMe].filter((item) => matchesCalendarSourceFilter(item, "my")).map((item) => item.id), ["own", "shared-by-me", "shared-with-me"]);
   assert.deepEqual([own, sharedByMe, sharedWithMe].filter((item) => matchesCalendarSourceFilter(item, "my_own")).map((item) => item.id), ["own", "shared-by-me"]);
   assert.deepEqual([own, sharedByMe, sharedWithMe].filter((item) => matchesCalendarSourceFilter(item, "shared_with_me")).map((item) => item.id), ["shared-with-me"]);
+});
+
+test("Calendar 완료 일정 표시는 저장값이 없으면 켜지고 완료된 개인 일정만 숨긴다", () => {
+  assert.equal(normalizeShowCompletedPersonalSchedules(null), true);
+  assert.equal(normalizeShowCompletedPersonalSchedules("true"), true);
+  assert.equal(normalizeShowCompletedPersonalSchedules("false"), false);
+  assert.equal(matchesCompletedPersonalScheduleFilter(note("open", {}), false), true);
+  assert.equal(matchesCompletedPersonalScheduleFilter(note("done", { is_completed: true }), false), false);
+  assert.equal(matchesCompletedPersonalScheduleFilter(note("done", { is_completed: true }), true), true);
+});
+
+test("My Workspace와 Morning Brief는 Todo 날짜를 동일한 로컬 날짜 버킷으로 구분한다", () => {
+  const today = "2026-08-07";
+  assert.equal(getPersonalTodoDateBucket(note("undated", { note_type: "todo" }), today), "unscheduled");
+  assert.equal(getPersonalTodoDateBucket(note("past", { note_type: "todo", due_date: "2026-08-06" }), today), "overdue");
+  assert.equal(getPersonalTodoDateBucket(note("today", { note_type: "todo", due_date: today }), today), "today");
+  assert.equal(getPersonalTodoDateBucket(note("future", { note_type: "todo", due_date: "2026-08-08" }), today), "upcoming");
+  assert.equal(getPersonalTodoDateBucket(note("done", { note_type: "todo", due_date: today, is_completed: true }), today), "completed");
+  assert.equal(getPersonalTodoDateBucket(note("memo", { note_type: "memo", due_date: today }), today), "unscheduled");
+  assert.equal(isTodayPersonalTodo(note("today", { note_type: "todo", due_date: today }), today), true);
+  assert.equal(isOverduePersonalTodo(note("past", { note_type: "todo", due_date: "2026-08-06" }), today), true);
 });
 
 test("개인 일정 액션 권한은 소유자, edit, view를 동일 기준으로 구분한다", () => {

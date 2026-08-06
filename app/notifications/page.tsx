@@ -43,7 +43,11 @@ function matchesFilter(category: NotificationCategory, filter: Filter) {
 
 export default function NotificationsPage() {
   const [summary, setSummary] = useState<NotificationSummary | null>(null);
-  const [filter, setFilter] = useState<Filter>("all");
+  const [filter, setFilter] = useState<Filter>(() => {
+    if (typeof window === "undefined") return "all";
+    const requestedFilter = new URLSearchParams(window.location.search).get("filter");
+    return filters.some((item) => item.value === requestedFilter) ? requestedFilter as Filter : "all";
+  });
   const [viewMode, setViewMode] = useState<ViewMode>("all");
   const [markingIds, setMarkingIds] = useState<Set<string>>(() => new Set());
   const [markingAll, setMarkingAll] = useState(false);

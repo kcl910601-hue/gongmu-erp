@@ -1,5 +1,23 @@
 # Gongmu ERP - Project Context
 
+## Sprint 9-4D Dashboard Today Data & Workspace Layout Refinement
+
+Morning Brief와 My Workspace는 `getPersonalTodoDateBucket`, `isTodayPersonalTodo`, `isOverduePersonalTodo`를 공통 사용해 로컬 `YYYY-MM-DD` 기준으로 개인 Todo를 완료·지연·오늘·예정·날짜 없음으로 구분한다. Morning Brief 개인 업무에는 오늘 날짜의 미완료 Todo와 오늘 마감 미완료 Reference Task만 포함하고, 지연 개인 Todo와 Reference Task는 별도 지연 목록으로 표시한다. 회사 업무도 현재 권한·관리자 범위를 유지하면서 미완료 `due_date === today`만 오늘 목록에, 과거 마감은 별도 지연 목록에 표시한다.
+
+Dashboard 기본값에서 My Workspace와 최근 활동은 모두 Large 전체 폭 카드다. 기존 저장 설정은 `normalizeDashboardPreferences`가 사용자의 명시적 크기·순서·숨김·접힘을 그대로 유지하며, 설정이 없는 사용자와 기본값 초기화에만 새 크기가 적용된다. My Workspace 내부의 중복 최근 작업 영역은 제거해 Todo 공간을 전체 폭으로 사용하고, 최근 활동은 별도 전체 행에서 비압축 레이아웃과 줄바꿈을 사용한다.
+
+## Sprint 9-4C Todo-Focused My Workspace
+
+My Workspace는 Todo를 기본 Tab과 전체 폭의 핵심 영역으로 표시한다. 상단 미완료·오늘·지연·완료 요약은 Todo 필터 및 완료 영역과 연결되며, 검색, 상태·소유권 필터, 추천·마감·수정·생성 정렬을 지원한다. 기본 목록은 미완료 Todo 15건, 접힌 완료 영역은 최신 완료 20건을 먼저 렌더링하고 각각 단계적 더보기를 제공한다. 선택 Tab, Todo 필터·정렬, 완료 접힘 상태는 인증 직원 ID가 포함된 localStorage 키로 사용자별 유지한다.
+
+날짜가 있는 비 Todo 항목은 일정 Tab, 날짜가 없는 항목은 메모 Tab으로 분리한다. 공유 요청은 받은 pending 건수와 Notification 개인 필터 링크만 제공하며 실제 처리는 알림함에서 유지한다. Reference Task는 Todo 우측 보조 영역에 배치하고 미완료를 우선 표시하며 완료 항목은 접힌 별도 목록으로 분리한다. 기존 personal_notes 원본, 권한, 공통 Realtime, 댓글, Timeline, short editing lock 및 Reference Task 참조 구조는 변경하지 않는다.
+
+## Sprint 9-4B Calendar Completed Schedule UX
+
+Calendar의 `personal_notes.is_completed` 완료 상태를 월간 개인 일정 카드, 선택일 개인 일정 목록, 상세 모달에 일관되게 표시한다. 완료 일정은 원래 배경과 공유·댓글 정보를 유지하면서 채도와 강조도를 낮추고 제목 취소선 및 `완료` Badge를 추가한다. 기존 편집 권한이 있는 사용자는 상세에서 완료·미완료를 전환할 수 있으며 기존 short editing lock과 collaboration event를 그대로 사용한다.
+
+상단 기존 필터 영역의 `완료 일정 표시` 토글은 기본값이 켜짐이고, 끄면 소스·소유/공유 필터 적용 후 완료된 개인 일정만 렌더링 대상에서 제외한다. 설정은 기존 localStorage 방식을 재사용하되 `showCompletedPersonalSchedules:{auth user id}` 키로 사용자별 저장한다. 회사 업무 일정과 Gantt의 기존 완료 UI 및 DB 구조는 변경하지 않는다.
+
 ## Sprint 9-4A Dashboard Card Responsive Layout Fix
 
 Dashboard 카드 wrapper는 저장된 크기를 `data-dashboard-size="small|medium|large"`로 본문에 전달한다. Small은 viewport breakpoint와 별개로 카드별 내부 Grid를 1~2열로 재배치하고 padding, gap, KPI 숫자 크기, 긴 텍스트 줄바꿈을 조정한다. 모바일에서는 저장 크기와 관계없이 내부 요약 Grid도 한 열을 우선한다.

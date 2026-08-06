@@ -1,11 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { X } from "lucide-react";
+import { Check, Circle, X } from "lucide-react";
 import { CommentSection } from "@/components/comments/CommentSection";
 import { TimelineSection } from "@/components/timeline/TimelineSection";
 import { PersonalNoteActions } from "@/components/workspace/PersonalNoteActions";
-import { getPersonalNoteCommentBadge, type PersonalNote } from "@/lib/personal-notes";
+import { getPersonalNoteAccess, getPersonalNoteCommentBadge, type PersonalNote } from "@/lib/personal-notes";
 
 const noteTypeLabels: Record<PersonalNote["note_type"], string> = {
   memo: "메모",
@@ -22,13 +22,14 @@ const colorLabels: Record<PersonalNote["color"], string> = {
   blue: "파랑",
 };
 
-export function PersonalNoteDetailModal({ note, authorName, onClose, onEdit, onShare, onTogglePin, onDelete }: {
+export function PersonalNoteDetailModal({ note, authorName, onClose, onEdit, onShare, onTogglePin, onToggleCompleted, onDelete }: {
   note: PersonalNote;
   authorName: string;
   onClose: () => void;
   onEdit: () => void;
   onShare: () => void;
   onTogglePin: () => void;
+  onToggleCompleted: () => void;
   onDelete: () => void;
 }) {
   const [commentsOpen, setCommentsOpen] = useState(true);
@@ -37,6 +38,7 @@ export function PersonalNoteDetailModal({ note, authorName, onClose, onEdit, onS
     ? note.sharing.memberCount > 0 ? "공유 중" : "내 일정"
     : note.sharing ? "공유받음" : "내 일정";
   const permissionLabel = note.sharing?.permission ?? "owner";
+  const canEdit = getPersonalNoteAccess(note).canEdit;
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
@@ -52,11 +54,16 @@ export function PersonalNoteDetailModal({ note, authorName, onClose, onEdit, onS
         <div className="flex items-start gap-3">
           <div className="min-w-0 flex-1">
             <p className="text-xs font-semibold text-violet-600">개인 일정 상세</p>
-            <h2 className="mt-1 break-words text-xl font-bold text-slate-900">{note.title || note.content}</h2>
+            <div className="mt-1 flex flex-wrap items-center gap-2">
+              <h2 className={`break-words text-xl font-bold ${note.is_completed ? "text-slate-500 line-through" : "text-slate-900"}`}>{note.title || note.content}</h2>
+              {note.is_completed && <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-700"><Check size={12}/>완료</span>}
+            </div>
           </div>
           <PersonalNoteActions note={note} commentsOpen={commentsOpen} timelineOpen={timelineOpen} onEdit={onEdit} onShare={onShare} onTogglePin={onTogglePin} onDelete={onDelete} onToggleComments={() => setCommentsOpen((open) => !open)} onToggleTimeline={() => setTimelineOpen((open) => !open)}/>
           <button type="button" aria-label="상세 닫기" onClick={onClose} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700"><X size={18}/></button>
         </div>
+
+        {canEdit && <button type="button" onClick={onToggleCompleted} className={`mt-4 inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-sm font-semibold transition ${note.is_completed ? "border-slate-200 bg-white text-slate-600 hover:bg-slate-50" : "border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100"}`}>{note.is_completed ? <Circle size={15}/> : <Check size={15}/>} {note.is_completed ? "미완료로 전환" : "완료로 전환"}</button>}
 
         {note.content && note.content !== note.title && <p className="mt-4 whitespace-pre-wrap rounded-xl bg-slate-50 p-3 text-sm leading-6 text-slate-600">{note.content}</p>}
 

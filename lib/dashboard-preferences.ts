@@ -25,7 +25,7 @@ const defaultSizes: Record<DashboardCardId, DashboardCardSize> = {
   shipments: "large",
   progress: "large",
   recent_projects: "large",
-  recent_activity: "medium",
+  recent_activity: "large",
 };
 
 export function getDefaultDashboardPreferences(): DashboardCardPreference[] {

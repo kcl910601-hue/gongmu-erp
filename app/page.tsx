@@ -23,7 +23,6 @@ import { Badge, type BadgeVariant } from "@/components/ui/Badge";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ProgressBar } from "@/components/ui/ProgressBar";
 import ActivityTimeline from "@/components/activity/ActivityTimeline";
-import MyWorkspaceRecent from "@/components/recent/MyWorkspaceRecent";
 import DashboardSearch from "@/components/dashboard/DashboardSearch";
 import { DashboardCard, DashboardCustomization } from "@/components/dashboard/DashboardCustomization";
 import { Skeleton } from "@/components/ui/Skeleton";
@@ -1078,10 +1077,7 @@ export default function Home() {
             />
           </DashboardCard>
           <DashboardCard cardId="workspace">
-          <div className="dashboard-workspace-grid grid gap-4 xl:grid-cols-[minmax(0,0.9fr)_minmax(420px,1.1fr)]">
-            <div id="my-workspace"><MyWorkspaceRecent /></div>
-            <PersonalWorkspace />
-          </div>
+          <div id="my-workspace"><PersonalWorkspace /></div>
           </DashboardCard>
           <DashboardCard cardId="kpi" summary={`${totalProjects}개 프로젝트`}>
           <div className="dashboard-kpi-grid mb-3 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
@@ -2099,7 +2095,6 @@ export default function Home() {
             >
               <ActivityTimeline
                 limit={showAllActivities ? 20 : 2}
-                compact
               />
             </div>
             <div className="mt-2 border-t border-slate-100 pt-2 text-center">

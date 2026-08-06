@@ -14,3 +14,11 @@ test("카드는 대상 위치로 이동하고 순서를 다시 정규화한다",
   assert.equal(moved[0].cardId, "recent_activity");
   assert.deepEqual(moved.map((card) => card.order), moved.map((_, index) => index));
 });
+
+test("기본 Dashboard는 My Workspace와 최근 활동을 전체 폭으로 배치한다", () => {
+  const defaults = getDefaultDashboardPreferences();
+  assert.equal(defaults.find((card) => card.cardId === "workspace")?.size, "large");
+  assert.equal(defaults.find((card) => card.cardId === "recent_activity")?.size, "large");
+  const existing = normalizeDashboardPreferences([{ cardId: "recent_activity", order: 0, size: "small", hidden: false, collapsed: false }]);
+  assert.equal(existing.find((card) => card.cardId === "recent_activity")?.size, "small");
+});
