@@ -187,7 +187,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     <div className="flex min-h-screen bg-slate-50">
       <Sidebar />
       <main
-        className={`min-h-screen flex-1 bg-slate-50 transition-all duration-300 ${
+        className={`min-h-screen min-w-0 flex-1 bg-slate-50 transition-all duration-300 ${
           isCollapsed ? "ml-14" : "ml-52"
         }`}
       >

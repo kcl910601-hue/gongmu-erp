@@ -1,5 +1,11 @@
 # Gongmu ERP - Project Context
 
+## Sprint 9-4B-2 Calendar Filter Toolbar Responsive Layout
+
+Calendar 필터 Toolbar는 `w-full min-w-0 flex-wrap` 구조로 필터 그룹 단위 줄바꿈을 지원한다. AppShell의 메인 콘텐츠에도 `min-w-0`를 적용해 Sidebar를 제외한 실제 가용 폭 안에서 수축하며, 일정 소스와 보기 방식의 내부 컨트롤도 필요할 때 줄바꿈한다.
+
+완료 일정 토글은 모바일·태블릿·데스크톱 최소 폭과 36px 스위치 영역을 유지한다. Track과 문구는 독립된 flex 형제이며, Thumb는 absolute 배치 없이 Track 내부에서만 16px 이동해 상태 변경 시 문구 위치가 변하지 않는다. Select와 완료 버튼은 축소하지 않고 그룹 전체가 다음 줄로 이동해 문구 및 컨트롤 clipping과 페이지 가로 스크롤을 방지한다.
+
 ## Sprint 9-4E My Workspace Small Card Responsive Layout
 
 My Workspace는 Dashboard customization context의 실제 `workspace` 카드 크기를 직접 사용한다. Small은 viewport와 무관하게 2×2 요약, 줄바꿈 Tab, 전체 폭 검색과 2열 필터·정렬, 10건 단위 Todo 목록, 접힌 Reference Task, 접힌 완료 목록, 세로 공유 요청 요약 순서의 단일 열 레이아웃을 렌더링한다. Medium과 Large는 기존 Todo 2/3·보조 영역 1/3 구조와 15건 기본 목록을 유지한다.

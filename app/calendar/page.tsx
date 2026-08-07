@@ -805,7 +805,7 @@ export default function CalendarPage() {
     assigneeFilter !== "전체";
 
   return (
-    <div className="min-h-screen bg-slate-50 px-4 py-5 text-slate-900 sm:px-6 lg:px-8">
+    <div className="min-h-screen min-w-0 max-w-full bg-slate-50 px-4 py-5 text-slate-900 sm:px-6 lg:px-8">
       <div className="mb-5 flex flex-col gap-5 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:flex-row sm:items-start sm:justify-between">
         <div>
           <div className="mb-2 flex items-center gap-2 text-sm font-medium text-slate-500">
@@ -866,20 +866,20 @@ export default function CalendarPage() {
         </div>
       </div>
 
-      <div className="mb-5 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-        <div className="flex flex-wrap items-end gap-3">
-          <div><div className="mb-1.5 text-xs font-medium text-slate-500">일정 소스</div><div className="flex flex-wrap rounded-2xl bg-slate-100 p-1">{sourceFilters.map((filter) => <button key={filter.value} type="button" onClick={() => { setSourceFilter(filter.value); if (filter.value !== "all" && filter.value !== "company") setViewMode("달력 보기"); window.localStorage.setItem(CALENDAR_SOURCE_FILTER_KEY, filter.value); }} className={`rounded-xl px-3 py-2 text-sm font-medium transition ${sourceFilter === filter.value ? "bg-white text-blue-700 shadow-sm" : "text-slate-500 hover:text-slate-800"}`}>{filter.label}</button>)}</div></div>
-          <div><div className="mb-1.5 text-xs font-medium text-slate-500">개인 일정</div><button type="button" role="switch" aria-checked={showCompletedPersonalSchedules} onClick={() => setShowCompletedPersonalSchedules((current) => { const next = !current; if (calendarPreferenceKey) window.localStorage.setItem(calendarPreferenceKey, String(next)); return next; })} className="inline-flex h-10 items-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-3 text-sm font-medium text-slate-700 hover:bg-white"><span className={`relative h-5 w-9 rounded-full transition ${showCompletedPersonalSchedules ? "bg-violet-600" : "bg-slate-300"}`}><span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${showCompletedPersonalSchedules ? "translate-x-[18px]" : "translate-x-0.5"}`}/></span>완료 일정 표시</button></div>
-          <div>
+      <div className="mb-5 min-w-0 max-w-full rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+        <div className="flex w-full min-w-0 flex-wrap items-end gap-x-3 gap-y-2">
+          <div className="min-w-0 max-w-full"><div className="mb-1.5 text-xs font-medium text-slate-500">일정 소스</div><div className="flex max-w-full flex-wrap rounded-2xl bg-slate-100 p-1">{sourceFilters.map((filter) => <button key={filter.value} type="button" onClick={() => { setSourceFilter(filter.value); if (filter.value !== "all" && filter.value !== "company") setViewMode("달력 보기"); window.localStorage.setItem(CALENDAR_SOURCE_FILTER_KEY, filter.value); }} className={`shrink-0 whitespace-nowrap rounded-xl px-3 py-2 text-sm font-medium transition ${sourceFilter === filter.value ? "bg-white text-blue-700 shadow-sm" : "text-slate-500 hover:text-slate-800"}`}>{filter.label}</button>)}</div></div>
+          <div className="shrink-0"><div className="mb-1.5 text-xs font-medium text-slate-500">개인 일정</div><button type="button" role="switch" aria-checked={showCompletedPersonalSchedules} onClick={() => setShowCompletedPersonalSchedules((current) => { const next = !current; if (calendarPreferenceKey) window.localStorage.setItem(calendarPreferenceKey, String(next)); return next; })} className="inline-flex h-10 min-w-[104px] shrink-0 items-center justify-start gap-2 whitespace-nowrap rounded-2xl border border-slate-200 bg-slate-50 px-3 text-sm font-medium text-slate-700 hover:bg-white focus-visible:ring-2 focus-visible:ring-violet-200 sm:min-w-[124px] lg:min-w-[140px]"><span className={`flex h-5 w-9 shrink-0 items-center rounded-full p-0.5 transition-colors ${showCompletedPersonalSchedules ? "bg-violet-600" : "bg-slate-300"}`} aria-hidden="true"><span className={`h-4 w-4 shrink-0 rounded-full bg-white shadow-sm transition-transform ${showCompletedPersonalSchedules ? "translate-x-4" : "translate-x-0"}`}/></span><span className="shrink-0 whitespace-nowrap"><span className="sm:hidden">완료 일정</span><span className="hidden sm:inline">완료 일정 표시</span></span></button></div>
+          <div className="min-w-0 max-w-full">
             <div className="mb-1.5 text-xs font-medium text-slate-500">보기 방식</div>
 
-            <div className="flex gap-2">
+            <div className="flex max-w-full flex-wrap gap-2">
               {viewList.map((view) => (
                 <Button
                   key={view}
                   onClick={() => changeViewMode(view)}
                   variant={viewMode === view ? "primary" : "ghost"}
-                  className={`h-10 rounded-2xl px-4 text-sm font-medium transition-colors duration-150 ${
+                  className={`h-10 shrink-0 whitespace-nowrap rounded-2xl px-4 text-sm font-medium transition-colors duration-150 ${
                     viewMode === view
                       ? "shadow-sm ring-1 ring-blue-100"
                       : "border border-slate-200 bg-slate-50 text-slate-700 hover:bg-white focus-visible:ring-2 focus-visible:ring-blue-100"
@@ -891,12 +891,12 @@ export default function CalendarPage() {
             </div>
           </div>
 
-          <div>
+          <div className="shrink-0">
             <div className="mb-1.5 text-xs font-medium text-slate-500">일정 구분</div>
             <select
               value={typeFilter}
               onChange={(e) => setTypeFilter(e.target.value)}
-              className="h-10 rounded-2xl border border-slate-200 bg-slate-50 px-3 text-sm text-slate-700 outline-none transition-colors duration-150 hover:bg-white focus:border-blue-300 focus:bg-white focus:ring-2 focus:ring-blue-100"
+              className="h-10 w-32 max-w-full shrink-0 rounded-2xl border border-slate-200 bg-slate-50 px-3 text-sm text-slate-700 outline-none transition-colors duration-150 hover:bg-white focus:border-blue-300 focus:bg-white focus:ring-2 focus:ring-blue-100"
             >
               {typeList.map((type) => (
                 <option key={type} value={type}>
@@ -906,12 +906,12 @@ export default function CalendarPage() {
             </select>
           </div>
 
-          <div>
+          <div className="shrink-0">
             <div className="mb-1.5 text-xs font-medium text-slate-500">담당자</div>
             <select
               value={assigneeFilter}
               onChange={(e) => setAssigneeFilter(e.target.value)}
-              className="h-10 rounded-2xl border border-slate-200 bg-slate-50 px-3 text-sm text-slate-700 outline-none transition-colors duration-150 hover:bg-white focus:border-blue-300 focus:bg-white focus:ring-2 focus:ring-blue-100"
+              className="h-10 w-40 max-w-full shrink-0 rounded-2xl border border-slate-200 bg-slate-50 px-3 text-sm text-slate-700 outline-none transition-colors duration-150 hover:bg-white focus:border-blue-300 focus:bg-white focus:ring-2 focus:ring-blue-100"
             >
               {assigneeList.map((assignee) => (
                 <option key={assignee} value={assignee}>
@@ -921,12 +921,12 @@ export default function CalendarPage() {
             </select>
           </div>
 
-          {viewMode === "달력 보기" && <div>
+          {viewMode === "달력 보기" && <div className="shrink-0">
             <div className="mb-1.5 text-xs font-medium text-slate-500">완료</div>
             <Button
               onClick={() => setShowCompleted((current) => !current)}
               variant={showCompleted ? "secondary" : "primary"}
-              className="h-10 rounded-2xl px-4 text-sm font-medium transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-blue-100"
+              className="h-10 shrink-0 whitespace-nowrap rounded-2xl px-4 text-sm font-medium transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-blue-100"
             >
               {showCompleted ? "완료 숨기기" : "완료 보기"}
             </Button>
