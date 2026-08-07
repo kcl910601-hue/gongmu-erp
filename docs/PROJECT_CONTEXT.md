@@ -1,5 +1,11 @@
 # Gongmu ERP - Project Context
 
+## Sprint 9-4E My Workspace Small Card Responsive Layout
+
+My Workspace는 Dashboard customization context의 실제 `workspace` 카드 크기를 직접 사용한다. Small은 viewport와 무관하게 2×2 요약, 줄바꿈 Tab, 전체 폭 검색과 2열 필터·정렬, 10건 단위 Todo 목록, 접힌 Reference Task, 접힌 완료 목록, 세로 공유 요청 요약 순서의 단일 열 레이아웃을 렌더링한다. Medium과 Large는 기존 Todo 2/3·보조 영역 1/3 구조와 15건 기본 목록을 유지한다.
+
+Small Todo와 일정·메모 카드의 제목·내용은 최대 2줄과 한글 강제 줄바꿈을 사용하고 Badge는 flex wrap을 유지한다. 완료 체크만 카드에 항상 노출하며 나머지 수정·공유·고정·삭제·댓글·Timeline 액션은 `⋯` 메뉴에 배치한다. 고정 높이 또는 전체 overflow 차단은 추가하지 않으며 기존 Realtime, 권한, short editing lock, 사용자 설정과 Dashboard 편집 동작은 변경하지 않는다.
+
 ## Sprint 9-4D Dashboard Today Data & Workspace Layout Refinement
 
 Morning Brief와 My Workspace는 `getPersonalTodoDateBucket`, `isTodayPersonalTodo`, `isOverduePersonalTodo`를 공통 사용해 로컬 `YYYY-MM-DD` 기준으로 개인 Todo를 완료·지연·오늘·예정·날짜 없음으로 구분한다. Morning Brief 개인 업무에는 오늘 날짜의 미완료 Todo와 오늘 마감 미완료 Reference Task만 포함하고, 지연 개인 Todo와 Reference Task는 별도 지연 목록으로 표시한다. 회사 업무도 현재 권한·관리자 범위를 유지하면서 미완료 `due_date === today`만 오늘 목록에, 과거 마감은 별도 지연 목록에 표시한다.

@@ -119,3 +119,11 @@ export function DashboardCard({ cardId, summary, children }: { cardId: Dashboard
     {!preference.collapsed && !preference.hidden && <div className="dashboard-card-body min-w-0">{children}</div>}
   </section>;
 }
+
+export function useDashboardCardSize(cardId: DashboardCardId): DashboardCardSize {
+  const context = useContext(DashboardCustomizationContext);
+  if (!context) throw new Error("Dashboard 카드 크기는 DashboardCustomization 안에서 조회해야 합니다.");
+  return context.cards.find((card) => card.cardId === cardId)?.size
+    ?? getDefaultDashboardPreferences().find((card) => card.cardId === cardId)?.size
+    ?? "large";
+}
