@@ -4,7 +4,7 @@ export type MaterialContractAllocationStatus = typeof MATERIAL_CONTRACT_ALLOCATI
 export const MATERIAL_ALLOCATION_TYPES = ["project", "factory", "as", "sample", "etc"] as const;
 export type MaterialAllocationType = typeof MATERIAL_ALLOCATION_TYPES[number];
 export const MATERIAL_ALLOCATION_TYPE_LABELS: Record<MaterialAllocationType, string> = {
-  project: "프로젝트", factory: "공장", as: "A/S", sample: "샘플", etc: "기타",
+  project: "프로젝트/현장", factory: "공장 재고", as: "A/S", sample: "샘플", etc: "기타",
 };
 export function isMaterialAllocationType(value: unknown): value is MaterialAllocationType {
   return typeof value === "string" && MATERIAL_ALLOCATION_TYPES.includes(value as MaterialAllocationType);

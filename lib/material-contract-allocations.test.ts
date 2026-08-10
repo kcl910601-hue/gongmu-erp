@@ -58,14 +58,29 @@ test("allocation input rejects empty, zero, negative, excess precision and cance
   assert.equal(parseMaterialContractAllocationInput({ allocationType: "project", projectId: 1, quantityTons: 1, allocationDate: "2026-07-31", status: "cancelled" }).data, null);
 });
 
-test("factory, A/S, sample and etc require a destination and reject project ids", () => {
-  for (const allocationType of ["factory", "as", "sample", "etc"]) {
+test("factory stock needs no project or destination and rejects project ids", () => {
+  const valid = parseMaterialContractAllocationInput({ allocationType: "factory", projectId: null, quantityTons: 1, allocationDate: "2026-07-31", status: "planned" });
+  assert.equal(valid.error, null);
+  assert.equal(valid.data?.projectId, null);
+  assert.equal(valid.data?.destinationName, null);
+  assert.equal(parseMaterialContractAllocationInput({ allocationType: "factory", projectId: 3, quantityTons: 1, allocationDate: "2026-07-31", status: "planned" }).data, null);
+});
+
+test("A/S, sample and etc require a destination and reject project ids", () => {
+  for (const allocationType of ["as", "sample", "etc"]) {
     const valid = parseMaterialContractAllocationInput({ allocationType, projectId: null, destinationName: "본사 사용처", quantityTons: 1, allocationDate: "2026-07-31", status: "planned" });
     assert.equal(valid.error, null);
     assert.equal(valid.data?.projectId, null);
     assert.equal(parseMaterialContractAllocationInput({ allocationType, projectId: null, destinationName: "", quantityTons: 1, allocationDate: "2026-07-31", status: "planned" }).data, null);
     assert.equal(parseMaterialContractAllocationInput({ allocationType, projectId: 3, destinationName: "본사 사용처", quantityTons: 1, allocationDate: "2026-07-31", status: "planned" }).data, null);
   }
+});
+
+test("allocation input returns separate target and quantity errors", () => {
+  assert.equal(parseMaterialContractAllocationInput({ allocationType: "project", projectId: null, quantityTons: 1, allocationDate: "2026-07-31", status: "planned" }).error, "프로젝트를 선택해 주세요.");
+  assert.equal(parseMaterialContractAllocationInput({ allocationType: "factory", projectId: null, quantityTons: "", allocationDate: "2026-07-31", status: "planned" }).error, "사용량을 입력해 주세요.");
+  assert.equal(parseMaterialContractAllocationInput({ allocationType: "factory", projectId: null, quantityTons: 0, allocationDate: "2026-07-31", status: "planned" }).error, "사용량은 0보다 커야 합니다.");
+  assert.equal(parseMaterialContractAllocationInput({ allocationType: "factory", projectId: null, quantityTons: "0.00001", allocationDate: "2026-07-31", status: "planned" }).error, "사용량은 소수점 4자리까지 입력할 수 있습니다.");
 });
 
 test("project allocation requires a project and ignores destination names", () => {

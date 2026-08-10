@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Pencil, Plus, X } from "lucide-react";
+import { Download, Pencil, Plus, X } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { formatNumber } from "@/lib/lme";
 import { MATERIAL_ALLOCATION_TYPES, MATERIAL_ALLOCATION_TYPE_LABELS, type ContractAllocationSummary, type MaterialAllocationType, type MaterialContractAllocation } from "@/lib/material-contract-allocations";
@@ -23,6 +23,7 @@ export function MaterialContractAllocationDialog({ contract, fixedProject, initi
   const [projects, setProjects] = useState<ProjectOption[]>(fixedProject ? [fixedProject] : []);
   const [projectQuery, setProjectQuery] = useState("");
   const [saving, setSaving] = useState(false);
+  const [updatingStatusId, setUpdatingStatusId] = useState<string | null>(null);
   const initialEditOpened = useRef(false);
   const initialCreateOpened = useRef(false);
 
@@ -64,7 +65,13 @@ export function MaterialContractAllocationDialog({ contract, fixedProject, initi
   async function refresh() { await Promise.all([load(), onChanged()]); }
   async function save() {
     const quantity = Number(form.quantityTons);
-    if ((form.allocationType === "project" && !form.projectId) || (form.allocationType !== "project" && !form.destinationName.trim()) || !Number.isFinite(quantity) || quantity <= 0 || !/^\d+(\.\d{1,4})?$/.test(form.quantityTons)) return toast.error("사용 대상과 0보다 큰 소수점 4자리 이하 톤수를 확인해주세요.");
+    if (!form.allocationType) return toast.error("사용 대상을 선택해 주세요.");
+    if (form.allocationType === "project" && !form.projectId) return toast.error("프로젝트를 선택해 주세요.");
+    if (form.allocationType !== "project" && form.allocationType !== "factory" && !form.destinationName.trim()) return toast.error("사용처명을 입력해 주세요.");
+    if (!form.quantityTons) return toast.error("사용량을 입력해 주세요.");
+    if (!Number.isFinite(quantity)) return toast.error("사용량은 숫자로 입력해 주세요.");
+    if (quantity <= 0) return toast.error("사용량은 0보다 커야 합니다.");
+    if (!/^\d+(\.\d{1,4})?$/.test(form.quantityTons)) return toast.error("사용량은 소수점 4자리까지 입력할 수 있습니다.");
     setSaving(true);
     try {
       const url = editing === "new" ? `/api/statistics/lme/contracts/${contractId}/allocations` : `/api/statistics/lme/contracts/${contractId}/allocations/${editing?.id}`;
@@ -79,17 +86,67 @@ export function MaterialContractAllocationDialog({ contract, fixedProject, initi
     const result = await response.json() as { error?: string }; if (!response.ok) return toast.error(result.error ?? "배정을 취소하지 못했습니다.");
     toast.success("배정을 취소했습니다."); await refresh();
   }
+  async function changeStatus(allocation: MaterialContractAllocation, status: "planned" | "confirmed") {
+    if (allocation.status === status || updatingStatusId) return;
+    const previousStatus = allocation.status;
+    setUpdatingStatusId(allocation.id);
+    setAllocations((current) => current.map((item) => item.id === allocation.id ? { ...item, status } : item));
+    try {
+      const response = await fetch(`/api/statistics/lme/contracts/${contractId}/allocations/${allocation.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          allocationType: allocation.allocation_type,
+          projectId: allocation.project_id,
+          destinationName: allocation.destination_name,
+          quantityTons: allocation.quantity_tons,
+          allocationDate: allocation.allocation_date,
+          status,
+          purchaseOrderNo: allocation.purchase_order_no,
+          memo: allocation.memo,
+          contextProjectId: fixedProject?.id,
+        }),
+      });
+      const result = await response.json() as { error?: string };
+      if (!response.ok) throw new Error(result.error ?? "상태를 변경하지 못했습니다.");
+      await refresh();
+      toast.success(status === "confirmed" ? "확정 상태로 변경했습니다." : "예정 상태로 변경했습니다.");
+    } catch (error) {
+      setAllocations((current) => current.map((item) => item.id === allocation.id ? { ...item, status: previousStatus } : item));
+      toast.error(error instanceof Error ? error.message : "상태를 변경하지 못했습니다.");
+    } finally {
+      setUpdatingStatusId(null);
+    }
+  }
 
   return <div className="fixed inset-0 z-[110] flex items-center justify-center bg-slate-950/45 p-4" role="dialog" onMouseDown={(event) => { if (event.target === event.currentTarget && !saving) onClose(); }}>
-    <div className="max-h-[94vh] w-full max-w-6xl overflow-y-auto rounded-2xl bg-white p-5">
+    <div className="max-h-[94vh] w-full max-w-[96vw] overflow-y-auto rounded-2xl bg-white p-5 xl:max-w-7xl">
       <div className="flex items-start justify-between"><div><h2 className="text-lg font-semibold">원자재 사용등록</h2><p className="mt-1 text-sm text-slate-500">{contract.contract_name} · {contract.supplier_name}</p></div><button aria-label="닫기" onClick={onClose}><X size={18}/></button></div>
       <div className="mt-4 grid gap-2 sm:grid-cols-5">{[["계약 수량",summary?.contractQuantityTons],["확정 사용량",summary?.confirmedTons],["예정 배정량",summary?.plannedTons],["잔여 계약량",summary?.remainingTons],["현재 가용량",summary?.availableTons]].map(([label,value])=><div key={String(label)} className="rounded-xl bg-slate-50 p-3 text-xs"><span className="text-slate-500">{label}</span><p className="mt-1 font-bold">{formatNumber(Number(value ?? 0),4)}t</p></div>)}</div>
-      <div className="mt-4 flex justify-end">{canManage&&<Button variant="primary" onClick={startCreate}><Plus size={14}/>사용등록</Button>}</div>
+      <div className="mt-4 flex justify-end gap-2"><a href={`/api/statistics/lme/contracts/${contractId}/allocations/export`} className="inline-flex h-8 items-center justify-center gap-1 rounded-xl border border-slate-300 bg-white px-3 text-sm font-medium text-slate-700 transition-all duration-200 hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-blue-200"><Download size={14}/>CSV 내보내기</a>{canManage&&<Button variant="primary" onClick={startCreate}><Plus size={14}/>사용등록</Button>}</div>
       {editing&&<section className="mt-4 rounded-2xl border border-blue-200 bg-blue-50/30 p-4"><div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         <label className="text-xs font-semibold">사용 구분<select disabled={Boolean(fixedProject)} value={form.allocationType} onChange={(event)=>setForm({...form,allocationType:event.target.value as MaterialAllocationType,projectId:"",destinationName:""})} className="mt-1 w-full rounded-xl border bg-white px-3 py-2 text-sm">{MATERIAL_ALLOCATION_TYPES.map((type)=><option key={type} value={type}>{MATERIAL_ALLOCATION_TYPE_LABELS[type]}</option>)}</select></label>
-        {form.allocationType==="project"?<label className="text-xs font-semibold lg:col-span-2">프로젝트 {fixedProject?null:<input value={projectQuery} onChange={(event)=>setProjectQuery(event.target.value)} placeholder="프로젝트 코드 또는 현장명" className="mt-1 w-full rounded-xl border bg-white px-3 py-2 text-sm"/>}<select disabled={Boolean(fixedProject)} value={form.projectId} onChange={(event)=>setForm({...form,projectId:event.target.value})} className="mt-2 w-full rounded-xl border bg-white px-3 py-2 text-sm"><option value="">프로젝트 선택</option>{projects.map((project)=><option key={project.id} value={project.id}>{project.project_code ?? "코드 없음"} · {project.project_name} · {project.client_name ?? project.site_address ?? "-"}</option>)}</select></label>:<label className="text-xs font-semibold lg:col-span-2">사용처명<input maxLength={200} value={form.destinationName} onChange={(event)=>setForm({...form,destinationName:event.target.value})} placeholder="사용처를 입력하세요" className="mt-1 w-full rounded-xl border bg-white px-3 py-2 text-sm"/></label>}
+        {form.allocationType==="project"?<label className="text-xs font-semibold lg:col-span-2">프로젝트 {fixedProject?null:<input value={projectQuery} onChange={(event)=>setProjectQuery(event.target.value)} placeholder="프로젝트 코드 또는 현장명" className="mt-1 w-full rounded-xl border bg-white px-3 py-2 text-sm"/>}<select disabled={Boolean(fixedProject)} value={form.projectId} onChange={(event)=>setForm({...form,projectId:event.target.value})} className="mt-2 w-full rounded-xl border bg-white px-3 py-2 text-sm"><option value="">프로젝트 선택</option>{projects.map((project)=><option key={project.id} value={project.id}>{project.project_code ?? "코드 없음"} · {project.project_name} · {project.client_name ?? project.site_address ?? "-"}</option>)}</select></label>:form.allocationType==="factory"?<div className="lg:col-span-2"><span className="text-xs font-semibold">사용 대상</span><div className="mt-1 rounded-xl border bg-slate-50 px-3 py-2 text-sm font-semibold text-blue-700">공장 재고</div></div>:<label className="text-xs font-semibold lg:col-span-2">사용처명<input maxLength={200} value={form.destinationName} onChange={(event)=>setForm({...form,destinationName:event.target.value})} placeholder="사용처를 입력하세요" className="mt-1 w-full rounded-xl border bg-white px-3 py-2 text-sm"/></label>}
         <label className="text-xs font-semibold">배정 톤수<div className="mt-1 flex"><input type="number" min="0.0001" step="0.0001" value={form.quantityTons} onChange={(event)=>setForm({...form,quantityTons:event.target.value})} className="w-full rounded-l-xl border px-3 py-2 text-sm"/><span className="rounded-r-xl border border-l-0 bg-white px-3 py-2 text-sm">t</span></div><span className="mt-1 block font-normal text-slate-500">수정 가능 최대 {formatNumber(maximum,4)}t</span></label><label className="text-xs font-semibold">배정일<input type="date" value={form.allocationDate} onChange={(event)=>setForm({...form,allocationDate:event.target.value})} className="mt-1 w-full rounded-xl border bg-white px-3 py-2 text-sm"/></label><label className="text-xs font-semibold">상태<select value={form.status} onChange={(event)=>setForm({...form,status:event.target.value as "planned"|"confirmed"})} className="mt-1 w-full rounded-xl border bg-white px-3 py-2 text-sm"><option value="planned">예정 - 가용량 선점</option><option value="confirmed">확정 - 실제 발주</option></select></label><label className="text-xs font-semibold">발주번호<input maxLength={100} value={form.purchaseOrderNo} onChange={(event)=>setForm({...form,purchaseOrderNo:event.target.value})} className="mt-1 w-full rounded-xl border bg-white px-3 py-2 text-sm"/></label><label className="text-xs font-semibold sm:col-span-2 lg:col-span-3">메모<textarea rows={3} maxLength={2000} value={form.memo} onChange={(event)=>setForm({...form,memo:event.target.value})} className="mt-1 w-full rounded-xl border bg-white px-3 py-2 text-sm"/></label></div><div className="mt-4 flex justify-end gap-2"><Button variant="outline" onClick={()=>setEditing(null)}>취소</Button><Button variant="primary" disabled={saving} onClick={()=>void save()}>{saving?"저장 중...":"저장"}</Button></div></section>}
-      {loading?<p className="py-12 text-center text-sm text-slate-400">불러오는 중...</p>:<div className="mt-4 overflow-x-auto rounded-xl border"><table className="min-w-[1300px] w-full text-left text-xs"><thead className="bg-slate-100"><tr>{["배정일","사용 구분","대상","프로젝트 코드","상태","톤수","발주번호","메모","작성자","작성일","관리"].map((label)=><th key={label} className="px-3 py-2">{label}</th>)}</tr></thead><tbody>{allocations.filter((allocation)=>!fixedProject||allocation.project_id===fixedProject.id).map((allocation)=><tr key={allocation.id} className={`border-t ${allocation.status==="cancelled"?"bg-slate-50 text-slate-400":""}`}><td className="px-3 py-2">{allocation.allocation_date}</td><td className="px-3 py-2"><span className="rounded-full bg-slate-100 px-2 py-1">{MATERIAL_ALLOCATION_TYPE_LABELS[allocation.allocation_type]}</span></td><td className="px-3 py-2 font-semibold">{allocation.allocation_type==="project"?allocation.project_name:allocation.destination_name}</td><td className="px-3 py-2">{allocation.allocation_type==="project"?allocation.project_code??"-":"-"}</td><td className="px-3 py-2">{statusLabel[allocation.status]}</td><td className="px-3 py-2">{formatNumber(allocation.quantity_tons,4)}t</td><td className="px-3 py-2">{allocation.purchase_order_no??"-"}</td><td className="max-w-52 truncate px-3 py-2">{allocation.memo??"-"}</td><td className="px-3 py-2">{allocation.created_by_name??"-"}</td><td className="px-3 py-2">{allocation.created_at.slice(0,10)}</td><td className="px-3 py-2">{canManage&&allocation.status!=="cancelled"&&<div className="flex gap-1"><button aria-label="사용등록 수정" className="rounded-lg border bg-white p-1.5" onClick={()=>startEdit(allocation)}><Pencil size={13}/></button><Button size="sm" variant="danger" onClick={()=>void cancelAllocation(allocation)}>배정 취소</Button></div>}</td></tr>)}{allocations.filter((allocation)=>!fixedProject||allocation.project_id===fixedProject.id).length===0&&<tr><td colSpan={11} className="px-4 py-12 text-center text-slate-400">사용등록 이력이 없습니다.</td></tr>}</tbody></table></div>}
+      {loading?<p className="py-12 text-center text-sm text-slate-400">불러오는 중...</p>:<div className="mt-4 overflow-x-auto rounded-xl border">
+        <table className="w-full min-w-[1180px] table-fixed text-left text-xs">
+          <colgroup><col className="w-[88px]"/><col className="w-[112px]"/><col/><col className="w-[108px]"/><col className="w-[96px]"/><col className="w-[88px]"/><col className="w-[190px]"/><col className="w-[150px]"/><col className="w-[96px]"/><col className="w-[90px]"/><col className="w-[132px]"/></colgroup>
+          <thead className="bg-slate-100"><tr>{["배정일","사용 구분","대상","프로젝트 코드","상태","톤수","발주번호","메모","작성자","작성일","관리"].map((label)=><th key={label} className="whitespace-nowrap px-3 py-2">{label}</th>)}</tr></thead>
+          <tbody>{allocations.filter((allocation)=>!fixedProject||allocation.project_id===fixedProject.id).map((allocation)=><tr key={allocation.id} className={`border-t ${allocation.status==="cancelled"?"bg-slate-50 text-slate-400":""}`}>
+            <td className="whitespace-nowrap px-3 py-2 align-middle">{allocation.allocation_date}</td>
+            <td className="whitespace-nowrap px-3 py-2 align-middle"><span className="inline-flex whitespace-nowrap rounded-full bg-slate-100 px-2 py-1">{MATERIAL_ALLOCATION_TYPE_LABELS[allocation.allocation_type]}</span></td>
+            <td className="truncate px-3 py-2 align-middle font-semibold" title={allocation.allocation_type==="project"?allocation.project_name:allocation.allocation_type==="factory"?"공장 재고":allocation.destination_name??""}>{allocation.allocation_type==="project"?allocation.project_name:allocation.allocation_type==="factory"?"공장 재고":allocation.destination_name}</td>
+            <td className="whitespace-nowrap px-3 py-2 align-middle">{allocation.allocation_type==="project"?allocation.project_code??"-":"-"}</td>
+            <td className="whitespace-nowrap px-3 py-2 align-middle">{allocation.status==="cancelled"?<span className="inline-flex min-w-16 justify-center rounded-full bg-slate-100 px-2 py-1">취소</span>:canManage?<div className="flex flex-col gap-1"><select aria-label="배정 상태 변경" disabled={updatingStatusId!==null} value={allocation.status} onChange={(event)=>void changeStatus(allocation,event.target.value as "planned"|"confirmed")} className={`min-w-18 rounded-lg border px-2 py-1 text-xs font-semibold ${allocation.status==="confirmed"?"border-emerald-200 bg-emerald-50 text-emerald-700":"border-amber-200 bg-amber-50 text-amber-700"}`}><option value="planned">예정</option><option value="confirmed">확정</option></select>{updatingStatusId===allocation.id&&<span className="text-[10px] text-slate-500">저장 중...</span>}</div>:<span className={`inline-flex min-w-16 justify-center rounded-full px-2 py-1 font-semibold ${allocation.status==="confirmed"?"bg-emerald-50 text-emerald-700":"bg-amber-50 text-amber-700"}`}>{statusLabel[allocation.status]}</span>}</td>
+            <td className="whitespace-nowrap px-3 py-2 text-right align-middle tabular-nums">{formatNumber(allocation.quantity_tons,4)}t</td>
+            <td className="px-3 py-2 align-middle"><span className="line-clamp-2 break-words" title={allocation.purchase_order_no??""}>{allocation.purchase_order_no??"-"}</span></td>
+            <td className="truncate px-3 py-2 align-middle" title={allocation.memo??""}>{allocation.memo??"-"}</td>
+            <td className="whitespace-nowrap px-3 py-2 align-middle" title={allocation.created_by_name??""}>{allocation.created_by_name??"-"}</td>
+            <td className="whitespace-nowrap px-3 py-2 align-middle">{allocation.created_at.slice(0,10)}</td>
+            <td className="whitespace-nowrap px-3 py-2 align-middle">{canManage&&allocation.status!=="cancelled"&&<div className="flex items-center gap-1"><button aria-label="사용등록 수정" className="rounded-lg border bg-white p-1.5" onClick={()=>startEdit(allocation)}><Pencil size={13}/></button><Button size="sm" variant="danger" onClick={()=>void cancelAllocation(allocation)}>배정 취소</Button></div>}</td>
+          </tr>)}{allocations.filter((allocation)=>!fixedProject||allocation.project_id===fixedProject.id).length===0&&<tr><td colSpan={11} className="px-4 py-12 text-center text-slate-400">사용등록 이력이 없습니다.</td></tr>}</tbody>
+        </table>
+      </div>}
     </div>
   </div>;
 }

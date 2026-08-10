@@ -336,3 +336,9 @@ DB-2 판단:
 - 직원 부서 기능을 유지하려면 `employees.department` migration을 원격 Supabase에 적용해야 합니다.
 - 직원관리 화면의 `active`/`is_active`, `phone`, `memo` 불일치를 별도 작업으로 정리해야 합니다.
 - 공지 기능을 DB 기반으로 확장하려면 `notices` 테이블 설계와 migration이 먼저 필요합니다.
+
+## Sprint 9-5 공장 재고 원자재 사용 대상
+
+원자재 사용등록은 기존 `material_contract_allocations.allocation_type = 'factory'`를 `공장 재고`로 표시합니다. 공장 재고 대상은 프로젝트와 사용처명을 요구하지 않고 `project_id = null`로 저장하며, 프로젝트 대상은 기존처럼 실제 프로젝트가 필수입니다. 이 모듈의 예정·확정은 공급계약 물량을 선점·확정하는 배정 흐름이며 별도 물리 재고 입고·출고 원장은 현재 존재하지 않습니다.
+
+사용내역 목록의 예정·확정 변경은 기존 allocation PATCH API와 `save_material_contract_allocation` RPC를 재사용합니다. 관리자만 인라인 Select를 사용할 수 있고, 행 단위 저장 중 잠금과 실패 시 화면 상태 복원을 적용합니다. 테이블은 주요 식별값을 한 줄로 유지하고 발주번호만 최대 두 줄로 표시합니다.

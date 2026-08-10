@@ -1,5 +1,12 @@
 # ERP Database v1
 
+## Sprint 9-5 공장 재고 원자재 배정
+
+- `material_contract_allocations.allocation_type = 'factory'`를 공장 재고 대상으로 재사용하며 `project_id`는 null로 저장합니다.
+- 공장 재고는 별도 사용처명 없이 저장할 수 있고, 기존 factory 행의 `destination_name`은 변경하지 않습니다.
+- 예정·확정 행은 기존 계약 가용량 계산에 각각 반영되며 취소 행은 집계에서 제외됩니다. 이 테이블은 물리 재고 입출고 원장이 아닙니다.
+- Migration `20260810120000_support_factory_stock_allocations.sql`과 Verification `20260810121000_verify_factory_stock_allocations.sql`은 운영 DB에 자동 적용하지 않습니다.
+
 ## Sprint 9-1B Hierarchical Delete Lock Check
 
 - Migration: `20260805130000_add_hierarchical_delete_lock_check.sql`
