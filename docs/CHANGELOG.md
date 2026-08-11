@@ -1,5 +1,20 @@
 # CHANGELOG
 
+## Sprint 9-5F Staff Role Calendar-Only Access
+
+- Classified only approved `role=staff` employees whose organization name is `기타` and position is `스태프` as Calendar-only users, preserving existing Staff permissions for every other organization/position.
+- Redirected Calendar-only users to `/calendar` after login and blocked other page routes, non-Calendar APIs, global search, notifications, quick actions, recent workspace, and non-Calendar Sidebar entries.
+- Kept Month, Timeline, Gantt, Realtime, Presence, detail viewing, filters, presentation, and Gantt Excel export available while disabling Calendar/Gantt/personal-note/comment mutations and editing-lock acquisition.
+- Added a restrictive RLS migration for all existing RLS-enabled public tables so Calendar-only staff cannot insert, update, or delete through direct Supabase calls.
+- Added permission tests covering staff classification, route/API whitelists, Calendar view/edit/export capabilities, and existing Staff regression.
+
+## Sprint 9-5E Gantt Excel Export
+
+- Added an `Excel 다운로드` dialog to the Calendar Gantt toolbar with current Gantt range, current month, and custom date range options.
+- Exported the already filtered and sorted Gantt rows to a real `.xlsx` workbook without additional API or DB queries.
+- Added Korean static columns, merged month/day timeline headers, weekend/today emphasis, status bars, project boundaries, frozen panes, and landscape print settings.
+- Added workbook tests for 1/10/100 rows, multi-project and year-boundary schedules, completed/delayed/unassigned tasks, layout metadata, reopening, and sanitized filenames; no DB migration was added.
+
 ## Sprint 9-4E-3 Calendar Personal Card Clipping Fix
 
 - Removed the parent-level 48px height and clipping rule that cut off the final personal schedule card.

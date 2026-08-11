@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import { usePathname, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { getEmployeeByAuth, type CurrentEmployee } from "@/lib/auth";
-import { getEmployeeAuthorizationStatus, hasPermission, isAuthorizedEmployee } from "@/lib/permissions";
+import { canEmployeeAccessRoute, getEmployeeAuthorizationStatus, hasPermission, isAuthorizedEmployee, isCalendarOnlyStaff } from "@/lib/permissions";
 import { AppShellUserProvider } from "@/contexts/AppShellUserContext";
 import Header from "./Header";
 import Sidebar from "./Sidebar";
@@ -125,6 +125,11 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   }, [employee, isPublicPage, pathname]);
 
   useEffect(() => {
+    if (isPublicPage || !employee || canEmployeeAccessRoute(employee, pathname)) return;
+    router.replace(isCalendarOnlyStaff(employee) ? "/calendar" : "/forbidden");
+  }, [employee, isPublicPage, pathname, router]);
+
+  useEffect(() => {
     if (isPublicPage || !employee) return;
     return subscribeToRealtimeCollaboration();
   }, [employee, isPublicPage]);
@@ -182,6 +187,12 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     return <MaintenanceScreen employee={employee} setting={maintenanceSetting} />;
   }
 
+  if (!canEmployeeAccessRoute(employee, pathname)) {
+    return <main className="flex min-h-screen items-center justify-center bg-slate-100"><div className="h-8 w-8 animate-spin rounded-full border-2 border-slate-300 border-t-blue-600" /></main>;
+  }
+
+  const calendarOnly = isCalendarOnlyStaff(employee);
+
   return (
     <AppShellUserProvider value={userContextValue}>
     <div className="flex min-h-screen bg-slate-50">
@@ -191,15 +202,15 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           isCollapsed ? "ml-14" : "ml-52"
         }`}
       >
-        <Header onSearchClick={openSearch} />
+        <Header onSearchClick={openSearch} readOnly={calendarOnly} />
         {children}
       </main>
-      <GlobalSearch isOpen={isSearchOpen} onClose={closeSearch} />
-      {hasPermission(employee?.role, "create") && <QuickActionsFab />}
+      {!calendarOnly && <GlobalSearch isOpen={isSearchOpen} onClose={closeSearch} />}
+      {!calendarOnly && hasPermission(employee?.role, "create") && <QuickActionsFab />}
       <ToastViewport />
-      <FocusPanel />
-      <TaskDetailDialog canEdit={hasPermission(employee?.role, "update")} />
-      <NoteEditorModal />
+      {!calendarOnly && <FocusPanel />}
+      {!calendarOnly && <TaskDetailDialog canEdit={hasPermission(employee?.role, "update")} />}
+      {!calendarOnly && <NoteEditorModal />}
     </div>
     </AppShellUserProvider>
   );

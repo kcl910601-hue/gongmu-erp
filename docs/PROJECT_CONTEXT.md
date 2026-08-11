@@ -352,3 +352,17 @@ DB-2 판단:
 프로젝트 상세의 원자재 사용 영역은 프로젝트 배정 원본과 현재 계약단가를 한 번에 조회해 예정·확정 원가를 분리 계산합니다. 공장 재고와 취소 행은 집계에서 제외하며, 기존 `project_material_usages` 기반 통계 원가에는 자동 복제하지 않습니다. 계약 단가는 불변 핵심 조건이므로 별도 배정 단가 snapshot을 만들지 않습니다.
 
 원자재 계약 알림은 관리자에게만 기존 Notification Inbox/Archive/Badge의 `raw_material` 카테고리로 표시합니다. 활성 계약의 배정 가능 가용량 20%·10%·5% 단계와 종료 30일·7일·당일·만료 이벤트를 DB에서 중복 없이 생성하며, 가용량이 20%를 초과해 회복한 뒤 임계값에 다시 진입하면 새 이벤트로 취급합니다. 평가는 별도 스케줄러 없이 관리자 알림 조회 시 수행하고 기존 공통 Realtime 채널을 재사용합니다.
+
+## Sprint 9-5E Gantt Excel Export
+
+Calendar Gantt의 Excel 다운로드는 화면에서 이미 계산된 최종 표시 목록을 사용하므로 현재 범위, 완료 현장 표시, 검색, 담당자·업무유형·조립처·상태·태그 필터, 보기 그룹·접힘 상태와 정렬을 그대로 유지하며 추가 조회를 하지 않습니다. 기간은 현재 Gantt 범위, 현재 월, 사용자 지정 중 선택하고 선택 기간과 겹치는 업무만 실제 `.xlsx`로 생성합니다.
+
+`간트차트` 시트는 프로젝트·업무 기본 열과 일자별 타임라인을 함께 제공하며 월 병합 헤더, 주말·오늘 강조, 완료·진행·대기·지연 막대 색상, 프로젝트 구분선, 틀 고정, 가로 인쇄 설정을 포함합니다. 숨은 ID나 내부 메타데이터는 내보내지 않으며 DB 변경은 없습니다.
+
+## Sprint 9-5F Staff Calendar-only 권한
+
+Calendar 전용 스태프는 기존 Staff role 전체가 아니라 `employees.role = 'staff'`, 연결된 `organizations.name = '기타'`, `employees.position = '스태프'`를 모두 만족하는 활성·승인 사용자입니다. 공백과 대소문자를 정규화하며, 다른 조직 또는 직급의 Staff는 기존 업무·출고 권한을 유지합니다.
+
+Calendar-only 사용자는 로그인 후 `/calendar`로 이동하고 Sidebar에서도 Calendar만 표시됩니다. 페이지 경로는 `/calendar`만 허용하며 Calendar 조회에 필요한 GET API와 인증 확인만 허용합니다. Month·Timeline·Gantt 조회, 필터, 프레젠테이션, Excel 다운로드, Realtime, Presence는 유지하고 일정·Gantt·공유·댓글 mutation과 Editing Lock 획득은 차단합니다.
+
+API 공통 경계는 mutation 요청에 403을 반환하고, `20260811140000_calendar_only_staff_rls.sql`은 기존 RLS 활성 public 테이블마다 restrictive INSERT/UPDATE/DELETE 정책을 추가해 Supabase 직접 호출도 차단합니다. Migration은 운영 DB에 자동 적용하지 않습니다.

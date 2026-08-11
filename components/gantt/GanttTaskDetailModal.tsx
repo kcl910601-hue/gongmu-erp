@@ -24,6 +24,7 @@ type GanttTaskDetailModalProps = {
   today: string;
   onClose: () => void;
   onTaskUpdated: (task: IntegratedTask) => void;
+  canEdit?: boolean;
 };
 
 const statusOptions = ["pending", "in_progress", "completed"];
@@ -41,6 +42,7 @@ export function GanttTaskDetailModal({
   today,
   onClose,
   onTaskUpdated,
+  canEdit = true,
 }: GanttTaskDetailModalProps) {
   const [editStartDate, setEditStartDate] = useState(task.startDate || "");
   const [editDueDate, setEditDueDate] = useState(task.dueDate || "");
@@ -52,7 +54,7 @@ export function GanttTaskDetailModal({
   );
   const [errorMessage, setErrorMessage] = useState("");
   const [isSaving, setIsSaving] = useState(false);
-  const editingLock = useEditingLock("task", task.taskId);
+  const editingLock = useEditingLock("task", task.taskId, canEdit);
 
   const isDirty =
     editStartDate !== (task.startDate || "") ||
@@ -235,6 +237,7 @@ export function GanttTaskDetailModal({
               시작일
             </span>
             <input
+              disabled={!canEdit}
               type="date"
               value={editStartDate}
               onChange={(event) => setEditStartDate(event.target.value)}
@@ -247,6 +250,7 @@ export function GanttTaskDetailModal({
               종료일
             </span>
             <input
+              disabled={!canEdit}
               type="date"
               value={editDueDate}
               onChange={(event) => setEditDueDate(event.target.value)}
@@ -259,6 +263,7 @@ export function GanttTaskDetailModal({
               상태
             </span>
             <select
+              disabled={!canEdit}
               value={editStatus}
               onChange={(event) => setEditStatus(event.target.value)}
               className="h-10 w-full rounded-2xl border border-slate-200 bg-slate-50 px-3 text-sm outline-none transition-colors focus:border-blue-300 focus:bg-white focus:ring-2 focus:ring-blue-100"
@@ -276,6 +281,7 @@ export function GanttTaskDetailModal({
               완료일
             </span>
             <input
+              disabled={!canEdit}
               type="date"
               value={editCompletedDate}
               onChange={(event) => setEditCompletedDate(event.target.value)}
@@ -305,7 +311,7 @@ export function GanttTaskDetailModal({
           >
             취소
           </Button>
-          <Button
+          {canEdit && <Button
             type="button"
             variant="primary"
             onClick={saveTask}
@@ -313,8 +319,8 @@ export function GanttTaskDetailModal({
             className="rounded-2xl px-4 py-2 text-sm"
           >
             {isSaving ? "저장 중..." : "저장"}
-          </Button>
-          <Link
+          </Button>}
+          {canEdit && <Link
             href={`/projects/${task.projectId}`}
             onClick={(event) => {
               if (
@@ -332,7 +338,7 @@ export function GanttTaskDetailModal({
             className="rounded-2xl bg-slate-900 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-100"
           >
             프로젝트 상세 보기
-          </Link>
+          </Link>}
         </div>
       </div>
     </div>

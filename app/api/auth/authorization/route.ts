@@ -1,6 +1,6 @@
 import { createSupabaseServerClient } from "@/lib/supabase-server";
 import { getEmployeeByAuth } from "@/lib/auth";
-import { getEmployeeAuthorizationStatus } from "@/lib/permissions";
+import { getEmployeeAuthorizationStatus, isCalendarOnlyStaff } from "@/lib/permissions";
 
 export async function GET() {
   const supabase = await createSupabaseServerClient();
@@ -24,5 +24,5 @@ export async function GET() {
     return Response.json({ status }, { status: 403 });
   }
 
-  return Response.json({ status: "approved", role: employee.role });
+  return Response.json({ status: "approved", role: employee.role, defaultPath: isCalendarOnlyStaff(employee) ? "/calendar" : "/" });
 }

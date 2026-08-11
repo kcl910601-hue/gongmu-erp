@@ -39,9 +39,10 @@ function getPageTitle(pathname: string) {
 
 type HeaderProps = {
   onSearchClick?: () => void;
+  readOnly?: boolean;
 };
 
-export default function Header({ onSearchClick }: HeaderProps) {
+export default function Header({ onSearchClick, readOnly = false }: HeaderProps) {
   const pathname = usePathname();
   const [isQuickCreateOpen, setIsQuickCreateOpen] = useState(false);
   const [quickCreateView, setQuickCreateView] =
@@ -103,7 +104,8 @@ export default function Header({ onSearchClick }: HeaderProps) {
             </h2>
           </div>
           <div className="flex items-center gap-2">
-            <FocusPanelButton />
+            {!readOnly && <FocusPanelButton />}
+            {!readOnly && <>
             <button
               type="button"
               aria-label="빠른 등록 열기"
@@ -146,23 +148,24 @@ export default function Header({ onSearchClick }: HeaderProps) {
                 Ctrl K
               </span>
             </button>
+            </>}
             <span className="rounded-full bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-700">
               v1.0
             </span>
           </div>
         </div>
       </header>
-      <QuickCreate
+      {!readOnly && <QuickCreate
         isOpen={isQuickCreateOpen}
         initialView={quickCreateView}
         contextProjectId={contextProjectId}
         stayOnPage={stayOnPage}
         onClose={() => setIsQuickCreateOpen(false)}
-      />
-      <RecentWorkspace
+      />}
+      {!readOnly && <RecentWorkspace
         isOpen={isRecentOpen}
         onClose={() => setIsRecentOpen(false)}
-      />
+      />}
     </>
   );
 }

@@ -9,12 +9,16 @@ import { clearLocalCommentMutation, COMMENTS_CHANGED_EVENT, dispatchCommentCount
 import { toast } from "@/lib/toast";
 import { AddReferenceTaskButton } from "@/components/workspace/AddReferenceTaskButton";
 import type { ReferenceTask } from "@/lib/reference-tasks";
+import { useAppShellUser } from "@/contexts/AppShellUserContext";
+import { isCalendarOnlyStaff } from "@/lib/permissions";
 
 function formatCommentTime(value: string) {
   return new Intl.DateTimeFormat("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(value));
 }
 
 export function CommentSection({ itemId }: { itemId: string }) {
+  const { employee } = useAppShellUser();
+  const readOnly = isCalendarOnlyStaff(employee);
   const [comments, setComments] = useState<SharedComment[]>([]);
   const [content, setContent] = useState("");
   const [employees, setEmployees] = useState<MentionableEmployee[]>([]);
@@ -138,6 +142,8 @@ export function CommentSection({ itemId }: { itemId: string }) {
     if (!response.ok) { clearLocalCommentMutation(comment.id); setError(result.error ?? "댓글을 삭제하지 못했습니다."); return; }
     setComments((current) => current.filter((item) => item.id !== comment.id)); dispatchCommentCountDelta(itemId, -1); toast.success("댓글을 삭제했습니다.");
   }
+
+  if (readOnly) return <section className="mt-3 border-t border-slate-200/70 pt-3" onClick={(event) => event.stopPropagation()}><h4 className="text-xs font-bold text-slate-700">댓글 {comments.length} <span className="font-medium text-slate-400">· 읽기 전용</span></h4>{loading ? <p className="py-3 text-xs text-slate-400">댓글을 불러오는 중...</p> : comments.length === 0 ? <p className="py-3 text-xs text-slate-400">등록된 댓글이 없습니다.</p> : <div className="mt-2 max-h-64 space-y-2 overflow-y-auto">{comments.map((comment) => <article key={comment.id} className="rounded-xl bg-white/80 p-3 text-xs shadow-sm"><div className="flex items-center gap-2"><span className="font-bold text-slate-700">{comment.author?.name ?? "알 수 없음"}</span><span className="ml-auto text-[10px] text-slate-400">{formatCommentTime(comment.created_at)}</span></div><p className="mt-1 whitespace-pre-wrap break-words text-slate-600">{comment.content}</p></article>)}</div>}</section>;
 
   return <section className="mt-3 border-t border-slate-200/70 pt-3" onClick={(event) => event.stopPropagation()}>
     {editingId !== null && <EditingLockNotice state={editingLock.state} lock={editingLock.lock} error={editingLock.error}/>}<h4 className="text-xs font-bold text-slate-700">댓글 {comments.length}</h4>

@@ -27,7 +27,7 @@ import {
 import { supabase } from "@/lib/supabase";
 import { useAppShellUser } from "@/contexts/AppShellUserContext";
 import { isTaskCompleted } from "@/lib/status";
-import { canAccessRoute, normalizeRole, ROLE_PRESENTATION } from "@/lib/permissions";
+import { canEmployeeAccessRoute, isCalendarOnlyStaff, normalizeRole, ROLE_PRESENTATION } from "@/lib/permissions";
 import {
   hydrateFavoriteProjectsFromDatabase,
   readRecentWorkspace,
@@ -92,6 +92,7 @@ function formatRecentProjectTime(value: string) {
 export default function Sidebar() {
   const pathname = usePathname();
   const { employee, authUserId, authEmail } = useAppShellUser();
+  const calendarOnly = isCalendarOnlyStaff(employee);
   const [isCollapsed, setIsCollapsed] = useState(() => {
     if (typeof window === "undefined") return false;
     return localStorage.getItem("sidebar-collapsed") === "true";
@@ -223,7 +224,7 @@ export default function Sidebar() {
 
       <nav className="flex-1 space-y-1 px-2.5 py-4">
         {menuItems
-          .filter((item) => canAccessRoute(employee?.role, item.href))
+          .filter((item) => canEmployeeAccessRoute(employee, item.href))
           .map((item) => {
           const Icon = item.icon;
           const active = isActive(item.href);
@@ -247,7 +248,7 @@ export default function Sidebar() {
           );
         })}
 
-        {isCollapsed ? (
+        {!calendarOnly && (isCollapsed ? (
           <Link href="/statistics/lme" title="통계 · LME 시세" className={`flex items-center justify-center rounded-xl px-3 py-2 text-sm font-medium ${pathname.startsWith("/statistics") ? "border border-slate-200 bg-slate-950 text-white shadow-sm" : "text-slate-600 hover:bg-slate-100"}`}><Sigma size={18}/></Link>
         ) : (
           <div>
@@ -263,11 +264,11 @@ export default function Sidebar() {
               {["프로젝트 분석", "AS 분석", "리포트"].map((label) => <span key={label} className="block px-2 py-1.5 text-xs text-slate-400">{label} <small>(향후)</small></span>)}
             </div>}
           </div>
-        )}
+        ))}
 
       </nav>
 
-      {!isCollapsed && (
+      {!calendarOnly && !isCollapsed && (
         <div className="border-t border-slate-100 px-2.5 py-2.5">
           <button
             type="button"

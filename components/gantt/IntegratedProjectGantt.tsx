@@ -5,6 +5,7 @@ import {
   ChevronDown,
   ChevronRight,
   Crosshair,
+  Download,
   LocateFixed,
   Minus,
   Monitor,
@@ -31,6 +32,7 @@ import { GanttAssigneeModal } from "@/components/gantt/GanttAssigneeModal";
 import { TaskTagSelector } from "@/components/common/TaskTagSelector";
 import { GanttBulkEditModal, type GanttBulkEditKind } from "@/components/gantt/GanttBulkEditModal";
 import { GanttDependencyModal, type GanttDependencyItem } from "@/components/gantt/GanttDependencyModal";
+import { GanttExcelExportDialog, type GanttExportRange } from "@/components/gantt/GanttExcelExportDialog";
 import { supabase } from "@/lib/supabase";
 import { logActivity } from "@/lib/activity";
 import { TASK_TAGS, getTaskTagDefinition, type TaskTagCode } from "@/lib/task-tags";
@@ -38,6 +40,8 @@ import { formatProjectQuantity } from "@/lib/project-quantity";
 import { compareTasksBySchedule, persistRecalculatedTaskOrders, recalculateTaskOrders } from "@/lib/task-ordering";
 import { withShortEditingLock, withShortEditingLocks } from "@/lib/editing-locks";
 import { getDday } from "@/lib/dday";
+import { downloadGanttWorkbook, filterGanttTasksForRange, getGanttExcelFileName, type GanttExcelTask } from "@/lib/excel/gantt-export";
+import { toast } from "@/lib/toast";
 import {
   getProjectStatusLabel,
   getTaskStatusLabel,
@@ -133,6 +137,7 @@ type IntegratedProjectGanttProps = {
   onCurrentMonthChange?: (month: string) => void;
   onTaskUpdated: (task: IntegratedTask) => void;
   canEdit: boolean;
+  canExport: boolean;
   showCompletedProjects: boolean;
   onShowCompletedProjectsChange: (showCompleted: boolean) => void;
 };
@@ -607,6 +612,7 @@ export function IntegratedProjectGantt({
   onCurrentMonthChange,
   onTaskUpdated,
   canEdit,
+  canExport,
   showCompletedProjects,
   onShowCompletedProjectsChange,
 }: IntegratedProjectGanttProps) {
@@ -660,6 +666,8 @@ export function IntegratedProjectGantt({
   const [selectionAnchorTaskId, setSelectionAnchorTaskId] = useState<number | null>(null);
   const [bulkEditKind, setBulkEditKind] = useState<GanttBulkEditKind | null>(null);
   const [isBulkApplying, setIsBulkApplying] = useState(false);
+  const [isExcelDialogOpen, setIsExcelDialogOpen] = useState(false);
+  const [isExcelExporting, setIsExcelExporting] = useState(false);
   const [isPresentation, setIsPresentation] = useState(false);
   const [isPresentationFilterOpen, setIsPresentationFilterOpen] =
     useState(false);
@@ -2037,6 +2045,49 @@ export function IntegratedProjectGantt({
     () => buildGroupedView(rows, viewType, collapsedViewGroups),
     [collapsedViewGroups, rows, viewType]
   );
+
+  async function exportGanttExcel(_range: GanttExportRange, exportStart: string, exportEnd: string) {
+    if (isExcelExporting) return;
+    const visibleRows: GanttExcelTask[] = displayItems.flatMap((item) => item.kind === "row" ? item.row.segments
+      .map(({ task, startDate, dueDate }) => ({
+        projectCode: item.row.project.project_code,
+        projectName: item.row.project.project_name,
+        taskName: task.task_name,
+        assignee: task.assignee,
+        statusLabel: getTaskStatusPresentation(task, today).label,
+        status: normalizeTaskStatus(task.status),
+        startDate,
+        endDate: dueDate,
+        progress: item.row.progress,
+        delayed: getDelayedDays(task, today) !== null,
+      })) : []);
+    const exportRows = filterGanttTasksForRange(visibleRows, exportStart, exportEnd);
+    if (exportRows.length === 0) {
+      toast.info("선택한 기간에 내보낼 Gantt 업무가 없습니다.");
+      return;
+    }
+    setIsExcelExporting(true);
+    try {
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+      const activeFilters = [
+        searchQuery.trim() ? `검색: ${searchQuery.trim()}` : null,
+        statusFilter !== "all" ? `상태: ${statusFilterOptions.find((option) => option.value === statusFilter)?.label}` : null,
+        assigneeFilter !== "전체" ? `담당자: ${assigneeFilter}` : null,
+        taskTypeFilter !== "전체" ? `업무유형: ${taskTypeFilter}` : null,
+        assemblyVendorFilter !== "전체" ? `조립처: ${assemblyVendorFilter}` : null,
+        selectedTagFilters.size ? `태그: ${Array.from(selectedTagFilters).join(", ")}` : null,
+      ].filter((value): value is string => Boolean(value));
+      const projectNames = Array.from(new Set(exportRows.map((task) => task.projectName)));
+      downloadGanttWorkbook({ tasks: exportRows, startDate: exportStart, endDate: exportEnd, today, generatedAt: new Date(), filterSummary: activeFilters.join(" · ") }, getGanttExcelFileName(today, projectNames.length === 1 ? projectNames[0] : undefined));
+      setIsExcelDialogOpen(false);
+      toast.success(`${exportRows.length}건의 Gantt 업무를 Excel로 저장했습니다.`);
+    } catch (error) {
+      console.error("Gantt Excel export error", error);
+      toast.error("Gantt Excel 파일을 생성하지 못했습니다. 잠시 후 다시 시도해 주세요.");
+    } finally {
+      setIsExcelExporting(false);
+    }
+  }
   const projectRowBackgrounds = useMemo(() => {
     const backgrounds = new Map<string, string>();
     let projectIndex = 0;
@@ -2558,6 +2609,7 @@ export function IntegratedProjectGantt({
           <Button type="button" variant="secondary" size="sm" disabled={!canEdit || undoStack.length === 0 || isHistoryApplying || savingTaskId !== null} title={undoStack.length ? `실행 취소: ${undoStack[undoStack.length - 1].changes[0]?.taskName || "업무"}` : "실행 취소할 일정 변경이 없습니다."} onClick={() => void applyScheduleHistory("undo")} className="h-9 rounded-2xl px-3.5 text-sm font-medium"><Undo2 size={15} /> Undo</Button>
           <Button type="button" variant="secondary" size="sm" disabled={!canEdit || redoStack.length === 0 || isHistoryApplying || savingTaskId !== null} title={redoStack.length ? `다시 실행: ${redoStack[redoStack.length - 1].changes[0]?.taskName || "업무"}` : "다시 실행할 일정 변경이 없습니다."} onClick={() => void applyScheduleHistory("redo")} className="h-9 rounded-2xl px-3.5 text-sm font-medium"><Redo2 size={15} /> Redo</Button>
           <Button type="button" variant="secondary" size="sm" onClick={scrollToToday} className="h-9 rounded-2xl px-3.5 text-sm font-medium">오늘로 이동</Button>
+          {canExport && <Button type="button" variant="secondary" size="sm" disabled={isExcelExporting} onClick={() => setIsExcelDialogOpen(true)} className="h-9 rounded-2xl px-3.5 text-sm font-medium"><Download size={15} /> Excel 다운로드</Button>}
           <Button type="button" variant="primary" size="sm" onClick={() => void enterPresentation()} className="h-9 rounded-2xl px-3.5 text-sm font-medium"><Monitor size={15} /> Presentation</Button>
         </div>
       </div>
@@ -3305,6 +3357,7 @@ export function IntegratedProjectGantt({
               tasks.map((task) => task.id === updatedTask.id ? updatedTask : task)
             );
           }}
+          canEdit={canEdit}
           onClose={() => setSelectedTask(null)}
         />
       )}
@@ -3449,6 +3502,16 @@ export function IntegratedProjectGantt({
           onSave={applyBulkEdit}
         />
       )}
+      {isExcelDialogOpen && <GanttExcelExportDialog
+        open={isExcelDialogOpen}
+        currentStart={start}
+        currentEnd={end}
+        monthStart={getMonthRange(currentMonth).start}
+        monthEnd={getMonthRange(currentMonth).end}
+        loading={isExcelExporting}
+        onClose={() => { if (!isExcelExporting) setIsExcelDialogOpen(false); }}
+        onDownload={(range, exportStart, exportEnd) => void exportGanttExcel(range, exportStart, exportEnd)}
+      />}
     </div>
   );
 }

@@ -6,6 +6,8 @@ import { CommentSection } from "@/components/comments/CommentSection";
 import { TimelineSection } from "@/components/timeline/TimelineSection";
 import { PersonalNoteActions } from "@/components/workspace/PersonalNoteActions";
 import { getPersonalNoteAccess, getPersonalNoteCommentBadge, type PersonalNote } from "@/lib/personal-notes";
+import { useAppShellUser } from "@/contexts/AppShellUserContext";
+import { isCalendarOnlyStaff } from "@/lib/permissions";
 
 const noteTypeLabels: Record<PersonalNote["note_type"], string> = {
   memo: "메모",
@@ -32,13 +34,14 @@ export function PersonalNoteDetailModal({ note, authorName, onClose, onEdit, onS
   onToggleCompleted: () => void;
   onDelete: () => void;
 }) {
+  const { employee } = useAppShellUser();
   const [commentsOpen, setCommentsOpen] = useState(true);
   const [timelineOpen, setTimelineOpen] = useState(true);
   const sharingLabel = note.sharing?.permission === "owner"
     ? note.sharing.memberCount > 0 ? "공유 중" : "내 일정"
     : note.sharing ? "공유받음" : "내 일정";
   const permissionLabel = note.sharing?.permission ?? "owner";
-  const canEdit = getPersonalNoteAccess(note).canEdit;
+  const canEdit = !isCalendarOnlyStaff(employee) && getPersonalNoteAccess(note).canEdit;
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {

@@ -1,5 +1,12 @@
 # ERP Database v1
 
+## Sprint 9-5F Calendar-only Staff RLS
+
+- Calendar-only 판정은 활성·승인 직원 중 `role = staff`, 연결 조직명 `기타`, 직급 `스태프`를 모두 만족할 때만 적용합니다. 기존 Staff role 자체의 공식 권한은 변경하지 않습니다.
+- `is_calendar_only_staff()`는 `employees.organization_id → organizations.id` 실제 관계를 사용하며 SECURITY DEFINER와 `row_security = off`로 정책 재귀를 방지합니다.
+- Migration `20260811140000_calendar_only_staff_rls.sql`은 실행 시점의 모든 RLS 활성 public 테이블에 restrictive INSERT/UPDATE/DELETE 정책을 추가합니다. 일반 사용자에게는 조건이 true이므로 기존 permissive 정책을 그대로 따르고 Calendar-only staff만 mutation이 거부됩니다.
+- SELECT 정책, Realtime publication, 기존 역할 함수와 일반 Staff 권한은 변경하지 않습니다. Verification은 `20260811141000_verify_calendar_only_staff_rls.sql`이며 운영 DB에 자동 적용하지 않습니다.
+
 ## Sprint 9-5C 프로젝트 원자재 배정 원가
 
 - 프로젝트 상세 원자재 원가는 `material_contract_allocations` 원본과 연결된 `raw_material_contracts.contract_price_krw_per_kg`를 조회 시 계산합니다. 원가용 배정 복사본은 생성하지 않습니다.

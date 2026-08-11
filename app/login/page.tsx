@@ -53,7 +53,7 @@ export default function LoginPage() {
   const response = await fetch("/api/auth/authorization", {
     cache: "no-store",
   });
-  const result = (await response.json()) as { status?: string };
+  const result = (await response.json()) as { status?: string; defaultPath?: string };
 
   if (!response.ok) {
     await supabase.auth.signOut();
@@ -77,7 +77,7 @@ export default function LoginPage() {
     targetType: "login",
   });
 
-  window.location.href = "/";
+  window.location.href = result.defaultPath ?? "/";
 }
 
   return (

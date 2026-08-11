@@ -34,6 +34,46 @@ export type EmployeeAuthorizationState = {
   approval_status: string | null;
 };
 
+export type CalendarPermissionEmployee = {
+  role?: string | null;
+  position?: string | null;
+  organization?: { name?: string | null } | Array<{ name?: string | null }> | null;
+};
+
+function normalizeEmployeeLabel(value: string | null | undefined) {
+  return value?.trim().toLocaleLowerCase("ko-KR") ?? "";
+}
+
+export function isCalendarOnlyStaff(employee: CalendarPermissionEmployee | null | undefined) {
+  const organization = Array.isArray(employee?.organization) ? employee.organization[0] : employee?.organization;
+  return normalizeRole(employee?.role) === "staff"
+    && normalizeEmployeeLabel(organization?.name) === "기타"
+    && normalizeEmployeeLabel(employee?.position) === "스태프";
+}
+
+export function getCalendarPermissions(employee: CalendarPermissionEmployee | null | undefined) {
+  const calendarOnly = isCalendarOnlyStaff(employee);
+  return {
+    canViewCalendar: Boolean(employee),
+    canEditCalendar: Boolean(employee) && !calendarOnly && hasPermission(employee?.role, "task_update"),
+    canExportCalendar: Boolean(employee),
+    calendarOnly,
+  };
+}
+
+export function canEmployeeAccessRoute(employee: CalendarPermissionEmployee | null | undefined, pathname: string) {
+  if (isCalendarOnlyStaff(employee)) return pathname === "/calendar" || pathname.startsWith("/calendar/");
+  return canAccessRoute(employee?.role, pathname);
+}
+
+const CALENDAR_ONLY_API_READ_PATHS = ["/api/personal-notes", "/api/comments", "/api/comments/counts", "/api/timeline", "/api/reference-tasks"];
+
+export function canCalendarOnlyStaffAccessApi(pathname: string, method: string) {
+  if (pathname === "/api/auth/authorization") return true;
+  if (method !== "GET" && method !== "HEAD") return false;
+  return CALENDAR_ONLY_API_READ_PATHS.some((path) => pathname === path || pathname.startsWith(`${path}/`));
+}
+
 export type EmployeeAuthorizationStatus =
   | "approved"
   | "inactive"

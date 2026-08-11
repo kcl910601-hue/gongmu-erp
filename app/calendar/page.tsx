@@ -39,6 +39,7 @@ import { ShareDialog } from "@/components/sharing/ShareDialog";
 import { COMMENT_COUNT_DELTA_EVENT, COMMENT_COUNTS_INVALIDATED_EVENT, COMMENT_UNREAD_CLEARED_EVENT } from "@/lib/collaboration-events";
 import { applyCommentCounts, loadCommentCounts } from "@/lib/comment-counts";
 import { withShortEditingLock } from "@/lib/editing-locks";
+import { getCalendarPermissions } from "@/lib/permissions";
 
 type Project = IntegratedProject & {
   completion_due_date: string | null;
@@ -209,7 +210,9 @@ const SHOW_COMPLETED_PERSONAL_SCHEDULES_KEY = "showCompletedPersonalSchedules";
 const sourceFilters: { value: CalendarSourceFilter; label: string }[] = [{ value: "all", label: "전체 일정" }, { value: "company", label: "회사 일정" }, { value: "my", label: "All Task" }, { value: "my_own", label: "My Task" }, { value: "shared_with_me", label: "Share Task" }];
 
 export default function CalendarPage() {
-  const { can } = usePermission();
+  const { employee } = usePermission();
+  const calendarPermissions = getCalendarPermissions(employee);
+  const calendarReadOnly = calendarPermissions.calendarOnly;
   function padDatePart(value: number) {
     return String(value).padStart(2, "0");
   }
@@ -805,12 +808,12 @@ export default function CalendarPage() {
     assigneeFilter !== "전체";
 
   return (
-    <div className="min-h-screen min-w-0 max-w-full bg-slate-50 px-4 py-5 text-slate-900 sm:px-6 lg:px-8">
+    <div onDragStartCapture={(event) => { if (calendarReadOnly) event.preventDefault(); }} className="min-h-screen min-w-0 max-w-full bg-slate-50 px-4 py-5 text-slate-900 sm:px-6 lg:px-8">
       <div className="mb-5 flex flex-col gap-5 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:flex-row sm:items-start sm:justify-between">
         <div>
           <div className="mb-2 flex items-center gap-2 text-sm font-medium text-slate-500">
             <CalendarDays size={16} />
-            Calendar
+            Calendar {calendarReadOnly && <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-500">읽기 전용</span>}
           </div>
           <h1 className="text-3xl font-bold tracking-tight text-slate-950">
             Calendar
@@ -841,7 +844,7 @@ export default function CalendarPage() {
               </Button>
             ))}
           </div>
-          <div className="flex gap-2"><Button onClick={() => openNoteEditor({ noteType: "todo", dueDate: selectedDate || today })} variant="primary" className="flex h-10 items-center gap-2 rounded-2xl px-4"><Plus size={16}/>내 일정 추가</Button><Button onClick={loadCalendar} variant="secondary" className="flex h-10 shrink-0 items-center justify-center gap-2 rounded-2xl px-4 text-sm font-medium transition-colors duration-150"><RefreshCw size={16}/>새로고침</Button></div>
+          <div className="flex gap-2">{!calendarReadOnly && <Button onClick={() => openNoteEditor({ noteType: "todo", dueDate: selectedDate || today })} variant="primary" className="flex h-10 items-center gap-2 rounded-2xl px-4"><Plus size={16}/>내 일정 추가</Button>}<Button onClick={loadCalendar} variant="secondary" className="flex h-10 shrink-0 items-center justify-center gap-2 rounded-2xl px-4 text-sm font-medium transition-colors duration-150"><RefreshCw size={16}/>새로고침</Button></div>
         </div>
       </div>
 
@@ -1026,8 +1029,8 @@ export default function CalendarPage() {
                               setSelectedDate(date);
                             }
                           }}
-                          onDragOver={(event) => { if (date && event.dataTransfer.types.includes("application/x-personal-note")) event.preventDefault(); }}
-                          onDrop={(event) => { if (!date) return; const noteId = event.dataTransfer.getData("application/x-personal-note"); const note = personalNotes.find((item) => item.id === noteId); if (note) { event.preventDefault(); void movePersonalNote(note, date); } }}
+                          onDragOver={(event) => { if (!calendarReadOnly && date && event.dataTransfer.types.includes("application/x-personal-note")) event.preventDefault(); }}
+                          onDrop={(event) => { if (calendarReadOnly || !date) return; const noteId = event.dataTransfer.getData("application/x-personal-note"); const note = personalNotes.find((item) => item.id === noteId); if (note) { event.preventDefault(); void movePersonalNote(note, date); } }}
                           style={{ "--calendar-personal-top": `${weekLayout.personalAreaTop}px` } as CSSProperties}
                           className={`relative h-full rounded-2xl border p-2.5 outline-none transition-all duration-150 [&>div.mt-9]:absolute [&>div.mt-9]:inset-x-2 [&>div.mt-9]:top-[var(--calendar-personal-top)] [&>div.mt-9]:mt-0 ${showCompanySchedule ? "[&>button.top-10]:hidden" : ""} ${
                             date === selectedDate
@@ -1098,7 +1101,8 @@ export default function CalendarPage() {
           today={today}
           onCurrentMonthChange={selectMonth}
           onTaskUpdated={handleGanttTaskUpdated}
-          canEdit={can("task_update")}
+          canEdit={calendarPermissions.canEditCalendar}
+          canExport={calendarPermissions.canExportCalendar}
           showCompletedProjects={showCompletedProjects}
           onShowCompletedProjectsChange={setShowCompletedProjects}
         />
@@ -1244,7 +1248,7 @@ export default function CalendarPage() {
           </div>}
 
           {showPersonalSchedule && <div className="mb-5 min-w-0 rounded-2xl bg-violet-50 p-3.5">
-            <div className="mb-3 flex items-center justify-between gap-3"><div><h3 className="text-sm font-semibold text-slate-800">내 일정</h3><p className="mt-0.5 text-xs text-slate-500">직접 만든 일정과 수락한 공유 일정</p></div><button type="button" onClick={() => openNoteEditor({ noteType: "todo", dueDate: selectedDate })} className="inline-flex items-center gap-1 rounded-xl bg-violet-600 px-3 py-2 text-xs font-semibold text-white hover:bg-violet-700"><Plus size={14}/>내 일정 추가</button></div>
+            <div className="mb-3 flex items-center justify-between gap-3"><div><h3 className="text-sm font-semibold text-slate-800">내 일정</h3><p className="mt-0.5 text-xs text-slate-500">직접 만든 일정과 수락한 공유 일정</p></div>{!calendarReadOnly && <button type="button" onClick={() => openNoteEditor({ noteType: "todo", dueDate: selectedDate })} className="inline-flex items-center gap-1 rounded-xl bg-violet-600 px-3 py-2 text-xs font-semibold text-white hover:bg-violet-700"><Plus size={14}/>내 일정 추가</button>}</div>
             {selectedDatePersonalNotes.length > 0 ? <div className="max-h-80 space-y-2 overflow-y-auto pr-1">{selectedDatePersonalNotes.map((note) => { const isSharedWithMe = Boolean(note.sharing && note.sharing.permission !== "owner"); const isSharedByMe = note.sharing?.permission === "owner" && note.sharing.memberCount > 0; const authorName = note.sharing?.ownerName ?? currentAssignee ?? "-"; const commentBadge = getPersonalNoteCommentBadge(note); return <article key={note.id} className={`rounded-xl border p-3 transition ${note.is_completed ? COMPLETED_PERSONAL_SCHEDULE_STYLES.card : "border-slate-200 bg-white"}`}><div className="flex items-start gap-2"><button type="button" onClick={() => setSelectedPersonalNoteId(note.id)} className="min-w-0 flex-1 text-left outline-none focus-visible:ring-2 focus-visible:ring-violet-200"><p className={`truncate text-sm font-semibold ${note.is_completed ? COMPLETED_PERSONAL_SCHEDULE_STYLES.title : "text-slate-800"}`}>{note.title || note.content}</p><div className={`mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px] ${note.is_completed ? COMPLETED_PERSONAL_SCHEDULE_STYLES.meta : "text-slate-400"}`}><span>{note.due_date ?? "날짜 없음"}</span><span>작성자 {authorName}</span>{note.is_completed && <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-1.5 py-0.5 font-semibold text-emerald-700"><Check size={10}/>완료</span>}{commentBadge && <span>💬 {commentBadge}</span>}{isSharedByMe && <span className="rounded-full bg-blue-100 px-1.5 py-0.5 font-semibold text-blue-700">공유중</span>}{isSharedWithMe && <span className="rounded-full bg-violet-100 px-1.5 py-0.5 font-semibold text-violet-700">공유받음</span>}</div></button><PersonalNoteActions note={note} commentsOpen={false} timelineOpen={false} onEdit={() => openNoteEditor({ note })} onShare={() => setShareTarget(note)} onTogglePin={() => void patchPersonalNote(note, { isPinned: !note.is_pinned })} onDelete={() => void deletePersonalNote(note)} onToggleComments={() => setSelectedPersonalNoteId(note.id)} onToggleTimeline={() => setSelectedPersonalNoteId(note.id)}/></div></article>; })}</div> : <EmptyState message="선택한 날짜에 개인 일정이 없습니다." className="rounded-xl bg-white p-6 text-center text-sm text-slate-400"/>}
           </div>}
 
@@ -1266,6 +1270,7 @@ export default function CalendarPage() {
           task={selectedTask}
           today={today}
           onTaskUpdated={(updatedTask) => void handleCalendarTaskDetailUpdated(updatedTask)}
+          canEdit={calendarPermissions.canEditCalendar}
           onClose={() => setSelectedTask(null)}
         />
       )}

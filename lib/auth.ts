@@ -9,6 +9,7 @@ export type CurrentEmployee = {
   active: boolean | null;
   approval_status: string | null;
   auth_user_id: string | null;
+  organization?: { name: string | null } | Array<{ name: string | null }> | null;
 };
 
 type EmployeeAuthClient = Pick<SupabaseClient, "from">;
@@ -19,7 +20,7 @@ export async function getEmployeeByAuth(
 ): Promise<{ employee: CurrentEmployee | null; error: string | null }> {
   const byAuthUser = await client
     .from("employees")
-    .select("id, name, email, position, role, active, approval_status, auth_user_id")
+    .select("id, name, email, position, role, active, approval_status, auth_user_id, organization:organizations(name)")
     .eq("auth_user_id", user.id)
     .maybeSingle();
 
@@ -34,7 +35,7 @@ export async function getEmployeeByAuth(
 
   const byEmail = await client
     .from("employees")
-    .select("id, name, email, position, role, active, approval_status, auth_user_id")
+    .select("id, name, email, position, role, active, approval_status, auth_user_id, organization:organizations(name)")
     .eq("email", user.email)
     .maybeSingle();
 

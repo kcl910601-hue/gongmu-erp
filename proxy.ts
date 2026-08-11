@@ -1,12 +1,13 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 import { getEmployeeByAuth } from "@/lib/auth";
-import { canAccessRoute, isAuthorizedEmployee } from "@/lib/permissions";
+import { canCalendarOnlyStaffAccessApi, canEmployeeAccessRoute, isAuthorizedEmployee, isCalendarOnlyStaff } from "@/lib/permissions";
 
 const PUBLIC_PATHS = ["/login", "/signup"];
 
 export async function proxy(request: NextRequest) {
   const isPublic = PUBLIC_PATHS.includes(request.nextUrl.pathname);
+  const isApi = request.nextUrl.pathname.startsWith("/api/");
 
   // Public auth pages must render even when Supabase is temporarily slow.
   // Login performs its own auth flow and protected pages remain guarded below.
@@ -35,6 +36,7 @@ export async function proxy(request: NextRequest) {
   const {
     data: { user },
   } = await supabase.auth.getUser();
+  if (!user && isApi) return response;
   if (!user) {
     return NextResponse.redirect(new URL("/login", request.url));
   }
@@ -49,8 +51,12 @@ export async function proxy(request: NextRequest) {
     return redirectResponse;
   }
 
-  if (!canAccessRoute(employee?.role, request.nextUrl.pathname)) {
-    return NextResponse.redirect(new URL("/forbidden", request.url));
+  if (isApi && isCalendarOnlyStaff(employee) && !canCalendarOnlyStaffAccessApi(request.nextUrl.pathname, request.method)) {
+    return NextResponse.json({ error: "스태프 계정은 Calendar 조회 전용입니다." }, { status: 403 });
+  }
+
+  if (!isApi && !canEmployeeAccessRoute(employee, request.nextUrl.pathname)) {
+    return NextResponse.redirect(new URL(isCalendarOnlyStaff(employee) ? "/calendar" : "/forbidden", request.url));
   }
 
   return response;
@@ -58,6 +64,6 @@ export async function proxy(request: NextRequest) {
 
 export const config = {
   matcher: [
-    "/((?!api|_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
+    "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
   ],
 };
