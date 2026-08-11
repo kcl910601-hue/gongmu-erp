@@ -396,3 +396,9 @@
 - Notification 상세 Dialog와 원본 열기 액션을 추가했다.
 - 내 할 일 추가 시 제목, 마감일, 우선순위를 설정하는 공통 Dialog를 추가했다.
 - My Workspace Reference Task 카드에 마감 상태와 우선순위를 표시하고 개인 설정 수정을 지원한다.
+## 2026-08-12 - Sprint 9-5F-1 Calendar-only staff detection fix
+
+- `staff` role 판정에 대소문자와 앞뒤 공백 정규화를 적용했습니다.
+- 현재 직원 조회에서 연결 조직의 `id`, `name`을 명시적으로 가져오도록 보강했습니다.
+- 실제 후보 계정은 조직 관계가 정상이나 `position = 'dd'`여서 `스태프` 조건을 충족하지 않는다는 원인을 확인했습니다.
+- 다른 직급, 조직 관계 누락, 일반 경로와 mutation API 차단 회귀 테스트를 추가했습니다.

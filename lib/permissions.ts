@@ -13,8 +13,9 @@ export type PermissionAction =
   | "manage_settings";
 
 export function normalizeRole(role: string | null | undefined): ErpRole {
-  if (role === "admin" || role === "manager" || role === "viewer") return role;
-  if (role === "staff") return role;
+  const normalized = role?.trim().toLocaleLowerCase("en-US");
+  if (normalized === "admin" || normalized === "manager" || normalized === "viewer") return normalized;
+  if (normalized === "staff") return normalized;
   return "viewer";
 }
 

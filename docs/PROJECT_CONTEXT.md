@@ -366,3 +366,7 @@ Calendar 전용 스태프는 기존 Staff role 전체가 아니라 `employees.ro
 Calendar-only 사용자는 로그인 후 `/calendar`로 이동하고 Sidebar에서도 Calendar만 표시됩니다. 페이지 경로는 `/calendar`만 허용하며 Calendar 조회에 필요한 GET API와 인증 확인만 허용합니다. Month·Timeline·Gantt 조회, 필터, 프레젠테이션, Excel 다운로드, Realtime, Presence는 유지하고 일정·Gantt·공유·댓글 mutation과 Editing Lock 획득은 차단합니다.
 
 API 공통 경계는 mutation 요청에 403을 반환하고, `20260811140000_calendar_only_staff_rls.sql`은 기존 RLS 활성 public 테이블마다 restrictive INSERT/UPDATE/DELETE 정책을 추가해 Supabase 직접 호출도 차단합니다. Migration은 운영 DB에 자동 적용하지 않습니다.
+
+## Sprint 9-5F-1 Calendar-only 판정 보정
+
+2026-08-12 운영 데이터 읽기 점검에서 인증 계정이 연결된 후보 직원은 `role = 'staff'`, 조직 `id = 19 / name = '기타'`였지만 `position = 'dd'`였습니다. 조직 관계 누락이 아니라 직급 데이터가 정의된 판정 조건(`스태프`)과 다른 것이 실제 미판정 원인입니다. 인증 조회는 조직 `id`, `name`을 명시적으로 선택하며 role·직급·조직명은 앞뒤 공백과 대소문자를 정규화합니다. 판정 조건 자체는 완화하지 않았고 운영 직원 데이터도 자동 변경하지 않습니다.
