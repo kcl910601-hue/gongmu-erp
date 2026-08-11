@@ -1,10 +1,32 @@
 # ERP Database v1
 
+## Sprint 9-5C 프로젝트 원자재 배정 원가
+
+- 프로젝트 상세 원자재 원가는 `material_contract_allocations` 원본과 연결된 `raw_material_contracts.contract_price_krw_per_kg`를 조회 시 계산합니다. 원가용 배정 복사본은 생성하지 않습니다.
+- 계산식은 `quantity_tons × 1,000 × contract_price_krw_per_kg`이며 인가공비와 VAT는 해당 계약단가 컬럼에 포함 여부를 나타내는 별도 DB 정보가 없어 추가하지 않습니다.
+- `allocation_type = 'project'`인 planned/confirmed 행만 각각 예정/확정 원가에 포함하고 factory 및 cancelled 행은 제외합니다.
+- 계약 핵심 조건은 기존 trigger에서 불변이므로 배정 단가 snapshot을 추가하지 않습니다. 단가 변경은 새 계약 등록 정책을 따릅니다.
+- 기존 `project_material_usages` snapshot 기반 통계 Profit/Margin 계산은 중복 원가 방지를 위해 변경하지 않습니다. DB Migration은 없습니다.
+
+## Sprint 9-5B 원자재 배정 Audit History
+
+- 신규·상태·배정량·사용 대상·발주번호·메모·배정일·취소 변경을 기존 `activity_logs`에 기록합니다.
+- `target_type = 'material_contract_allocation'`과 metadata의 `material_contract_id`, `allocation_id`, 변경 필드, before/after 및 표시값을 사용합니다.
+- 감사 로그는 `save_material_contract_allocation` RPC와 동일 트랜잭션에서 생성됩니다. 승인 사용자는 기존 RLS로 조회하고 authenticated 사용자의 직접 Audit 함수 실행 및 UPDATE/DELETE는 허용하지 않습니다.
+- Migration `20260811120000_add_material_allocation_audit_history.sql`과 Verification `20260811121000_verify_material_allocation_audit_history.sql`은 운영 DB에 자동 적용하지 않습니다.
+
 ## Sprint 9-5 공장 재고 원자재 배정
 
 - `material_contract_allocations.allocation_type = 'factory'`를 공장 재고 대상으로 재사용하며 `project_id`는 null로 저장합니다.
 - 공장 재고는 별도 사용처명 없이 저장할 수 있고, 기존 factory 행의 `destination_name`은 변경하지 않습니다.
 - 예정·확정 행은 기존 계약 가용량 계산에 각각 반영되며 취소 행은 집계에서 제외됩니다. 이 테이블은 물리 재고 입출고 원장이 아닙니다.
+
+## Sprint 9-5D 원자재 계약 알림
+
+- `material_contract_notification_states`는 계약별 가용량 단계와 재진입 세대를, `material_contract_notification_events`는 기존 Notification Center에 표시할 불변 이벤트를 저장합니다.
+- `evaluate_material_contract_notifications()`는 관리자 알림 조회 시 전체 활성 계약과 배정을 한 번에 집계하며 advisory lock과 unique constraint로 동시·반복 평가 중복을 차단합니다.
+- 가용량은 계약량에서 예정·확정을 차감하고 취소는 제외합니다. 20% 초과로 회복한 뒤 재진입하면 새 세대 이벤트를 생성합니다. 종료 알림은 30일·7일·당일·만료 단계입니다.
+- Migration `20260811130000_add_material_contract_notifications.sql`은 운영 DB에 자동 적용하지 않습니다.
 - Migration `20260810120000_support_factory_stock_allocations.sql`과 Verification `20260810121000_verify_factory_stock_allocations.sql`은 운영 DB에 자동 적용하지 않습니다.
 
 ## Sprint 9-1B Hierarchical Delete Lock Check

@@ -7,6 +7,7 @@ import { applyNotificationPreferences, buildNotificationCounts, buildNotificatio
 import type { NotificationPriority, SmartNotificationType } from "@/lib/notifications/types";
 import { buildWeeklyLmeComparison, getKoreanWeeklyRanges } from "@/lib/market-data/weekly-lme";
 import type { PersonalNote } from "@/lib/personal-notes";
+import { mapMaterialContractEvent, type MaterialContractNotificationEvent } from "@/lib/material-contract-notifications";
 
 export type NotificationSeverity = "danger" | "warning" | "info";
 export type NotificationCategory = "task" | "shipment" | "project" | "personal" | "raw_material" | "lme" | "system" | "employee";
@@ -456,7 +457,7 @@ export function calculateNotificationSummary(input: {
   currentEmployee: CurrentEmployee | null;
   limit?: number;
   personal?: PersonalNote[];
-  contracts?: { id: string; contract_name: string; effective_end_date: string; contract_quantity_ton: number; remaining_quantity_ton: number; status: string }[];
+  materialContractEvents?: MaterialContractNotificationEvent[];
   weeklyLmeChangeRate?: number | null;
 }): NotificationSummary {
   const legacy = calculateLegacyNotificationSummary(input);
@@ -470,7 +471,7 @@ export function calculateNotificationSummary(input: {
     today: getToday(),
     projects: input.projects.map((project) => ({ id: project.id, project_name: project.project_name, status: project.status ?? null, end_date: project.end_date ?? null })),
     personal: input.personal,
-    contracts: input.contracts,
+    materialContractNotifications: input.materialContractEvents?.map(mapMaterialContractEvent),
     weeklyLmeChangeRate: input.weeklyLmeChangeRate,
     tasks: visibleTasks.map((task) => ({ ...task, project_name: getProjectName(input.projects, task.project_id) })),
     shipments: visibleShipments.map((shipment) => ({ ...shipment, project_name: getProjectName(input.projects, shipment.project_id) })),
@@ -593,16 +594,18 @@ export async function loadNotificationSummary(
   if (projectResult.error) return { data: null, error: projectResult.error };
 
   const weeklyRanges = getKoreanWeeklyRanges();
-  const [personalResult, contractResult, lmeResult, commentResult, mentionResult] = await Promise.all([
+  const evaluationResult = isAdmin ? await supabase.rpc("evaluate_material_contract_notifications") : { error: null };
+  if (evaluationResult.error) return { data: null, error: evaluationResult.error };
+  const [personalResult, contractEventResult, lmeResult, commentResult, mentionResult] = await Promise.all([
     supabase.from("personal_notes").select("id, user_id, note_type, title, content, is_completed, is_pinned, color, due_date, sort_order, created_at, updated_at").or(`due_date.lte.${today},note_type.eq.sticky`).limit(100),
-    supabase.from("raw_material_contracts").select("id, contract_name, effective_end_date, contract_quantity_ton, remaining_quantity_ton, status").eq("status", "active").limit(100),
+    isAdmin ? supabase.from("material_contract_notification_events").select("notification_id,contract_id,contract_name,alert_kind,stage,available_tons,available_ratio,effective_end_date,created_at").order("created_at", { ascending: false }).limit(200) : Promise.resolve({ data: [], error: null }),
     supabase.from("lme_market_prices").select("reference_date, domestic_lme_krw_per_kg").gte("reference_date", weeklyRanges.previousWeekStart).lte("reference_date", weeklyRanges.currentWeekEnd).order("reference_date", { ascending: true }).limit(100),
     supabase.from("shared_comments").select("id,author_id,content,created_at,author:employees!shared_comments_author_id_fkey(name),shared_item:shared_items!inner(item_id,item:personal_notes!shared_items_item_id_fkey(title,content))").neq("author_id", currentEmployee.id).gte("created_at", recentCutoff).order("created_at", { ascending: false }).limit(50),
     supabase.from("shared_comment_mentions").select("comment_id,created_at,comment:shared_comments!inner(id,content,created_at,author:employees!shared_comments_author_id_fkey(name),shared_item:shared_items!inner(item_id,item:personal_notes!shared_items_item_id_fkey(title,content)))").eq("employee_id", currentEmployee.id).gte("created_at", recentCutoff).order("created_at", { ascending: false }).limit(50),
   ]);
   const commentTableMissing = commentResult.error?.code === "42P01" || commentResult.error?.code === "PGRST205";
   const mentionTableMissing = mentionResult.error?.code === "42P01" || mentionResult.error?.code === "PGRST205";
-  const supplementalError = personalResult.error || contractResult.error || lmeResult.error || (commentTableMissing ? null : commentResult.error) || (mentionTableMissing ? null : mentionResult.error);
+  const supplementalError = personalResult.error || contractEventResult.error || lmeResult.error || (commentTableMissing ? null : commentResult.error) || (mentionTableMissing ? null : mentionResult.error);
   if (supplementalError) return { data: null, error: supplementalError };
   const weeklyLme = buildWeeklyLmeComparison(lmeResult.data ?? [], weeklyRanges);
 
@@ -615,7 +618,7 @@ export async function loadNotificationSummary(
       currentEmployee,
       limit,
       personal: (personalResult.data ?? []) as PersonalNote[],
-      contracts: contractResult.data ?? [],
+      materialContractEvents: (contractEventResult.data ?? []) as MaterialContractNotificationEvent[],
       weeklyLmeChangeRate: weeklyLme.differenceRate,
     });
   const mentionedCommentIds = new Set((mentionResult.data ?? []).map((mention) => Number(mention.comment_id)));

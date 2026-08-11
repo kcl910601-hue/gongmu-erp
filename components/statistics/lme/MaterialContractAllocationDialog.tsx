@@ -1,8 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Download, Pencil, Plus, X } from "lucide-react";
+import { Download, History, Pencil, Plus, X } from "lucide-react";
 import { Button } from "@/components/ui/Button";
+import { MaterialAllocationHistoryDialog } from "@/components/statistics/lme/MaterialAllocationHistoryDialog";
 import { formatNumber } from "@/lib/lme";
 import { MATERIAL_ALLOCATION_TYPES, MATERIAL_ALLOCATION_TYPE_LABELS, type ContractAllocationSummary, type MaterialAllocationType, type MaterialContractAllocation } from "@/lib/material-contract-allocations";
 import type { RawMaterialContract } from "@/lib/raw-material-contracts";
@@ -24,6 +25,7 @@ export function MaterialContractAllocationDialog({ contract, fixedProject, initi
   const [projectQuery, setProjectQuery] = useState("");
   const [saving, setSaving] = useState(false);
   const [updatingStatusId, setUpdatingStatusId] = useState<string | null>(null);
+  const [historyAllocation, setHistoryAllocation] = useState<MaterialContractAllocation | null>(null);
   const initialEditOpened = useRef(false);
   const initialCreateOpened = useRef(false);
 
@@ -130,7 +132,7 @@ export function MaterialContractAllocationDialog({ contract, fixedProject, initi
         <label className="text-xs font-semibold">배정 톤수<div className="mt-1 flex"><input type="number" min="0.0001" step="0.0001" value={form.quantityTons} onChange={(event)=>setForm({...form,quantityTons:event.target.value})} className="w-full rounded-l-xl border px-3 py-2 text-sm"/><span className="rounded-r-xl border border-l-0 bg-white px-3 py-2 text-sm">t</span></div><span className="mt-1 block font-normal text-slate-500">수정 가능 최대 {formatNumber(maximum,4)}t</span></label><label className="text-xs font-semibold">배정일<input type="date" value={form.allocationDate} onChange={(event)=>setForm({...form,allocationDate:event.target.value})} className="mt-1 w-full rounded-xl border bg-white px-3 py-2 text-sm"/></label><label className="text-xs font-semibold">상태<select value={form.status} onChange={(event)=>setForm({...form,status:event.target.value as "planned"|"confirmed"})} className="mt-1 w-full rounded-xl border bg-white px-3 py-2 text-sm"><option value="planned">예정 - 가용량 선점</option><option value="confirmed">확정 - 실제 발주</option></select></label><label className="text-xs font-semibold">발주번호<input maxLength={100} value={form.purchaseOrderNo} onChange={(event)=>setForm({...form,purchaseOrderNo:event.target.value})} className="mt-1 w-full rounded-xl border bg-white px-3 py-2 text-sm"/></label><label className="text-xs font-semibold sm:col-span-2 lg:col-span-3">메모<textarea rows={3} maxLength={2000} value={form.memo} onChange={(event)=>setForm({...form,memo:event.target.value})} className="mt-1 w-full rounded-xl border bg-white px-3 py-2 text-sm"/></label></div><div className="mt-4 flex justify-end gap-2"><Button variant="outline" onClick={()=>setEditing(null)}>취소</Button><Button variant="primary" disabled={saving} onClick={()=>void save()}>{saving?"저장 중...":"저장"}</Button></div></section>}
       {loading?<p className="py-12 text-center text-sm text-slate-400">불러오는 중...</p>:<div className="mt-4 overflow-x-auto rounded-xl border">
         <table className="w-full min-w-[1180px] table-fixed text-left text-xs">
-          <colgroup><col className="w-[88px]"/><col className="w-[112px]"/><col/><col className="w-[108px]"/><col className="w-[96px]"/><col className="w-[88px]"/><col className="w-[190px]"/><col className="w-[150px]"/><col className="w-[96px]"/><col className="w-[90px]"/><col className="w-[132px]"/></colgroup>
+          <colgroup><col className="w-[88px]"/><col className="w-[112px]"/><col/><col className="w-[108px]"/><col className="w-[96px]"/><col className="w-[88px]"/><col className="w-[190px]"/><col className="w-[150px]"/><col className="w-[96px]"/><col className="w-[90px]"/><col className="w-[164px]"/></colgroup>
           <thead className="bg-slate-100"><tr>{["배정일","사용 구분","대상","프로젝트 코드","상태","톤수","발주번호","메모","작성자","작성일","관리"].map((label)=><th key={label} className="whitespace-nowrap px-3 py-2">{label}</th>)}</tr></thead>
           <tbody>{allocations.filter((allocation)=>!fixedProject||allocation.project_id===fixedProject.id).map((allocation)=><tr key={allocation.id} className={`border-t ${allocation.status==="cancelled"?"bg-slate-50 text-slate-400":""}`}>
             <td className="whitespace-nowrap px-3 py-2 align-middle">{allocation.allocation_date}</td>
@@ -143,10 +145,11 @@ export function MaterialContractAllocationDialog({ contract, fixedProject, initi
             <td className="truncate px-3 py-2 align-middle" title={allocation.memo??""}>{allocation.memo??"-"}</td>
             <td className="whitespace-nowrap px-3 py-2 align-middle" title={allocation.created_by_name??""}>{allocation.created_by_name??"-"}</td>
             <td className="whitespace-nowrap px-3 py-2 align-middle">{allocation.created_at.slice(0,10)}</td>
-            <td className="whitespace-nowrap px-3 py-2 align-middle">{canManage&&allocation.status!=="cancelled"&&<div className="flex items-center gap-1"><button aria-label="사용등록 수정" className="rounded-lg border bg-white p-1.5" onClick={()=>startEdit(allocation)}><Pencil size={13}/></button><Button size="sm" variant="danger" onClick={()=>void cancelAllocation(allocation)}>배정 취소</Button></div>}</td>
+            <td className="whitespace-nowrap px-3 py-2 align-middle"><div className="flex items-center gap-1"><button type="button" aria-label="변경 이력" title="변경 이력" className="rounded-lg border bg-white p-1.5 text-slate-600 hover:bg-slate-50" onClick={()=>setHistoryAllocation(allocation)}><History size={13}/></button>{canManage&&allocation.status!=="cancelled"&&<><button type="button" aria-label="사용등록 수정" className="rounded-lg border bg-white p-1.5" onClick={()=>startEdit(allocation)}><Pencil size={13}/></button><Button size="sm" variant="danger" onClick={()=>void cancelAllocation(allocation)}>배정 취소</Button></>}</div></td>
           </tr>)}{allocations.filter((allocation)=>!fixedProject||allocation.project_id===fixedProject.id).length===0&&<tr><td colSpan={11} className="px-4 py-12 text-center text-slate-400">사용등록 이력이 없습니다.</td></tr>}</tbody>
         </table>
       </div>}
+      <MaterialAllocationHistoryDialog contractId={contractId} allocation={historyAllocation} onClose={()=>setHistoryAllocation(null)}/>
     </div>
   </div>;
 }

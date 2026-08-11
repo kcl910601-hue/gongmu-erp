@@ -1,5 +1,6 @@
 import { getLmeContext } from "@/lib/lme-server";
 import type { MaterialContractAllocation } from "@/lib/material-contract-allocations";
+import { calculateMaterialAllocationAmountKrw, summarizeProjectMaterialAllocationCosts } from "@/lib/project-material-allocation-cost";
 
 export async function GET(_request: Request, { params }: { params: Promise<{ projectId: string }> }) {
   const { projectId: rawProjectId } = await params;
@@ -13,7 +14,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ pro
 
   const result = await supabase
     .from("material_contract_allocations")
-    .select("*, contract:raw_material_contracts(contract_name, material_code, contract_price_krw_per_kg, supplier:suppliers(name))")
+    .select("*, contract:raw_material_contracts(contract_name, material_code, contract_price_krw_per_kg, material:lme_materials(name), supplier:suppliers(name))")
     .eq("allocation_type", "project")
     .eq("project_id", projectId)
     .order("allocation_date", { ascending: false })
@@ -27,19 +28,25 @@ export async function GET(_request: Request, { params }: { params: Promise<{ pro
   const allocations = (result.data ?? []).map((row) => {
     const contract = Array.isArray(row.contract) ? row.contract[0] : row.contract;
     const supplier = Array.isArray(contract?.supplier) ? contract.supplier[0] : contract?.supplier;
+    const material = Array.isArray(contract?.material) ? contract.material[0] : contract?.material;
+    const quantityTons = Number(row.quantity_tons);
+    const unitPrice = Number(contract?.contract_price_krw_per_kg ?? 0);
     return {
       ...row,
       contract: undefined,
       project_id: Number(row.project_id),
-      quantity_tons: Number(row.quantity_tons),
+      quantity_tons: quantityTons,
       project_code: null,
       project_name: "",
       created_by_name: creatorNames.get(row.created_by) ?? null,
       contract_name: contract?.contract_name ?? "-",
       material_code: contract?.material_code ?? "-",
-      contract_price_krw_per_kg: Number(contract?.contract_price_krw_per_kg ?? 0),
+      material_name: material?.name ?? null,
+      contract_price_krw_per_kg: unitPrice,
+      amount_krw: calculateMaterialAllocationAmountKrw(quantityTons, unitPrice),
       supplier_name: supplier?.name ?? "-",
-    } as MaterialContractAllocation & { contract_name: string; material_code: string; contract_price_krw_per_kg: number; supplier_name: string };
+    } as MaterialContractAllocation & { contract_name: string; material_code: string; material_name: string | null; contract_price_krw_per_kg: number; amount_krw: number | null; supplier_name: string };
   });
-  return Response.json({ allocations, canManage: employee.role === "admin" });
+  const summary = summarizeProjectMaterialAllocationCosts(allocations);
+  return Response.json({ allocations, summary, canManage: employee.role === "admin", calculationBasis: { unit: "KRW/kg", formula: "quantity_tons × 1000 × contract_price_krw_per_kg", pricePolicy: "current_immutable_contract_price" } });
 }

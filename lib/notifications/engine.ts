@@ -7,7 +7,7 @@ export type NotificationEngineInput = {
   tasks?: { id: number; project_id: number; project_name: string; task_name: string | null; assignee: string | null; status: string | null; due_date: string | null }[];
   shipments?: { id: number; project_id: number | null; project_name: string; site_name: string | null; item_name: string | null; status: string | null; shipment_date: string | null }[];
   personal?: { id: string; note_type: "todo" | "memo" | "sticky" | "reminder"; title: string | null; content: string; due_date: string | null; is_completed: boolean; is_pinned: boolean }[];
-  contracts?: { id: string; contract_name: string; effective_end_date: string; contract_quantity_ton: number; remaining_quantity_ton: number; status: string }[];
+  materialContractNotifications?: EngineNotification[];
   weeklyLmeChangeRate?: number | null;
 };
 
@@ -126,13 +126,7 @@ export function generateNotifications(input: NotificationEngineInput): EngineNot
     if (note.note_type === "todo") output.push(item({ id: `personal-todo-${dday.isExpired ? "overdue" : "today"}-${note.id}`, type: dday.isExpired ? "personal_todo_overdue" : "personal_todo_today", category: "personal", priority: dday.isExpired ? "high" : "medium", title: dday.isExpired ? "지연 Todo" : "오늘 Todo", description: note.title || note.content, date: note.due_date, action: { label: "My Workspace", href: "/?workspace=personal" }, projectName: "My Workspace" }));
     if (note.note_type === "memo" && dday.isToday) output.push(item({ id: `personal-memo-today-${note.id}`, type: "personal_memo_today", category: "personal", priority: "low", title: "오늘 Memo", description: note.title || note.content, date: note.due_date, action: { label: "My Workspace", href: "/?workspace=personal" }, projectName: "My Workspace" }));
   }
-  for (const contract of input.contracts ?? []) {
-    if (contract.status !== "active") continue;
-    const dday = getDday(contract.effective_end_date, input.today);
-    if (dday && dday.diff >= 0 && dday.diff <= 30) output.push(item({ id: `raw-material-ending-${contract.id}`, type: "raw_material_contract_ending", category: "raw_material", priority: dday.diff <= 7 ? "critical" : dday.diff <= 14 ? "high" : "medium", title: "원자재 계약 종료", description: `${contract.contract_name} · ${dday.label}`, date: contract.effective_end_date, action: { label: "계약 보기", href: "/statistics/lme" }, projectName: contract.contract_name }));
-    const ratio = contract.contract_quantity_ton > 0 ? contract.remaining_quantity_ton / contract.contract_quantity_ton : 0;
-    if (ratio <= 0.2) output.push(item({ id: `raw-material-remaining-${contract.id}`, type: "raw_material_remaining", category: "raw_material", priority: ratio <= 0.1 ? "critical" : "high", title: "원자재 잔여톤", description: `${contract.contract_name} · ${(ratio * 100).toFixed(1)}%`, date: input.today, action: { label: "계약 보기", href: "/statistics/lme" }, projectName: contract.contract_name }));
-  }
+  output.push(...(input.materialContractNotifications ?? []));
   if (input.weeklyLmeChangeRate !== null && input.weeklyLmeChangeRate !== undefined && Math.abs(input.weeklyLmeChangeRate) >= 5) output.push(item({ id: `lme-weekly-${input.today}`, type: "lme_weekly_change", category: "lme", priority: "medium", title: "LME 전주 대비", description: `${input.weeklyLmeChangeRate > 0 ? "+" : ""}${input.weeklyLmeChangeRate.toFixed(1)}%`, date: input.today, action: { label: "LME 보기", href: "/statistics/lme" }, projectName: "LME" }));
   return sortNotifications(output);
 }

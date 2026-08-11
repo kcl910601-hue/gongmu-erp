@@ -19,9 +19,10 @@ test("generates Todo, Sticky and Memo without completed Todo", () => {
   assert.deepEqual(items.map((item) => item.type), ["personal_todo_today", "personal_memo_today", "personal_sticky"]);
 });
 
-test("generates raw-material threshold and LME change notifications", () => {
-  const items = generateNotifications({ today, contracts: [{ id: "c", contract_name: "AL", effective_end_date: "2026-08-10", contract_quantity_ton: 100, remaining_quantity_ton: 10, status: "active" }], weeklyLmeChangeRate: 6.2 });
-  assert.equal(items.filter((item) => item.category === "raw_material").length, 2);
+test("includes persisted raw-material events and LME change notifications", () => {
+  const rawMaterial = { id: "raw-c-1", type: "raw_material_remaining" as const, category: "raw_material" as const, priority: "critical" as const, title: "가용량 5% 이하", description: "AL", date: today, action: { label: "계약 보기", href: "/statistics/lme?tab=contracts&contract=c" }, projectName: "AL" };
+  const items = generateNotifications({ today, materialContractNotifications: [rawMaterial], weeklyLmeChangeRate: 6.2 });
+  assert.equal(items.filter((item) => item.category === "raw_material").length, 1);
   assert.equal(items.find((item) => item.category === "lme")?.description, "+6.2%");
   assert.equal(items[0].priority, "critical");
 });

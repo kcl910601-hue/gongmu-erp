@@ -1,5 +1,33 @@
 # CHANGELOG
 
+## Sprint 9-4E-3 Calendar Personal Card Clipping Fix
+
+- Removed the parent-level 48px height and clipping rule that cut off the final personal schedule card.
+- Standardized personal cards at 64px with a 4px inter-card gap and used the same constants in week-height calculation.
+- Kept title, metadata, completed/comment/sharing indicators inside the card bounding box and constrained indicators to one compact row.
+- Added slot-height and final bottom-padding tests; no DB migration was added.
+
+## Sprint 9-4E-2 Calendar Personal Task Dynamic Layout
+
+- Rendered accessible personal schedules in All Task as cards below the company lane area instead of count-only badges.
+- Unified All Task, My Task, and Share Task row sizing around the maximum filtered personal-card count in each week.
+- Changed final week height to sum date header, company lanes, section gap, personal cards, and bottom padding.
+- Added 0/1/5/10 personal-card, combined company/personal, and filter-reduction layout tests; no DB migration was added.
+
+## Sprint 9-4E-1 Calendar Dynamic Week Height
+
+- Replaced the equal month-row height policy with per-week required-height calculation based on actual company lanes or visible personal cards.
+- Restored all desktop schedule lanes and removed the overlay More button and clipping that could cover schedule titles.
+- Kept company bars on explicit non-overlapping lanes and constrained personal cards to their reserved fixed-height area.
+- Preserved filters, completed-item visibility, drag-and-drop, editing locks, and existing Realtime refresh behavior; no DB migration was added.
+
+## Sprint 9-4E Calendar Month Row Height & Overflow
+
+- Replaced event-count-driven month row heights with an even 4/5/6-week height calculation.
+- Limited each day cell to three directly visible schedules and added an accessible `+N건 더보기` action that reuses the selected-date detail panel.
+- Calculated overflow from the already filtered company or personal schedule collection while preserving completed-item visibility settings, drag-and-drop, and Realtime refresh behavior.
+- Added calendar overflow-count tests; no DB migration was added.
+
 ## Sprint 9-4A Dashboard Card Responsive Layout Fix
 
 - Exposed each saved card size through a stable `data-dashboard-size` variant

@@ -25,6 +25,7 @@ export const REALTIME_TABLE_EVENTS: Record<string, readonly CollaborationEventNa
   shared_comment_mentions: [NOTIFICATIONS_CHANGED_EVENT, TIMELINE_CHANGED_EVENT],
   activity_logs: [TIMELINE_CHANGED_EVENT, NOTIFICATIONS_CHANGED_EVENT],
   notification_reads: [NOTIFICATIONS_CHANGED_EVENT],
+  material_contract_notification_events: [NOTIFICATIONS_CHANGED_EVENT],
   shared_comment_reads: [COMMENT_COUNTS_INVALIDATED_EVENT],
   reference_tasks: [REFERENCE_TASKS_CHANGED_EVENT],
 };
