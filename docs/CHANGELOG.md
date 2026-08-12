@@ -1,5 +1,19 @@
 # CHANGELOG
 
+## Sprint 9-6C-1 - Workspace Compact Share Requests & Reference Task Visibility
+
+- 받은 공유 요청을 Summary 아래의 한 줄 Compact Strip으로 이동하고 pending이 있을 때만 표시하며 펼침 상태에서 기존 수락·거절을 제공합니다.
+- 공유 요청 수는 Workspace 열 구성에 관여하지 않고, 미완료 Reference Task가 있을 때만 Large 화면을 Todo 8 : Reference Task 4로 전환합니다.
+- Reference Task count에 따라 컴포넌트가 재마운트되던 순환을 제거해 미완료 항목과 count가 안정적으로 유지됩니다.
+- Reference Task 완료 판정은 `status`로 통일하고 API에서 현재 `employees.id`의 `assigned_to` 조건을 명시했습니다.
+
+## Sprint 9-6C - Workspace Share Invitation Recovery & Realtime Sync
+
+- My Workspace에 동일 `share_invitations` 원본의 pending 받은 요청과 수락·거절 처리를 Compact 영역으로 복구했습니다.
+- Notification과 My Workspace는 기존 공유 API/RPC 및 공통 Realtime 이벤트를 함께 사용하며 별도 invitation 복사본을 만들지 않습니다.
+- 수락 전 원본 전체 조회 권한은 열지 않고, 관련 당사자에게 제목만 일괄 반환하는 제한된 RPC와 검증 SQL을 추가했습니다.
+- Reference Task와 받은 공유 요청이 모두 0건이면 Todo가 전체 폭을 유지하고, 존재할 때만 Large 보조 영역을 사용합니다.
+
 ## Sprint 9-6B - Dashboard Visual Hierarchy & Responsive Layout
 
 - Morning Brief 상세 그룹을 대표 3건으로 제한하고 초과 항목의 원본 화면 링크를 추가했습니다.

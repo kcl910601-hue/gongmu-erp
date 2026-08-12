@@ -9,8 +9,8 @@ type RawSourceComment = {
   shared_item: { item_id: string; item: { title: string | null; content: string } | { title: string | null; content: string }[] | null } | Array<{ item_id: string; item: { title: string | null; content: string } | { title: string | null; content: string }[] | null }> | null;
 };
 
-async function loadTasks(supabase: SupabaseClient) {
-  const taskResult = await supabase.from("reference_tasks").select("id,comment_id,shared_item_id,title,due_date,priority,status,created_at,completed_at").order("created_at", { ascending: false }).limit(200);
+async function loadTasks(supabase: SupabaseClient, employeeId: number) {
+  const taskResult = await supabase.from("reference_tasks").select("id,comment_id,shared_item_id,title,due_date,priority,status,created_at,completed_at").eq("assigned_to", employeeId).order("created_at", { ascending: false }).limit(200);
   if (taskResult.error) return { data: null, error: taskResult.error } as const;
   const tasks = (taskResult.data ?? []) as RawReferenceTask[];
   const commentIds = tasks.flatMap((task) => task.comment_id === null ? [] : [task.comment_id]);
@@ -33,7 +33,7 @@ async function loadTasks(supabase: SupabaseClient) {
 export async function GET() {
   const { supabase, employee } = await getLmeContext();
   if (!employee) return Response.json({ error: "로그인이 필요합니다." }, { status: 401 });
-  const result = await loadTasks(supabase);
+  const result = await loadTasks(supabase, employee.id);
   if (result.error) return Response.json({ error: result.error.message }, { status: 500 });
   return Response.json({ tasks: result.data });
 }
@@ -50,7 +50,7 @@ export async function POST(request: Request) {
   if (existing.error) return Response.json({ error: existing.error.message }, { status: 500 });
   const created = await supabase.rpc("create_reference_task", { p_comment_id: commentId, p_title: normalized.options.title, p_due_date: normalized.options.dueDate, p_priority: normalized.options.priority });
   if (created.error) return Response.json({ error: created.error.message }, { status: created.error.message.includes("not_authorized") ? 403 : 409 });
-  const tasks = await loadTasks(supabase);
+  const tasks = await loadTasks(supabase, employee.id);
   if (tasks.error) return Response.json({ error: tasks.error.message }, { status: 500 });
   const task = tasks.data.find((entry) => entry.id === created.data);
   if (!task) return Response.json({ error: "생성된 내 할 일을 찾지 못했습니다." }, { status: 500 });

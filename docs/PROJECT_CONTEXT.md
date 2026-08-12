@@ -138,6 +138,18 @@ Presence sync 결과는 employeeId 기준으로 합쳐 여러 탭과 여러 기�
 
 `CommentSection`이 댓글 API 응답을 화면에 표시한 뒤 응답에 포함된 마지막 댓글 ID까지만 `mark_shared_comments_read`로 기록합니다. 읽음 성공 시 현재 화면의 unread를 즉시 0으로 만들고, `shared_comment_reads` Realtime 변경으로 같은 사용자의 다른 화면도 count만 다시 조회합니다. Calendar 카드는 기존 날짜·작성자·댓글 정보를 유지하면서 소유자가 공유한 일정에는 `공유중`, 참여 일정에는 `공유받음` 태그를 표시합니다.
 
+## Sprint 9-6C Workspace Share Invitation Recovery
+
+Notification은 공유 요청 알림 및 처리 진입점이고, My Workspace는 공유 작업 맥락에서 받은 요청을 확인하고 수락·거절하는 진입점입니다. 두 화면은 별도 복사본 없이 동일한 `share_invitations` 행을 사용하며 기존 `shared-workspace-realtime` 채널의 `share_invitations` 이벤트 후 `/api/sharing`을 재조회해 상태를 동기화합니다.
+
+My Workspace는 현재 직원의 `invitee_id`와 `status = 'pending'`을 함께 확인합니다. 수락 전에는 `personal_notes` 전체 SELECT 정책을 확장하지 않으며 `get_share_invitation_titles(uuid[])`가 관련 inviter/invitee에게 제목만 일괄 반환합니다. Migration `20260813100000_add_share_invitation_title_lookup.sql`과 Verification `20260813101000_verify_share_invitation_title_lookup.sql`은 운영 DB에 자동 적용하지 않습니다.
+
+## Sprint 9-6C-1 Workspace Final Information Roles
+
+My Workspace에서 Todo는 주 실행 영역, 받은 공유 요청은 Summary 아래의 접을 수 있는 Compact 처리 영역, Reference Task는 별도 보조 실행 영역, 완료한 Todo는 접힌 History 영역입니다. 공유 요청 유무는 Todo 폭에 영향을 주지 않으며 미완료 Reference Task가 있을 때만 Large 화면에서 8:4 열을 사용합니다.
+
+Reference Task API는 RLS에 더해 `assigned_to = 현재 employees.id`를 명시하고 완료 여부는 `status = 'completed'`만을 기준으로 판단합니다. `completed_at`은 완료 시각 기록이며 표시 필터의 판정 기준이 아닙니다. Reference Task 컴포넌트는 count 변화로 재마운트하지 않고 동일 인스턴스를 유지해 Realtime 생성·완료·복원·수정·삭제 시 목록과 레이아웃 count를 함께 갱신합니다.
+
 ## Sprint 9-0A Realtime Comment Performance Optimization
 
 댓글 작성·수정·삭제 성공 응답은 `CommentSection` 상태에 즉시 반영합니다. 생성·삭제 시에는 해당 원본 ID의 댓글 수 delta 이벤트를 debounce 없이 발생시켜 Calendar와 My Workspace의 Badge만 갱신하며 일정 목록 전체를 다시 조회하지 않습니다.

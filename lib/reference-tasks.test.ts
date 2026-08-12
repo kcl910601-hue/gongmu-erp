@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { getReferenceTaskDueState, getReferencedCommentIds, isDeletedReferenceSource, normalizeReferenceTaskOptions } from "./reference-tasks.ts";
+import { getReferenceTaskDueState, getReferencedCommentIds, isDeletedReferenceSource, isReferenceTaskCompleted, normalizeReferenceTaskOptions } from "./reference-tasks.ts";
 
 test("참조 댓글 ID는 복사 없이 고유 ID 집합으로 관리한다", () => {
   assert.deepEqual([...getReferencedCommentIds([{ commentId: 3 }, { commentId: 3 }, { commentId: null }, { commentId: 5 }])], [3, 5]);
@@ -23,4 +23,9 @@ test("마감일을 미지정, 오늘, 임박, 지연으로 구분한다", () => 
 test("원본 조인이 사라지면 삭제된 원본으로 판정한다", () => {
   assert.equal(isDeletedReferenceSource({ source: null }), true);
   assert.equal(isDeletedReferenceSource({ source: { commentId: 1, content: "최신 내용", authorName: "김철수", itemId: "note", itemTitle: "일정" } }), false);
+});
+
+test("완료 판정은 completed_at이 아니라 status를 기준으로 한다", () => {
+  assert.equal(isReferenceTaskCompleted({ status: "completed" }), true);
+  assert.equal(isReferenceTaskCompleted({ status: "pending" }), false);
 });

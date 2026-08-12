@@ -45,7 +45,7 @@ import { formatActivityTime } from "@/lib/activity";
 import { useAppShellUser } from "@/contexts/AppShellUserContext";
 import { toast } from "@/lib/toast";
 import { deriveNotificationState, matchesNotificationSearch, splitNotificationMailbox } from "@/lib/notifications/engine";
-import { NOTIFICATIONS_CHANGED_EVENT, REFERENCE_TASKS_CHANGED_EVENT } from "@/lib/collaboration-events";
+import { NOTIFICATIONS_CHANGED_EVENT, REFERENCE_TASKS_CHANGED_EVENT, SHARING_CHANGED_EVENT } from "@/lib/collaboration-events";
 import { SHARE_PERMISSION_LABELS, type ShareInvitation, type SharingOverview } from "@/lib/sharing";
 import { dispatchPersonalNotesChanged } from "@/lib/personal-notes";
 import { AddReferenceTaskButton } from "@/components/workspace/AddReferenceTaskButton";
@@ -429,6 +429,7 @@ export default function NotificationCenter() {
     const response = await fetch("/api/sharing", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action, invitationId: invitation.id }) });
     if (!response.ok) { toast.error("공유 요청을 처리하지 못했습니다."); return; }
     await loadNotifications();
+    window.dispatchEvent(new CustomEvent(SHARING_CHANGED_EVENT));
     dispatchPersonalNotesChanged();
     toast.success(action === "accept" ? "공유 요청을 수락했습니다." : "공유 요청을 거절했습니다.");
   }

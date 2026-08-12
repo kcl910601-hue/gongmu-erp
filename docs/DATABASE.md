@@ -1,5 +1,11 @@
 # ERP Database v1
 
+## Sprint 9-6C Share Invitation Title Lookup
+
+- `get_share_invitation_titles(uuid[])`는 현재 사용자가 inviter 또는 invitee인 invitation의 원본 제목만 일괄 반환합니다.
+- 수락 전 `personal_notes` 전체 조회 권한과 기존 RLS는 확장하지 않으며 invitation/원본 복사 컬럼을 추가하지 않습니다.
+- Migration `20260813100000_add_share_invitation_title_lookup.sql`과 Verification `20260813101000_verify_share_invitation_title_lookup.sql`은 운영 DB에 자동 적용하지 않습니다.
+
 ## Sprint 9-5F Calendar-only Staff RLS
 
 - Calendar-only 판정은 활성·승인 직원 중 `role = staff`, 연결 조직명 `기타`, 직급 `스태프`를 모두 만족할 때만 적용합니다. 기존 Staff role 자체의 공식 권한은 변경하지 않습니다.

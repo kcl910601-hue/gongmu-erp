@@ -13,6 +13,8 @@ export type ReferenceTask = {
 
 export type ReferenceTaskOptions = { title: string; dueDate: string | null; priority: ReferenceTaskPriority };
 
+export function isReferenceTaskCompleted(task: Pick<ReferenceTask, "status">) { return task.status === "completed"; }
+
 export function normalizeReferenceTaskOptions(value: { title?: unknown; dueDate?: unknown; priority?: unknown }) {
   const title = typeof value.title === "string" ? value.title.trim() : "";
   const dueDate = value.dueDate === null || value.dueDate === "" ? null : typeof value.dueDate === "string" ? value.dueDate : "invalid";

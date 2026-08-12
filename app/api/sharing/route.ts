@@ -13,7 +13,13 @@ export async function GET() {
   ]);
   const error = employeesResult.error || receivedResult.error || sentResult.error || membersResult.error;
   if (error) return Response.json({ error: error.message }, { status: 500 });
-  return Response.json({ currentEmployeeId: employee.id, employees: employeesResult.data ?? [], received: receivedResult.data ?? [], sent: sentResult.data ?? [], members: membersResult.data ?? [] });
+  const invitations = [...(receivedResult.data ?? []), ...(sentResult.data ?? [])];
+  const invitationIds = [...new Set(invitations.map((invitation) => invitation.id))];
+  const titlesResult = invitationIds.length > 0 ? await supabase.rpc("get_share_invitation_titles", { p_invitation_ids: invitationIds }) : { data: [], error: null };
+  if (titlesResult.error) return Response.json({ error: titlesResult.error.message }, { status: 500 });
+  const titles = new Map((titlesResult.data ?? []).map((row: { invitation_id: string; item_title: string }) => [row.invitation_id, row.item_title]));
+  const withTitles = <T extends { id: string }>(rows: T[]) => rows.map((row) => ({ ...row, item_title: titles.get(row.id) ?? null }));
+  return Response.json({ currentEmployeeId: employee.id, employees: employeesResult.data ?? [], received: withTitles(receivedResult.data ?? []), sent: withTitles(sentResult.data ?? []), members: membersResult.data ?? [] });
 }
 
 export async function POST(request: Request) {
