@@ -4,7 +4,6 @@ import { Check, ChevronDown, ChevronUp, Clock3, ListFilter, Plus, Search, Users 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { PERSONAL_NOTES_CHANGED_EVENT, dispatchPersonalNotesChanged, getPersonalNoteAccess, getPersonalNoteCommentBadge, getPersonalTodoDateBucket, isOverduePersonalTodo, isTodayPersonalTodo, openNoteEditor, type NoteEditorPreset, type PersonalNote, type PersonalNoteColor } from "@/lib/personal-notes";
 import { ShareDialog } from "@/components/sharing/ShareDialog";
-import { ShareInvitationList } from "@/components/sharing/ShareInvitationList";
 import { CommentSection } from "@/components/comments/CommentSection";
 import { TimelineSection } from "@/components/timeline/TimelineSection";
 import { PersonalNoteActions } from "@/components/workspace/PersonalNoteActions";
@@ -44,7 +43,7 @@ export default function PersonalWorkspace() {
   const [search, setSearch] = useState("");
   const [error, setError] = useState("");
   const [shareTarget, setShareTarget] = useState<PersonalNote | null>(null);
-  const [sharingRefreshKey, setSharingRefreshKey] = useState(0);
+  const [openReferenceCount, setOpenReferenceCount] = useState(0);
   const [preferences, setPreferences] = useState<WorkspacePreferences>(defaultPreferences);
   const [preferencesLoaded, setPreferencesLoaded] = useState(false);
   const [visibleTodoCount, setVisibleTodoCount] = useState(TODO_PAGE_SIZE);
@@ -108,22 +107,27 @@ export default function PersonalWorkspace() {
     <div className="mt-4 flex min-w-0 flex-wrap gap-1 rounded-xl bg-slate-100 p-1">{tabOptions.map((tab) => <button type="button" key={tab.value} onClick={() => setPreferences((current) => ({ ...current, tab: tab.value }))} className={`min-w-0 flex-1 rounded-lg px-2 py-2 text-sm font-semibold transition ${preferences.tab === tab.value ? "bg-white text-blue-700 shadow-sm" : "text-slate-500 hover:text-slate-800"}`}>{tab.label}</button>)}</div>
     {error && <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">{error}</p>}
 
-    {(preferences.tab === "todo" || preferences.tab === "all") && <div className={`mt-4 grid min-w-0 items-start gap-4 ${isSmall ? "grid-cols-1" : "xl:grid-cols-[minmax(0,2fr)_minmax(280px,1fr)]"}`}>
+    {(preferences.tab === "todo" || preferences.tab === "all") && <div className={`mt-4 grid min-w-0 items-start gap-4 ${isSmall || !openReferenceCount ? "grid-cols-1" : "xl:grid-cols-[minmax(0,2fr)_minmax(280px,1fr)]"}`}>
       <div className={`min-w-0 rounded-2xl border border-slate-200 bg-slate-50 ${isSmall ? "p-3" : "p-3 sm:p-4"}`}>
         <div className="flex flex-wrap items-center justify-between gap-2"><div><h3 className="text-base font-bold text-slate-900">내 할 일 <span className="text-blue-600">{visibleTodos.length}</span></h3><p className="text-xs text-slate-500">미완료 Todo를 우선순위에 따라 표시합니다.</p></div></div>
         <div className={`mt-3 grid min-w-0 gap-2 ${isSmall ? "grid-cols-2" : "lg:grid-cols-[minmax(220px,1fr)_auto_auto]"}`}><label className={`flex min-w-0 items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 ${isSmall ? "col-span-2" : ""}`}><Search size={15} className="shrink-0 text-slate-400"/><input value={search} onChange={(event) => { setSearch(event.target.value); setVisibleTodoCount(TODO_PAGE_SIZE); setSmallTodoCount(SMALL_PAGE_SIZE); }} placeholder="Todo 제목과 내용 검색" className="min-w-0 flex-1 bg-transparent text-sm outline-none"/></label><label className="flex min-w-0 items-center gap-1 rounded-xl border border-slate-200 bg-white px-2"><ListFilter size={14} className="shrink-0 text-slate-400"/><select value={preferences.filter} onChange={(event) => { setPreferences((current) => ({ ...current, filter: event.target.value as TodoFilter })); setVisibleTodoCount(TODO_PAGE_SIZE); setSmallTodoCount(SMALL_PAGE_SIZE); }} className="h-10 min-w-0 flex-1 bg-transparent text-sm outline-none">{filterOptions.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select></label><select aria-label="Todo 정렬" value={preferences.sort} onChange={(event) => setPreferences((current) => ({ ...current, sort: event.target.value as TodoSort }))} className="h-10 min-w-0 w-full rounded-xl border border-slate-200 bg-white px-2 text-sm outline-none">{sortOptions.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select></div>
         <NoteList notes={visibleTodos.slice(0, todoLimit)} ownerName={employee?.name ?? "-"} onPatch={patchNote} onDelete={deleteNote} onShare={setShareTarget} emptyMessage="조건에 맞는 미완료 Todo가 없습니다." compact={isSmall}/>
         {todoLimit < visibleTodos.length && <button type="button" onClick={() => isSmall ? setSmallTodoCount((count) => count + todoPageSize) : setVisibleTodoCount((count) => count + todoPageSize)} className="mt-3 w-full rounded-xl border border-slate-200 bg-white py-2 text-sm font-semibold text-blue-600">더 보기 ({visibleTodos.length - todoLimit}건)</button>}
-        {isSmall && <div className="mt-4 border-t border-slate-200 pt-3"><ReferenceTaskSection compact/></div>}
+        {(isSmall || openReferenceCount === 0) && <div className="mt-4 border-t border-slate-200 pt-3"><ReferenceTaskSection compact onOpenCountChange={setOpenReferenceCount}/></div>}
         <div className="mt-4 border-t border-slate-200 pt-3"><button type="button" onClick={() => setPreferences((current) => ({ ...current, completedOpen: !current.completedOpen }))} className="flex w-full items-center justify-between rounded-xl bg-white px-3 py-2 text-left"><span className="break-words text-sm font-bold text-slate-700">완료한 일 <span className="text-slate-400">{completedTodos.length}</span></span>{preferences.completedOpen ? <ChevronUp size={16}/> : <ChevronDown size={16}/>}</button>{preferences.completedOpen && <><NoteList notes={completedTodos.slice(0, completedLimit)} ownerName={employee?.name ?? "-"} onPatch={patchNote} onDelete={deleteNote} onShare={setShareTarget} emptyMessage="완료한 Todo가 없습니다." completed compact={isSmall}/>{completedLimit < completedTodos.length && <button type="button" onClick={() => isSmall ? setSmallCompletedCount((count) => count + completedPageSize) : setVisibleCompletedCount((count) => count + completedPageSize)} className="mt-3 w-full rounded-xl border border-slate-200 bg-white py-2 text-sm font-semibold text-blue-600">완료 내역 더 보기 ({completedTodos.length - completedLimit}건)</button>}</>}</div>
       </div>
-      {!isSmall && <div className="min-w-0 space-y-4"><ShareInvitationList refreshKey={sharingRefreshKey}/><ReferenceTaskSection/></div>}
-      {isSmall && <ShareInvitationList refreshKey={sharingRefreshKey} compact/>}
+      {!isSmall && openReferenceCount !== 0 && <div className="min-w-0 space-y-4"><ReferenceTaskSection onOpenCountChange={setOpenReferenceCount}/></div>}
     </div>}
 
     {(preferences.tab === "schedule" || preferences.tab === "all") && <NoteSection title="📅 개인 일정" preset="memo" notes={schedules} ownerName={employee?.name ?? "-"} onPatch={patchNote} onDelete={deleteNote} onShare={setShareTarget} compact={isSmall}/>}
     {(preferences.tab === "memo" || preferences.tab === "all") && <NoteSection title="📝 메모" preset="memo" notes={memos} ownerName={employee?.name ?? "-"} onPatch={patchNote} onDelete={deleteNote} onShare={setShareTarget} compact={isSmall}/>}
-    {shareTarget && <ShareDialog note={shareTarget} onClose={() => setShareTarget(null)} onChanged={() => { setSharingRefreshKey((value) => value + 1); void load(); }}/>}
+    {shareTarget && (
+      <ShareDialog
+        note={shareTarget}
+        onClose={() => setShareTarget(null)}
+        onChanged={() => void load()}
+      />
+    )}
   </section>;
 }
 

@@ -1,5 +1,23 @@
 # CHANGELOG
 
+## Sprint 9-6B - Dashboard Visual Hierarchy & Responsive Layout
+
+- Morning Brief 상세 그룹을 대표 3건으로 제한하고 초과 항목의 원본 화면 링크를 추가했습니다.
+- KPI와 업무·출고 숫자 영역을 핵심 KPI 6개와 Compact 보조 지표 Row로 통합했습니다.
+- Reference Task 미완료 건수에 따라 My Workspace가 전체 폭 또는 8:4로 동적 전환됩니다.
+- 신규 기본값에서 최근 프로젝트와 최근 활동을 같은 행에 배치하고 각 카드의 자연 높이를 유지했습니다.
+- Dashboard Grid 간격과 stretch를 줄이면서 기존 Preference ID, 사용자 Custom Layout, Realtime과 권한을 유지했습니다.
+- DB migration은 없습니다.
+
+## Sprint 9-6A - Dashboard Information Architecture & UI Reorganization
+
+- Dashboard 영역을 상황 인지, 전체 현황, Todo 실행, 프로젝트 현황, 변경 이력의 역할로 정리했습니다.
+- Morning Brief의 개인 Todo·Reference Task 상세 중복을 제거하고 오늘·지연 Todo 숫자 요약만 유지했습니다.
+- Reference Task는 My Workspace 보조 영역에만 유지하고 공유 요청 수락·거절은 Notification Inbox로 일원화했습니다.
+- 신규 기본 배치를 Morning Brief → KPI → My Workspace → 현황 → Recent Activity 순으로 변경했습니다.
+- 기존 Dashboard Preference의 순서·크기·숨김·접힘 호환성과 기존 Realtime·권한 정책을 유지했습니다.
+- DB migration과 신규 Dashboard 전용 데이터는 없습니다.
+
 ## Sprint 9-6A - Project Task Name Editing
 
 - 프로젝트 상세 공정표에 업무명 인라인 편집, Enter 저장, Escape 취소 UI를 추가했습니다.

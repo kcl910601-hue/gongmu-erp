@@ -1,7 +1,7 @@
 export const DASHBOARD_CARD_IDS = [
   "today_tasks",
-  "workspace",
   "kpi",
+  "workspace",
   "shipments",
   "progress",
   "recent_projects",
@@ -24,8 +24,8 @@ const defaultSizes: Record<DashboardCardId, DashboardCardSize> = {
   kpi: "large",
   shipments: "large",
   progress: "large",
-  recent_projects: "large",
-  recent_activity: "large",
+  recent_projects: "medium",
+  recent_activity: "medium",
 };
 
 export function getDefaultDashboardPreferences(): DashboardCardPreference[] {

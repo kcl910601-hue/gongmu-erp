@@ -1,5 +1,19 @@
 # Gongmu ERP - Project Context
 
+## Sprint 9-6B Dashboard Visual Hierarchy
+
+Dashboard Large 기본 흐름은 Morning Brief → 통합 핵심 KPI → My Workspace → 진행 현황 → 최근 프로젝트/최근 활동 병렬 배치입니다. Morning Brief의 회사 업무·지연 업무·Task Note 확인사항은 그룹당 대표 3건만 표시하고 초과 항목은 원본 화면 링크로 이동합니다.
+
+프로젝트 KPI와 기존 업무·출고 숫자 카드는 핵심 6개(전체·진행·지연 프로젝트, 오늘 마감·지연 업무, 출고대기)로 통합했습니다. 완료 프로젝트, 전체 진행률, 진행중 업무, 출고완료와 LME 비교는 Compact Secondary Row에서 데이터 손실 없이 유지합니다. 기존 `shipments` Preference ID는 legacy 설정 정규화를 위해 보존하지만 독립 시각 카드는 렌더링하지 않습니다.
+
+My Workspace는 미완료 Reference Task가 있으면 Todo 8 / Reference 4 비율로 배치하고, 없으면 Todo가 전체 폭을 사용하며 완료 Reference Task는 Todo 아래 Compact 접힘 영역에서 접근합니다. Grid는 `items-start`를 사용해 최근 활동 확장 시 인접 카드 높이가 강제로 늘어나지 않습니다. Small/Medium/Large 카드 크기, 사용자 저장 순서·숨김·접힘과 기존 Realtime·권한 정책은 유지하며 DB 변경은 없습니다.
+
+## Sprint 9-6A Dashboard Information Architecture
+
+Dashboard는 Morning Brief(오늘 상황 인지), KPI(회사·프로젝트 전체 현황), My Workspace(개인 Todo 실행), Project Status(프로젝트 진행 확인), Recent Activity(변경 이력)의 역할로 구분합니다. Notification은 공유 요청, Mention, 시스템·Task Note·원자재 알림의 실제 관리 화면이며 Dashboard에 동일한 상세 처리 목록을 복제하지 않습니다.
+
+Morning Brief는 회사 Task와 Task Note 확인사항의 대표 목록 및 개인 Todo의 오늘·지연 숫자만 제공합니다. 개인 Todo 상세·완료·수정·공유 관리는 My Workspace에만 있고 Reference Task도 Workspace 보조 영역에만 표시합니다. Workspace의 공유 요청 수락·거절 목록은 제거해 Notification Inbox로 일원화했습니다. 신규 사용자의 기본 순서는 Morning Brief → KPI → My Workspace → 업무·프로젝트 현황 → Recent Activity이며, 저장된 사용자별 순서·크기·숨김·접힘 설정은 정규화 과정에서 그대로 유지합니다. 신규 DB와 Realtime channel은 없습니다.
+
 ## Sprint 9-6A Project Task Name Editing
 
 프로젝트 상세 공정표에서 기존 `tasks.task_name`을 인라인으로 수정할 수 있습니다. 편집은 기존 Task 권한과 short editing lock을 사용하며, trim 후 빈 값은 거부하고 동일 값은 UPDATE와 Activity Log 없이 종료합니다. 저장 중에는 화면에 새 이름을 먼저 반영하고 실패하면 이전 이름으로 복원한 뒤 프로젝트 데이터를 다시 조회합니다.

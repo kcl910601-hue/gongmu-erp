@@ -5,7 +5,6 @@ import { useEffect, useState } from "react";
 import { TASKS_BULK_CHANGED_EVENT } from "@/lib/bulk-utils";
 import {
   AlertTriangle,
-  CheckCircle2,
   ChevronDown,
   ChevronRight,
   ChevronUp,
@@ -24,7 +23,7 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { ProgressBar } from "@/components/ui/ProgressBar";
 import ActivityTimeline from "@/components/activity/ActivityTimeline";
 import DashboardSearch from "@/components/dashboard/DashboardSearch";
-import { DashboardCard, DashboardCustomization } from "@/components/dashboard/DashboardCustomization";
+import { DashboardCard, DashboardCustomization, useDashboardCardSize } from "@/components/dashboard/DashboardCustomization";
 import { Skeleton } from "@/components/ui/Skeleton";
 import {
   MorningBrief,
@@ -213,6 +212,50 @@ function formatShortDate(date: string) {
 
 function getProjectEndDate(project: Project) {
   return project.end_date || project.completion_due_date;
+}
+
+function CompactMetric({ label, value, detail }: { label: string; value: string; detail?: string }) {
+  return <div className="min-w-0 rounded-xl bg-white px-3 py-2"><p className="text-xs font-medium text-slate-500">{label}</p><div className="mt-1 flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5"><strong className="text-lg text-slate-900">{value}</strong>{detail && <span className="text-[10px] text-slate-400">{detail}</span>}</div></div>;
+}
+
+function SecondaryKpiGrid({
+  completedProjects,
+  totalProgress,
+  completedTasks,
+  totalTasks,
+  activeTasks,
+  completedShipments,
+  weeklyLme,
+}: {
+  completedProjects: number;
+  totalProgress: number;
+  completedTasks: number;
+  totalTasks: number;
+  activeTasks: number;
+  completedShipments: number;
+  weeklyLme: WeeklyLmeComparison | null;
+}) {
+  const cardSize = useDashboardCardSize("kpi");
+  const gridClass = cardSize === "large"
+    ? "grid-cols-2 sm:grid-cols-4 xl:grid-cols-6"
+    : cardSize === "medium"
+      ? "grid-cols-2"
+      : "grid-cols-1";
+  const lmeClass = cardSize === "large"
+    ? "col-span-2 sm:col-span-4 xl:col-span-2"
+    : cardSize === "medium"
+      ? "col-span-2"
+      : "col-span-1";
+
+  return (
+    <div className={`mb-4 grid min-w-0 gap-2 rounded-2xl bg-slate-50 p-3 text-sm ${gridClass}`}>
+      <CompactMetric label="완료 프로젝트" value={`${completedProjects}`} />
+      <CompactMetric label="전체 진행률" value={`${totalProgress}%`} detail={`완료 ${completedTasks}/${totalTasks}`} />
+      <CompactMetric label="진행중 업무" value={`${activeTasks}`} />
+      <CompactMetric label="출고완료" value={`${completedShipments}`} />
+      <div className={`${lmeClass} min-w-0`}><WeeklyLmeCard comparison={weeklyLme} /></div>
+    </div>
+  );
 }
 
 export default function Home() {
@@ -1130,23 +1173,23 @@ export default function Home() {
             </Link>
 
             <Link
-              href="/projects?status=completed"
+              href="/tasks?filter=today"
               role="button"
               tabIndex={0}
-              title="완료 프로젝트 보기"
+              title="오늘 마감 업무 보기"
               onKeyDown={handleKpiKeyDown}
               style={{ animationDelay: "60ms" }}
-              className="group kpi-enter relative h-24 cursor-pointer rounded-2xl border border-slate-300 bg-slate-50 p-4 shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:border-blue-400 hover:shadow-md active:scale-[0.98] focus:outline-none focus:ring-2 focus:ring-emerald-200"
+              className="group kpi-enter relative h-24 cursor-pointer rounded-2xl border border-slate-300 bg-slate-50 p-4 shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:border-blue-400 hover:shadow-md active:scale-[0.98] focus:outline-none focus:ring-2 focus:ring-amber-200"
             >
               <div className="flex items-center justify-between">
                 <div className="min-w-0">
-                  <p className="text-xs font-medium text-slate-500">완료 프로젝트</p>
-                  <p className="mt-0.5 text-3xl font-bold tracking-tight text-emerald-600">
-                    {completedProjects}
+                  <p className="text-xs font-medium text-slate-500">오늘 마감 업무</p>
+                  <p className="mt-0.5 text-3xl font-bold tracking-tight text-amber-600">
+                    {todayDueTasks}
                   </p>
                 </div>
-                <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-50 text-emerald-600">
-                  <CheckCircle2 size={18} />
+                <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-amber-50 text-amber-600">
+                  <Clock size={18} />
                 </div>
               </div>
               <span className="absolute bottom-2 right-3 text-slate-400 opacity-40 transition-opacity group-hover:opacity-100">
@@ -1179,117 +1222,18 @@ export default function Home() {
               </span>
             </Link>
 
-            <div className="kpi-enter h-24 rounded-2xl border border-slate-300 bg-slate-100 p-4 shadow-sm transition-all duration-150 hover:-translate-y-0.5 hover:shadow-md">
-              <p className="text-xs font-medium leading-4 text-slate-500">전체 진행률</p>
-              <p className="text-xl font-bold leading-6 tracking-tight text-blue-700">
-                {totalProgress}%
-              </p>
-              <ProgressBar
-                percent={totalProgress}
-                className="mt-1 h-1.5 w-full !bg-slate-300"
-                barClassName={`h-1.5 ${
-                  totalProgress <= 30
-                    ? "!bg-red-600"
-                    : totalProgress <= 70
-                      ? "!bg-amber-600"
-                      : "!bg-emerald-600"
-                }`}
-              />
-              <p className="mt-1 text-[11px] leading-3 text-slate-500">
-                완료 {completedTasks}건 / 전체 {totalTasks}건
-              </p>
-            </div>
-            <WeeklyLmeCard comparison={weeklyLme}/>
+            <Link href="/tasks?status=delayed" className="group kpi-enter relative h-24 rounded-2xl border border-slate-300 bg-slate-50 p-4 shadow-sm transition-all hover:-translate-y-0.5 hover:border-red-300 hover:shadow-md"><p className="text-xs font-medium text-slate-500">지연 업무</p><p className="mt-0.5 text-3xl font-bold tracking-tight text-red-600">{delayedTasks}</p><AlertTriangle size={18} className="absolute right-4 top-4 text-red-500"/><ChevronRight size={14} className="absolute bottom-2 right-3 text-slate-400"/></Link>
+            <Link href="/shipments?status=pending" className="group kpi-enter relative h-24 rounded-2xl border border-slate-300 bg-slate-50 p-4 shadow-sm transition-all hover:-translate-y-0.5 hover:border-amber-300 hover:shadow-md"><p className="text-xs font-medium text-slate-500">출고대기</p><p className="mt-0.5 text-3xl font-bold tracking-tight text-orange-600">{waitingShipments}</p><Truck size={18} className="absolute right-4 top-4 text-orange-500"/><ChevronRight size={14} className="absolute bottom-2 right-3 text-slate-400"/></Link>
           </div>
-          </DashboardCard>
-
-          <DashboardCard cardId="shipments" summary={`대기 ${waitingShipments}건`}>
-          <div className="dashboard-shipment-grid mb-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
-            <Link
-              href="/tasks?filter=today"
-              role="button"
-              tabIndex={0}
-              title="오늘 업무 보기"
-              onKeyDown={handleKpiKeyDown}
-              style={{ animationDelay: "120ms" }}
-              className="group kpi-enter relative min-h-24 cursor-pointer rounded-2xl border border-slate-200 bg-white p-3.5 shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:border-blue-400 hover:shadow-md active:scale-[0.98] focus:outline-none focus:ring-2 focus:ring-orange-200"
-            >
-              <p className="text-xs font-medium text-slate-500">오늘 마감 업무</p>
-              <p className="mt-0.5 text-2xl font-bold tracking-tight text-orange-600">
-                {todayDueTasks}
-              </p>
-              <span className="absolute bottom-2 right-3 text-slate-400 opacity-40 transition-opacity group-hover:opacity-100">
-                <ChevronRight size={14} aria-hidden="true" />
-              </span>
-            </Link>
-
-            <Link
-              href="/tasks?status=delayed"
-              role="button"
-              tabIndex={0}
-              title="지연 업무 보기"
-              onKeyDown={handleKpiKeyDown}
-              style={{ animationDelay: "150ms" }}
-              className="group kpi-enter relative min-h-24 cursor-pointer rounded-2xl border border-slate-200 bg-white p-3.5 shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:border-blue-400 hover:shadow-md active:scale-[0.98] focus:outline-none focus:ring-2 focus:ring-red-200"
-            >
-              <p className="text-xs font-medium text-slate-500">지연 업무</p>
-              <p className="mt-0.5 text-2xl font-bold tracking-tight text-red-600">
-                {delayedTasks}
-              </p>
-              <span className="absolute bottom-2 right-3 text-slate-400 opacity-40 transition-opacity group-hover:opacity-100">
-                <ChevronRight size={14} aria-hidden="true" />
-              </span>
-            </Link>
-
-            <Link
-              href="/tasks?status=in_progress"
-              role="button"
-              tabIndex={0}
-              title="진행중 업무 보기"
-              onKeyDown={handleKpiKeyDown}
-              style={{ animationDelay: "180ms" }}
-              className="group kpi-enter relative min-h-24 cursor-pointer rounded-2xl border border-slate-200 bg-white p-3.5 shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:border-blue-400 hover:shadow-md active:scale-[0.98] focus:outline-none focus:ring-2 focus:ring-blue-200"
-            >
-              <p className="text-xs font-medium text-slate-500">진행중 업무</p>
-              <p className="mt-0.5 text-2xl font-bold tracking-tight text-blue-600">
-                {activeTasks}
-              </p>
-              <span className="absolute bottom-2 right-3 text-slate-400 opacity-40 transition-opacity group-hover:opacity-100">
-                <ChevronRight size={14} aria-hidden="true" />
-              </span>
-            </Link>
-
-            <Link
-              href="/shipments?status=pending"
-              role="button"
-              tabIndex={0}
-              title="출고 대기 보기"
-              onKeyDown={handleKpiKeyDown}
-              style={{ animationDelay: "210ms" }}
-              className="group kpi-enter relative min-h-24 cursor-pointer rounded-2xl border border-slate-200 bg-white p-3.5 shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:border-blue-400 hover:shadow-md active:scale-[0.98] focus:outline-none focus:ring-2 focus:ring-orange-200"
-            >
-              <p className="text-xs font-medium text-slate-500">출고대기</p>
-              <div className="mt-1 flex items-center gap-3">
-                <Truck className="text-orange-500" size={16} />
-                <p className="text-2xl font-bold tracking-tight text-orange-600">
-                  {waitingShipments}
-                </p>
-              </div>
-              <span className="absolute bottom-2 right-3 text-slate-400 opacity-40 transition-opacity group-hover:opacity-100">
-                <ChevronRight size={14} aria-hidden="true" />
-              </span>
-            </Link>
-
-            <div className="min-h-24 rounded-2xl border border-slate-200 bg-white p-3.5 shadow-sm">
-              <p className="text-xs font-medium text-slate-500">출고완료</p>
-              <div className="mt-1 flex items-center gap-3">
-                <CheckCircle2 className="text-emerald-500" size={16} />
-                <p className="text-2xl font-bold tracking-tight text-emerald-600">
-                  {completedShipments}
-                </p>
-              </div>
-            </div>
-          </div>
+          <SecondaryKpiGrid
+            completedProjects={completedProjects}
+            totalProgress={totalProgress}
+            completedTasks={completedTasks}
+            totalTasks={totalTasks}
+            activeTasks={activeTasks}
+            completedShipments={completedShipments}
+            weeklyLme={weeklyLme}
+          />
           </DashboardCard>
 
           <DashboardCard cardId="progress">

@@ -114,14 +114,15 @@ export function MorningBrief({
   }, [employee, generatedNotifications]);
   const briefNotifications = useMemo(() => generatedNotifications.filter((item) => !hiddenNotificationIds.has(item.id)), [generatedNotifications, hiddenNotificationIds]);
   const hiddenTaskIds = useMemo(() => new Set(generatedNotifications.filter((item) => item.category === "task" && hiddenNotificationIds.has(item.id)).map((item) => Number(item.id.split("-").at(-1)))), [generatedNotifications, hiddenNotificationIds]);
-  const todayTasks = useMemo(
+  const todayTaskCandidates = useMemo(
     () =>
       sortTasksByPriority(
         scopedTasks.filter((task) => !isTaskCompleted(task.status) && task.due_date === today && !hiddenTaskIds.has(task.id)),
         today
-      ).slice(0, 5),
+      ),
     [hiddenTaskIds, scopedTasks, today]
   );
+  const todayTasks = useMemo(() => todayTaskCandidates.slice(0, 3), [todayTaskCandidates]);
   useEffect(() => {
     let active = true;
     async function loadChecks() {
@@ -135,10 +136,11 @@ export function MorningBrief({
   }, [scopedTasks, today]);
   const todayChecks = useMemo(() => taskNoteChecks.filter((note) => note.check_date === today).sort((a, b) => Number(b.is_important) - Number(a.is_important)), [taskNoteChecks, today]);
   const overdueChecks = useMemo(() => taskNoteChecks.filter((note) => note.check_date < today).sort((a, b) => a.check_date.localeCompare(b.check_date)), [taskNoteChecks, today]);
-  const overdueTasks = useMemo(
-    () => sortTasksByPriority(scopedTasks.filter((task) => !isTaskCompleted(task.status) && task.due_date !== null && task.due_date < today && !hiddenTaskIds.has(task.id)), today).slice(0, 5),
+  const overdueTaskCandidates = useMemo(
+    () => sortTasksByPriority(scopedTasks.filter((task) => !isTaskCompleted(task.status) && task.due_date !== null && task.due_date < today && !hiddenTaskIds.has(task.id)), today),
     [hiddenTaskIds, scopedTasks, today]
   );
+  const overdueTasks = useMemo(() => overdueTaskCandidates.slice(0, 3), [overdueTaskCandidates]);
   const completedToday = scopedTasks.filter(
     (task) =>
       isTaskCompleted(task.status) && task.completed_date === today
@@ -182,7 +184,7 @@ export function MorningBrief({
   const summary = [
     {
       label: "오늘 회사 업무",
-      value: todayTasks.length,
+      value: todayTaskCandidates.length,
       href: "/tasks?filter=today",
       icon: CalendarCheck,
       color: "text-blue-600",
@@ -231,7 +233,7 @@ export function MorningBrief({
         <div className="flex flex-wrap items-center gap-2">
           {!expanded && (
             <p className="text-xs font-medium text-slate-500">
-              오늘 {todayTasks.length} · 마감 {dueToday.length} · 지연{" "}
+              오늘 {todayTaskCandidates.length} · 마감 {dueToday.length} · 지연{" "}
               {overdue.length}
             </p>
           )}
@@ -315,7 +317,7 @@ export function MorningBrief({
           <h3 className="text-sm font-semibold text-slate-900">
             우선 처리 업무
           </h3>
-          <span className="text-xs text-slate-400">최대 5건</span>
+          <Link href="/tasks?filter=today" className="text-xs font-semibold text-blue-600">{todayTaskCandidates.length > 3 ? `전체 ${todayTaskCandidates.length}건 보기` : "최대 3건"}</Link>
         </div>
         <TodayTaskList
           tasks={todayTasks}
@@ -330,7 +332,7 @@ export function MorningBrief({
           showAssignee={isAdmin && adminScope === "all"}
           onOpenTask={(task) => openTaskDetail(task.id)}
         />
-        {overdueTasks.length > 0 && <div className="mt-4 border-t border-red-100 pt-4"><div className="mb-2 flex items-center justify-between"><h3 className="text-sm font-semibold text-red-700">지연 업무</h3><span className="text-xs text-red-500">오늘 할 일과 분리 · 최대 5건</span></div><TodayTaskList tasks={overdueTasks} today={today} showAssignee={isAdmin && adminScope === "all"} completingTaskId={completingTaskId} onComplete={(task) => void handleComplete(task)} onOpenTask={(task) => openTaskDetail(task.id)}/></div>}
+        {overdueTasks.length > 0 && <div className="mt-4 border-t border-red-100 pt-4"><div className="mb-2 flex items-center justify-between gap-2"><h3 className="text-sm font-semibold text-red-700">지연 업무</h3><Link href="/tasks?status=delayed" className="text-xs font-semibold text-red-600">{overdueTaskCandidates.length > 3 ? `전체 ${overdueTaskCandidates.length}건 보기` : "최대 3건"}</Link></div><TodayTaskList tasks={overdueTasks} today={today} showAssignee={isAdmin && adminScope === "all"} completingTaskId={completingTaskId} onComplete={(task) => void handleComplete(task)} onOpenTask={(task) => openTaskDetail(task.id)}/></div>}
       </div>
       {(todayChecks.length > 0 || overdueChecks.length > 0) && <div className="mt-5 grid gap-3 border-t border-slate-100 pt-4 md:grid-cols-2"><TaskNoteCheckList title={`오늘 확인사항 ${todayChecks.length}`} notes={todayChecks} tasks={scopedTasks}/><TaskNoteCheckList title={`지연 확인사항 ${overdueChecks.length}`} notes={overdueChecks} tasks={scopedTasks} overdue/></div>}
       <MorningBriefWorkspaceSummary />
@@ -341,5 +343,5 @@ export function MorningBrief({
 }
 
 function TaskNoteCheckList({ title, notes, tasks, overdue = false }: { title: string; notes: Array<{ id: string; task_id: number; note: string; is_important: boolean; check_date: string }>; tasks: DashboardFocusTask[]; overdue?: boolean }) {
-  return <div><h3 className={`text-sm font-semibold ${overdue ? "text-red-700" : "text-slate-900"}`}>{title}</h3><div className="mt-2 space-y-2">{notes.slice(0, 5).map((note) => { const task = tasks.find((item) => item.id === note.task_id); return <Link key={note.id} href={`/projects/${task?.project_id ?? ""}?task=${note.task_id}&note=${note.id}`} className="block rounded-xl border border-slate-100 bg-slate-50 px-3 py-2 text-xs hover:border-blue-200"><span className="font-semibold">{note.is_important ? "⚠" : "📝"} {task?.projectName ?? "프로젝트"} / {task?.task_name ?? "업무"}</span><span className="mt-1 block truncate text-slate-500" title={note.note}>{note.check_date} · {note.note}</span></Link>; })}{notes.length === 0 && <p className="text-xs text-slate-400">확인사항이 없습니다.</p>}</div></div>;
+  return <div><div className="flex items-center justify-between gap-2"><h3 className={`text-sm font-semibold ${overdue ? "text-red-700" : "text-slate-900"}`}>{title}</h3>{notes.length > 3 && <Link href="/notifications" className={`text-xs font-semibold ${overdue ? "text-red-600" : "text-blue-600"}`}>전체 보기</Link>}</div><div className="mt-2 space-y-2">{notes.slice(0, 3).map((note) => { const task = tasks.find((item) => item.id === note.task_id); return <Link key={note.id} href={`/projects/${task?.project_id ?? ""}?task=${note.task_id}&note=${note.id}`} className="block rounded-xl border border-slate-100 bg-slate-50 px-3 py-2 text-xs hover:border-blue-200"><span className="font-semibold">{note.is_important ? "⚠" : "📝"} {task?.projectName ?? "프로젝트"} / {task?.task_name ?? "업무"}</span><span className="mt-1 block truncate text-slate-500" title={note.note}>{note.check_date} · {note.note}</span></Link>; })}{notes.length === 0 && <p className="text-xs text-slate-400">확인사항이 없습니다.</p>}</div></div>;
 }
