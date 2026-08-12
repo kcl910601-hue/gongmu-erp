@@ -1,5 +1,15 @@
 # Gongmu ERP - Project Context
 
+## Sprint 9-6A Project Task Name Editing
+
+프로젝트 상세 공정표에서 기존 `tasks.task_name`을 인라인으로 수정할 수 있습니다. 편집은 기존 Task 권한과 short editing lock을 사용하며, trim 후 빈 값은 거부하고 동일 값은 UPDATE와 Activity Log 없이 종료합니다. 저장 중에는 화면에 새 이름을 먼저 반영하고 실패하면 이전 이름으로 복원한 뒤 프로젝트 데이터를 다시 조회합니다.
+
+업무명 저장은 기존 Task update 경로에서 `task_name` 한 필드만 변경하고 `task_name_change` Activity Log에 이전·변경 값을 기록합니다. Task ID와 업무 유형, 담당자, 일정, 상태, 순서, 메모 관계는 유지됩니다. 기존 tasks Realtime 재조회에 따라 프로젝트 상세, Calendar와 메모 Reminder, Timeline, Gantt 및 이후 Excel Export가 원본 이름을 사용합니다. DB migration은 없습니다.
+
+## Sprint 9-5G-1 Gantt Excel Export Task Type
+
+Gantt Excel Export 공통 업무 데이터는 화면에서 사용하는 `tasks.task_type` 표시명을 `taskTypeName`으로 전달합니다. 현재 화면형과 현장별 공정표는 업무명 바로 다음에 `업무 유형` 열을 표시하며, 값이 없으면 `미지정`으로 출력합니다. 고정 창과 날짜 Timeline 시작 열은 상세 정보 열 수에서 계산되고 보고용 요약은 기존 프로젝트 단위 구조를 유지합니다.
+
 ## Sprint 9-4B-2 Calendar Filter Toolbar Responsive Layout
 
 Calendar 필터 Toolbar는 `w-full min-w-0 flex-wrap` 구조로 필터 그룹 단위 줄바꿈을 지원한다. AppShell의 메인 콘텐츠에도 `min-w-0`를 적용해 Sidebar를 제외한 실제 가용 폭 안에서 수축하며, 일정 소스와 보기 방식의 내부 컨트롤도 필요할 때 줄바꿈한다.

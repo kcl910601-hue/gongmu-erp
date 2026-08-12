@@ -8,6 +8,7 @@ export type ActivityType =
   | "project_delete"
   | "task_create"
   | "task_update"
+  | "task_name_change"
   | "task_assignee_change"
   | "task_status_change"
   | "task_complete"

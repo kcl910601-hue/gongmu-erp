@@ -8,7 +8,7 @@ import { formatHierarchicalDeleteLockMessage, withShortEditingLock, type Hierarc
 export type TaskUpdatePatch = Partial<
   Pick<
     PrioritizableTask,
-    "assignee" | "status" | "start_date" | "due_date" | "completed_date"
+    "task_name" | "assignee" | "status" | "start_date" | "due_date" | "completed_date"
   >
 >;
 
@@ -77,7 +77,9 @@ export async function updateTask(
   const { error } = await supabase
     .from("tasks")
     .update(payload)
-    .eq("id", task.id);
+    .eq("id", task.id)
+    .select("id")
+    .single();
   if (error) throw error;
 
   const updatedTask = {
@@ -89,7 +91,9 @@ export async function updateTask(
   };
   const changedFields = Object.keys(patch);
   const activityType =
-    patch.assignee !== undefined
+    patch.task_name !== undefined
+      ? "task_name_change"
+      : patch.assignee !== undefined
       ? "task_assignee_change"
       : patch.status !== undefined
         ? "task_status_change"
@@ -99,17 +103,26 @@ export async function updateTask(
     logActivity({
       type: activityType,
       title:
-        activityType === "task_assignee_change"
+        activityType === "task_name_change"
+          ? "업무명 변경"
+          : activityType === "task_assignee_change"
           ? "업무 담당자 변경"
           : activityType === "task_status_change"
             ? "업무 상태 변경"
             : "업무 수정",
-      description: `${task.task_name || "업무"}의 ${changedFields.join(", ")} 항목을 변경했습니다.`,
+      description: activityType === "task_name_change"
+        ? `${task.task_name || "업무명 없음"}\n→ ${updatedTask.task_name || "업무명 없음"}`
+        : `${task.task_name || "업무"}의 ${changedFields.join(", ")} 항목을 변경했습니다.`,
       projectId: task.project_id,
       targetType: "task",
       targetId: task.id,
       metadata: {
         changedFields,
+        taskId: task.id,
+        ...(patch.task_name !== undefined ? {
+          before: task.task_name ?? null,
+          after: updatedTask.task_name ?? null,
+        } : {}),
         previousStatus: task.status,
         nextStatus: updatedTask.status,
         previousAssignee: task.assignee,
@@ -119,7 +132,7 @@ export async function updateTask(
     recordRecentWorkspaceItem({
       key: `task-${task.id}`,
       type: "task",
-      name: task.task_name || "업무",
+      name: updatedTask.task_name || "업무",
       href: `/projects/${task.project_id}#project-tasks`,
       project_id: task.project_id,
     }),

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
-import { ChevronDown, ChevronRight, Copy, GripVertical, NotebookPen, Plus, Star, Trash2 } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, Copy, GripVertical, NotebookPen, Pencil, Plus, Star, Trash2, X } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { addActivity } from "@/lib/activity";
 import {
@@ -54,6 +54,10 @@ import type { ProjectAssemblyVendor, ProjectSection } from "@/types/project-sect
 import { dispatchPersonalNotesChanged } from "@/lib/personal-notes";
 import { formatHierarchicalDeleteLockMessage, withShortEditingLock, withShortEditingLocks, type HierarchicalDeleteResult } from "@/lib/editing-locks";
 import { DdayBadge } from "@/components/ui/DdayBadge";
+import { updateTask } from "@/lib/task-actions";
+import { normalizeTaskName, validateTaskName } from "@/lib/task-name";
+import { TASKS_CHANGED_EVENT } from "@/lib/collaboration-events";
+import { hasPermission, isCalendarOnlyStaff } from "@/lib/permissions";
 import {
   getProjectStatusLabel,
   getTaskStatusLabel,
@@ -157,6 +161,10 @@ export default function ProjectDetail() {
   const [isSavingTask, setIsSavingTask] = useState(false);
   const [draggingTaskId, setDraggingTaskId] = useState<number | null>(null);
   const [taskQuantityDrafts, setTaskQuantityDrafts] = useState<Record<number, string>>({});
+  const [editingTaskNameId, setEditingTaskNameId] = useState<number | null>(null);
+  const [taskNameDraft, setTaskNameDraft] = useState("");
+  const [savingTaskNameId, setSavingTaskNameId] = useState<number | null>(null);
+  const [canEditTaskName, setCanEditTaskName] = useState(false);
   const [taskNoteSummaries, setTaskNoteSummaries] = useState<Map<number, TaskNoteSummary>>(new Map());
   const [noteTask, setNoteTask] = useState<Task | null>(null);
   const [isRecentActivityOpen, setIsRecentActivityOpen] = useState(false);
@@ -349,6 +357,66 @@ export default function ProjectDetail() {
 
     return () => window.clearTimeout(timer);
   }, [projectId, loadProject]);
+
+  useEffect(() => {
+    let active = true;
+    void getCurrentEmployee().then((employee) => {
+      if (active) setCanEditTaskName(Boolean(employee) && !isCalendarOnlyStaff(employee) && hasPermission(employee?.role, "task_update"));
+    });
+    return () => { active = false; };
+  }, []);
+
+  useEffect(() => {
+    function handleTasksChanged() {
+      void loadProject();
+    }
+    window.addEventListener(TASKS_CHANGED_EVENT, handleTasksChanged);
+    return () => window.removeEventListener(TASKS_CHANGED_EVENT, handleTasksChanged);
+  }, [loadProject]);
+
+  function beginTaskNameEdit(task: Task) {
+    if (savingTaskNameId !== null) return;
+    setEditingTaskNameId(task.id);
+    setTaskNameDraft(task.task_name ?? "");
+  }
+
+  function cancelTaskNameEdit() {
+    if (savingTaskNameId !== null) return;
+    setEditingTaskNameId(null);
+    setTaskNameDraft("");
+  }
+
+  async function saveTaskName(task: Task) {
+    if (savingTaskNameId !== null) return;
+    const validation = validateTaskName(taskNameDraft);
+    if (!validation.valid) {
+      toast.warning("업무명을 입력하세요.");
+      return;
+    }
+    const nextName = validation.value;
+    if (nextName === normalizeTaskName(task.task_name ?? "")) {
+      cancelTaskNameEdit();
+      return;
+    }
+
+    const previousName = task.task_name;
+    setSavingTaskNameId(task.id);
+    setTasks((current) => current.map((item) => item.id === task.id ? { ...item, task_name: nextName } : item));
+    try {
+      const updatedTask = await updateTask(task, { task_name: nextName });
+      setTasks((current) => current.map((item) => item.id === task.id ? { ...item, task_name: updatedTask.task_name } : item));
+      recordTaskChange({ ...task, task_name: updatedTask.task_name });
+      setEditingTaskNameId(null);
+      setTaskNameDraft("");
+      toast.success("업무명을 변경했습니다.");
+    } catch (error) {
+      setTasks((current) => current.map((item) => item.id === task.id ? { ...item, task_name: previousName } : item));
+      toast.error(error instanceof Error ? error.message : "업무명을 변경하지 못했습니다.");
+      void loadProject();
+    } finally {
+      setSavingTaskNameId(null);
+    }
+  }
 
   useEffect(() => {
     let isMounted = true;
@@ -2274,16 +2342,43 @@ export default function ProjectDetail() {
                     </td>
                     <td className="h-14 px-2.5 py-1.5 align-middle">
                       <div className="flex min-w-0 items-center gap-2">
-                        <div
-                          className={`min-w-0 flex-1 truncate font-semibold leading-5 ${
-                            isTaskCompleted(task.status)
-                              ? "text-slate-400"
-                              : "text-slate-950"
-                          }`}
-                          title={task.task_name || "-"}
-                        >
-                          {task.task_name || "-"}
-                        </div>
+                        {editingTaskNameId === task.id ? (
+                          <div className="flex min-w-0 flex-1 items-center gap-1">
+                            <input
+                              autoFocus
+                              value={taskNameDraft}
+                              disabled={savingTaskNameId === task.id}
+                              aria-label={`${task.task_name || "업무"} 업무명 수정`}
+                              onChange={(event) => setTaskNameDraft(event.target.value)}
+                              onKeyDown={(event) => {
+                                if (event.key === "Escape") {
+                                  event.preventDefault();
+                                  cancelTaskNameEdit();
+                                } else if (event.key === "Enter" && !event.nativeEvent.isComposing) {
+                                  event.preventDefault();
+                                  void saveTaskName(task);
+                                }
+                              }}
+                              className="h-8 min-w-0 flex-1 rounded-lg border border-blue-300 bg-white px-2 text-sm font-semibold text-slate-950 outline-none focus:ring-2 focus:ring-blue-100 disabled:bg-slate-100"
+                            />
+                            <button type="button" aria-label="업무명 저장" title="저장" disabled={savingTaskNameId === task.id} onClick={() => void saveTaskName(task)} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-blue-600 hover:bg-blue-50 disabled:opacity-50"><Check size={15} /></button>
+                            <button type="button" aria-label="업무명 수정 취소" title="취소" disabled={savingTaskNameId === task.id} onClick={cancelTaskNameEdit} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 disabled:opacity-50"><X size={15} /></button>
+                          </div>
+                        ) : (
+                          <div className="flex min-w-0 flex-1 items-center gap-1">
+                            <div
+                              className={`min-w-0 flex-1 break-words font-semibold leading-5 ${
+                                isTaskCompleted(task.status)
+                                  ? "text-slate-400"
+                                  : "text-slate-950"
+                              }`}
+                              title={task.task_name || "-"}
+                            >
+                              {task.task_name || "-"}
+                            </div>
+                            {canEditTaskName && <button type="button" aria-label={`${task.task_name || "업무"} 업무명 수정`} title="업무명 수정" disabled={savingTaskNameId !== null} onClick={() => beginTaskNameEdit(task)} className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-slate-400 hover:bg-blue-50 hover:text-blue-600 disabled:opacity-50"><Pencil size={14} /></button>}
+                          </div>
+                        )}
                         <button
                           type="button"
                           aria-label={`${task.task_name || "업무"} 메모 열기`}

@@ -1,5 +1,21 @@
 # CHANGELOG
 
+## Sprint 9-6A - Project Task Name Editing
+
+- 프로젝트 상세 공정표에 업무명 인라인 편집, Enter 저장, Escape 취소 UI를 추가했습니다.
+- 기존 Task update, 권한, short editing lock과 tasks Realtime 흐름을 재사용했습니다.
+- 빈 이름을 차단하고 trim 후 동일한 이름은 저장 요청과 Activity Log 없이 종료합니다.
+- 업무명 변경 시 optimistic update와 실패 rollback·재조회를 적용하고 변경 전후 Activity Log를 기록합니다.
+- Task 원본 ID와 업무 유형·담당자·일정·상태·순서·메모 관계는 변경하지 않으며 DB migration은 없습니다.
+
+## Sprint 9-5G-1 - Gantt Excel Export Task Type Column
+
+- 현재 화면형과 현장별 공정표 Excel에 `업무 유형` 열을 추가했습니다.
+- Gantt 화면의 업무 유형 표시명을 재사용하고 미지정 업무는 `미지정`으로 출력합니다.
+- 추가된 열에 맞춰 날짜 시작 열, 고정 창, 헤더 병합과 Gantt 막대 위치를 이동했습니다.
+- 보고용 요약, 필터·정렬, 파일명, 메모·확인일 출력은 기존 정책을 유지합니다.
+- DB migration은 없습니다.
+
 ## Sprint 9-5F Staff Role Calendar-Only Access
 
 - Classified only approved `role=staff` employees whose organization name is `기타` and position is `스태프` as Calendar-only users, preserving existing Staff permissions for every other organization/position.

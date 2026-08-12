@@ -10,6 +10,7 @@ export type GanttExcelTask = {
   projectStartDate?: string | null;
   projectEndDate?: string | null;
   taskName: string | null;
+  taskTypeName: string;
   assignee: string | null;
   statusLabel: string;
   status: string | null;
@@ -42,8 +43,8 @@ type LayoutSheet = XLSX.WorkSheet & {
 
 type ProjectExportGroup = { key: string; projectCode: string | null; projectName: string; orderer: string | null; startDate: string; endDate: string; tasks: GanttExcelTask[] };
 
-const CURRENT_HEADERS = ["프로젝트 코드", "현장/프로젝트명", "업무명", "담당자", "상태", "시작일", "종료일", "기간", "진행률"];
-const PROJECT_HEADERS = ["공정/업무명", "담당자", "상태", "시작일", "종료일", "기간", "진행률", "메모"];
+const CURRENT_HEADERS = ["프로젝트 코드", "현장/프로젝트명", "업무명", "업무 유형", "담당자", "상태", "시작일", "종료일", "기간", "진행률"];
+const PROJECT_HEADERS = ["공정/업무명", "업무 유형", "담당자", "상태", "시작일", "종료일", "기간", "진행률", "메모"];
 const BORDER = { style: "thin", color: { rgb: "D8DEE9" } } as const;
 const FONT = "맑은 고딕";
 
@@ -152,14 +153,14 @@ export function renderCurrentViewWorkbook(options: GanttExcelOptions) {
     [`생성: ${options.generatedAt.toLocaleString("ko-KR")} · 기간: ${options.startDate} ~ ${options.endDate}${options.filterSummary ? ` · ${options.filterSummary}` : ""}`],
     [...CURRENT_HEADERS, ...dates.map((date) => date.slice(0, 7))],
     [...CURRENT_HEADERS.map(() => ""), ...dates.map((date) => `${Number(date.slice(8))} (${["일", "월", "화", "수", "목", "금", "토"][parseDate(date).getDay()]})`)],
-    ...options.tasks.map((task) => [task.projectCode || "-", task.projectName, task.taskName || "업무명 없음", task.assignee || "미배정", task.statusLabel, task.startDate, task.endDate, duration(task.startDate, task.endDate), task.progress === null ? "" : task.progress / 100, ...dates.map(() => "")]),
+    ...options.tasks.map((task) => [task.projectCode || "-", task.projectName, task.taskName || "업무명 없음", task.taskTypeName || "미지정", task.assignee || "미배정", task.statusLabel, task.startDate, task.endDate, duration(task.startDate, task.endDate), task.progress === null ? "" : task.progress / 100, ...dates.map(() => "")]),
   ];
   const sheet = XLSX.utils.aoa_to_sheet(rows) as LayoutSheet;
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(workbook, sheet, "간트차트");
   sheet["!merges"] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: lastColumn } }, { s: { r: 1, c: 0 }, e: { r: 1, c: lastColumn } }, ...CURRENT_HEADERS.map((_, c) => ({ s: { r: 2, c }, e: { r: 3, c } }))];
   appendDateHeaderMerges(sheet, dates, 2, CURRENT_HEADERS.length);
-  sheet["!cols"] = [12, 24, 26, 12, 12, 12, 12, 8, 9].map((wch) => ({ wch })).concat(dates.map(() => ({ wch: 5.5 })));
+  sheet["!cols"] = [12, 24, 26, 16, 12, 12, 12, 12, 8, 9].map((wch) => ({ wch })).concat(dates.map(() => ({ wch: 5.5 })));
   sheet["!rows"] = [{ hpt: 27 }, { hpt: 20 }, { hpt: 22 }, { hpt: 30 }, ...options.tasks.map(() => ({ hpt: 22 }))];
   styleTimelineSheet(sheet, 4, CURRENT_HEADERS.length, dates, options.tasks, options.today);
   return workbook;
@@ -174,15 +175,15 @@ export function renderProjectScheduleWorkbook(options: GanttExcelOptions) {
     const rows: Array<Array<string | number>> = [
       ["프로젝트 일정 공정표"], [`현장명: ${group.projectName}`], [`프로젝트 코드: ${group.projectCode || "-"}`], [`발주처: ${group.orderer || "-"}`], [`기간: ${options.startDate} ~ ${options.endDate}`], [`출력일: ${formatDate(options.generatedAt)}`],
       [...PROJECT_HEADERS, ...dates.map((date) => date.slice(0, 7))], [...PROJECT_HEADERS.map(() => ""), ...dates.map((date) => `${Number(date.slice(8))} (${["일", "월", "화", "수", "목", "금", "토"][parseDate(date).getDay()]})`)],
-      ...group.tasks.map((task) => [task.taskName || "업무명 없음", task.assignee || "미배정", task.statusLabel, task.startDate, task.endDate, duration(task.startDate, task.endDate), task.progress === null ? "" : task.progress / 100, formatTaskNoteForExport(task.memo ? { note: task.memo, isImportant: Boolean(task.memoIsImportant), checkDate: task.memoCheckDate ?? null } : null), ...dates.map(() => "")]),
+      ...group.tasks.map((task) => [task.taskName || "업무명 없음", task.taskTypeName || "미지정", task.assignee || "미배정", task.statusLabel, task.startDate, task.endDate, duration(task.startDate, task.endDate), task.progress === null ? "" : task.progress / 100, formatTaskNoteForExport(task.memo ? { note: task.memo, isImportant: Boolean(task.memoIsImportant), checkDate: task.memoCheckDate ?? null } : null), ...dates.map(() => "")]),
     ];
     const sheet = XLSX.utils.aoa_to_sheet(rows) as LayoutSheet;
     sheet["!merges"] = Array.from({ length: 6 }, (_, r) => ({ s: { r, c: 0 }, e: { r, c: lastColumn } })).concat(PROJECT_HEADERS.map((_, c) => ({ s: { r: 6, c }, e: { r: 7, c } })));
     appendDateHeaderMerges(sheet, dates, 6, PROJECT_HEADERS.length);
-    sheet["!cols"] = [30, 14, 12, 12, 12, 8, 9, 34].map((wch) => ({ wch })).concat(dates.map(() => ({ wch: 5.5 })));
+    sheet["!cols"] = [30, 16, 14, 12, 12, 12, 8, 9, 34].map((wch) => ({ wch })).concat(dates.map(() => ({ wch: 5.5 })));
     sheet["!rows"] = [{ hpt: 28 }, ...Array.from({ length: 5 }, () => ({ hpt: 19 })), { hpt: 22 }, { hpt: 30 }, ...group.tasks.map(() => ({ hpt: 30 }))];
     sheet["!repeatRows"] = "7:8";
-    styleTimelineSheet(sheet, 8, PROJECT_HEADERS.length, dates, group.tasks, options.today, 6);
+    styleTimelineSheet(sheet, 8, PROJECT_HEADERS.length, dates, group.tasks, options.today, 7);
     XLSX.utils.book_append_sheet(workbook, sheet, createUniqueSheetName(group.projectName, used));
   }
   return workbook;

@@ -2063,6 +2063,7 @@ export function IntegratedProjectGantt({
       projectStartDate: item.row.project.start_date,
       projectEndDate: item.row.project.end_date ?? item.row.project.completion_due_date ?? null,
       taskName: task.task_name,
+      taskTypeName: getTaskTypeLabel(task.task_type),
       assignee: task.assignee,
       statusLabel: getTaskStatusPresentation(task, today).label,
       status: normalizeTaskStatus(task.status),
