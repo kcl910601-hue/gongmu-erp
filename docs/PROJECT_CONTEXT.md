@@ -370,3 +370,27 @@ API 공통 경계는 mutation 요청에 403을 반환하고, `20260811140000_cal
 ## Sprint 9-5F-1 Calendar-only 판정 보정
 
 2026-08-12 운영 데이터 읽기 점검에서 인증 계정이 연결된 후보 직원은 `role = 'staff'`, 조직 `id = 19 / name = '기타'`였지만 `position = 'dd'`였습니다. 조직 관계 누락이 아니라 직급 데이터가 정의된 판정 조건(`스태프`)과 다른 것이 실제 미판정 원인입니다. 인증 조회는 조직 `id`, `name`을 명시적으로 선택하며 role·직급·조직명은 앞뒤 공백과 대소문자를 정규화합니다. 판정 조건 자체는 완화하지 않았고 운영 직원 데이터도 자동 변경하지 않습니다.
+
+## Sprint 9-5G Gantt Excel Export Templates
+
+Gantt Excel Dialog은 `현재 화면형`, `현장별 공정표`, `보고용 요약`의 세 출력 양식을 제공합니다. 세 양식 모두 현재 Gantt에서 필터·정렬·그룹·접힘 상태까지 반영해 계산된 표시 업무를 공통 정규화 데이터로 사용하며 추가 DB 조회를 하지 않습니다. 기간은 기존 현재 Gantt 기간, 현재 월, 직접 선택 옵션을 공통 사용합니다.
+
+현재 화면형은 Sprint 9-5E workbook 구조를 유지합니다. 현장별 공정표는 전체 선택 시 업무가 있는 프로젝트마다 안전한 고유 Sheet를 만들고, 단일 선택 시 해당 Sheet만 만듭니다. 보고용 요약은 필터 결과 기준 KPI와 프로젝트별 업무 상태·평균 진행률·프로젝트 기간 막대를 한 Sheet에 표시합니다. 프로젝트 기간은 프로젝트 시작/종료 필드를 우선하고 없을 때 표시 업무의 최소 시작일과 최대 종료일을 사용합니다. 모든 생성은 기존 `xlsx-js-style` 기반 client-side 방식이며 DB migration과 신규 dependency는 없습니다.
+
+## Sprint 9-5H Project Task Memo Visibility
+
+프로젝트 업무 메모 원본은 `tasks` 컬럼이 아니라 기존 `task_notes` 테이블이며 Task 하나에 여러 원본 메모를 유지합니다. Calendar, Gantt, 업무 목록과 Task 상세는 복사본을 만들지 않고 접근 가능한 `task_notes` 중 최신 원본 행의 내용과 `is_important`를 Preview로 표시합니다. 일반 메모는 📝, 중요 메모는 ⚠로 표시하고 전체 내용은 기존 Task 상세·프로젝트 메모 Drawer에서 확인합니다.
+
+메모 생성·수정·삭제는 기존 `task_notes` RLS와 Activity Log를 그대로 사용합니다. `task_notes`는 기존 공통 Realtime channel에 추가되어 중요도 변경도 같은 갱신 이벤트로 전달됩니다. Morning Brief, 확인일, personal notes, Reference Task에는 연결하지 않습니다. 현장별 공정표 Excel만 메모 열을 추가하며 중요 메모는 `[중요]` 접두사로 출력합니다.
+
+## Sprint 9-5I Task Memo Check Date
+
+`task_notes.check_date`는 시간 없는 선택적 로컬 날짜(`date`)입니다. Calendar는 별도 row를 저장하지 않고 확인일이 있는 원본 메모를 가상 회사 일정으로 변환하며, 전체 일정과 회사 일정에만 기존 필터 정책대로 표시합니다. Morning Brief는 현재 사용자가 볼 수 있는 Task를 한 번에 조회해 오늘과 지연 확인사항을 note id 기준으로 표시합니다.
+
+Notification Engine은 조회 시점에 오늘/지연 확인사항을 평가합니다. 알림 ID는 note id와 check date를 포함하므로 같은 날짜의 반복 평가는 하나의 알림으로 합쳐지고 날짜 변경은 새 이벤트가 됩니다. 알림 대상은 관리자에게는 접근 가능한 전체 Task, 일반 직원에게는 기존 담당 Task 범위입니다. personal notes나 별도 Calendar Event 복사본은 만들지 않습니다.
+
+## Sprint 9-5J Active Important Note Reminder
+
+Calendar의 공정 Bar `📝/⚠`는 최신 원본 메모의 존재와 중요도를 나타냅니다. multi-day 업무는 주 경계별 visible segment로 나뉘며 각 주에서 보이는 대표 segment 안에 제목과 아이콘을 함께 렌더링합니다. 매 날짜별 아이콘은 만들지 않습니다.
+
+오늘이 미완료 Task 기간에 포함되고 최신 메모가 중요할 때 Calendar에 `⚠ 진행 메모` 가상 회사 일정을 한 건 표시합니다. 같은 원본 메모의 `check_date`가 오늘이면 기존 `⚠ 확인`만 유지해 중복을 제거합니다. 이 active reminder는 Calendar 시각 표시 전용이며 Morning Brief, Notification, Gantt, Timeline, Excel에는 추가하지 않습니다.

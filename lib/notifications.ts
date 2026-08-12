@@ -459,6 +459,7 @@ export function calculateNotificationSummary(input: {
   personal?: PersonalNote[];
   materialContractEvents?: MaterialContractNotificationEvent[];
   weeklyLmeChangeRate?: number | null;
+  taskNotes?: { id: string; task_id: number; project_id: number; project_name: string; task_name: string | null; note: string; is_important: boolean; check_date: string | null }[];
 }): NotificationSummary {
   const legacy = calculateLegacyNotificationSummary(input);
   const isAdmin = input.currentEmployee?.role === "admin";
@@ -473,6 +474,7 @@ export function calculateNotificationSummary(input: {
     personal: input.personal,
     materialContractNotifications: input.materialContractEvents?.map(mapMaterialContractEvent),
     weeklyLmeChangeRate: input.weeklyLmeChangeRate,
+    taskNotes: input.taskNotes,
     tasks: visibleTasks.map((task) => ({ ...task, project_name: getProjectName(input.projects, task.project_id) })),
     shipments: visibleShipments.map((shipment) => ({ ...shipment, project_name: getProjectName(input.projects, shipment.project_id) })),
   }).map((generated) => ({
@@ -596,16 +598,17 @@ export async function loadNotificationSummary(
   const weeklyRanges = getKoreanWeeklyRanges();
   const evaluationResult = isAdmin ? await supabase.rpc("evaluate_material_contract_notifications") : { error: null };
   if (evaluationResult.error) return { data: null, error: evaluationResult.error };
-  const [personalResult, contractEventResult, lmeResult, commentResult, mentionResult] = await Promise.all([
+  const [personalResult, contractEventResult, lmeResult, commentResult, mentionResult, taskNoteResult] = await Promise.all([
     supabase.from("personal_notes").select("id, user_id, note_type, title, content, is_completed, is_pinned, color, due_date, sort_order, created_at, updated_at").or(`due_date.lte.${today},note_type.eq.sticky`).limit(100),
     isAdmin ? supabase.from("material_contract_notification_events").select("notification_id,contract_id,contract_name,alert_kind,stage,available_tons,available_ratio,effective_end_date,created_at").order("created_at", { ascending: false }).limit(200) : Promise.resolve({ data: [], error: null }),
     supabase.from("lme_market_prices").select("reference_date, domestic_lme_krw_per_kg").gte("reference_date", weeklyRanges.previousWeekStart).lte("reference_date", weeklyRanges.currentWeekEnd).order("reference_date", { ascending: true }).limit(100),
     supabase.from("shared_comments").select("id,author_id,content,created_at,author:employees!shared_comments_author_id_fkey(name),shared_item:shared_items!inner(item_id,item:personal_notes!shared_items_item_id_fkey(title,content))").neq("author_id", currentEmployee.id).gte("created_at", recentCutoff).order("created_at", { ascending: false }).limit(50),
     supabase.from("shared_comment_mentions").select("comment_id,created_at,comment:shared_comments!inner(id,content,created_at,author:employees!shared_comments_author_id_fkey(name),shared_item:shared_items!inner(item_id,item:personal_notes!shared_items_item_id_fkey(title,content)))").eq("employee_id", currentEmployee.id).gte("created_at", recentCutoff).order("created_at", { ascending: false }).limit(50),
+    taskResult.data?.length ? supabase.from("task_notes").select("id,task_id,note,is_important,check_date").in("task_id", taskResult.data.map((task) => task.id)).not("check_date", "is", null).lte("check_date", today).limit(200) : Promise.resolve({ data: [], error: null }),
   ]);
   const commentTableMissing = commentResult.error?.code === "42P01" || commentResult.error?.code === "PGRST205";
   const mentionTableMissing = mentionResult.error?.code === "42P01" || mentionResult.error?.code === "PGRST205";
-  const supplementalError = personalResult.error || contractEventResult.error || lmeResult.error || (commentTableMissing ? null : commentResult.error) || (mentionTableMissing ? null : mentionResult.error);
+  const supplementalError = personalResult.error || contractEventResult.error || lmeResult.error || taskNoteResult.error || (commentTableMissing ? null : commentResult.error) || (mentionTableMissing ? null : mentionResult.error);
   if (supplementalError) return { data: null, error: supplementalError };
   const weeklyLme = buildWeeklyLmeComparison(lmeResult.data ?? [], weeklyRanges);
 
@@ -620,6 +623,11 @@ export async function loadNotificationSummary(
       personal: (personalResult.data ?? []) as PersonalNote[],
       materialContractEvents: (contractEventResult.data ?? []) as MaterialContractNotificationEvent[],
       weeklyLmeChangeRate: weeklyLme.differenceRate,
+      taskNotes: (taskNoteResult.data ?? []).flatMap((note) => {
+        const task = (taskResult.data ?? []).find((item) => Number(item.id) === Number(note.task_id));
+        if (!task) return [];
+        return [{ id: String(note.id), task_id: Number(note.task_id), project_id: Number(task.project_id), project_name: getProjectName(projectResult.data ?? [], Number(task.project_id)), task_name: task.task_name, note: String(note.note), is_important: Boolean(note.is_important), check_date: note.check_date ? String(note.check_date) : null }];
+      }),
     });
   const mentionedCommentIds = new Set((mentionResult.data ?? []).map((mention) => Number(mention.comment_id)));
   const commentNotifications: NotificationItem[] = (commentResult.data ?? []).filter((comment) => !mentionedCommentIds.has(Number(comment.id))).map((comment) => {

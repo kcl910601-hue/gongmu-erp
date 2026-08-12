@@ -266,7 +266,7 @@ export default function ProjectDetail() {
     if (loadedTasks.length > 0) {
       const { data: noteData, error: noteError } = await supabase
         .from("task_notes")
-        .select("id, task_id, note, created_at, created_by, created_by_name")
+        .select("id, task_id, note, created_at, created_by, created_by_name, is_important, check_date")
         .in("task_id", loadedTasks.map((task) => task.id))
         .order("created_at", { ascending: false });
 
@@ -284,6 +284,8 @@ export default function ProjectDetail() {
               note: String(note.note),
               createdAt: String(note.created_at),
               createdByName: note.created_by_name ? String(note.created_by_name) : null,
+              isImportant: Boolean(note.is_important),
+              checkDate: note.check_date ? String(note.check_date) : null,
             },
           });
         });
@@ -982,7 +984,7 @@ export default function ProjectDetail() {
           note: normalizedNote,
           created_by_name: employee?.name ?? null,
         })
-        .select("id, task_id, note, created_at, created_by, updated_at, created_by_name")
+        .select("id, task_id, note, created_at, created_by, updated_at, created_by_name, is_important, check_date")
         .single();
 
       if (noteError) {
@@ -996,6 +998,8 @@ export default function ProjectDetail() {
             note: createdNote.note,
             createdAt: createdNote.created_at,
             createdByName: createdNote.created_by_name,
+            isImportant: createdNote.is_important,
+            checkDate: createdNote.check_date,
           },
         });
         void addActivity({
@@ -2302,7 +2306,7 @@ export default function ProjectDetail() {
                       >
                         {latestNote ? (
                           <>
-                            <span>{latestNote.note}</span>
+                            <span>{latestNote.isImportant ? "⚠" : "📝"}{latestNote.checkDate ? ` [${latestNote.checkDate.slice(5).replace("-", "/")} 확인]` : ""} {latestNote.note}</span>
                             <span className="hidden xl:inline"> · {latestNote.createdByName || "작성자 미확인"} · {taskNotePreviewTimeFormatter.format(new Date(latestNote.createdAt))}</span>
                           </>
                         ) : "메모 작성..."}

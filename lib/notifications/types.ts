@@ -5,6 +5,7 @@ export type SmartNotificationType =
   | "project_dday" | "project_overdue" | "task_today" | "task_overdue" | "task_due_soon"
   | "shipment_today" | "shipment_overdue" | "personal_todo_today" | "personal_todo_overdue"
   | "personal_memo_today" | "personal_sticky" | "raw_material_contract_ending"
+  | "task_note_check_today" | "task_note_check_overdue"
   | "raw_material_remaining" | "lme_weekly_change" | "system_employee_approval";
 
 export type EngineNotification = {

@@ -28,6 +28,8 @@ import { MorningBriefWorkspaceSummary } from "@/components/dashboard/MorningBrie
 import { generateNotifications } from "@/lib/notifications/engine";
 import { loadHiddenNotificationIds, NOTIFICATION_PREFERENCE_EVENT } from "@/lib/notifications";
 import { useAppShellUser } from "@/contexts/AppShellUserContext";
+import { supabase } from "@/lib/supabase";
+import { TASK_NOTES_CHANGED_EVENT } from "@/lib/task-notes";
 
 const EXPANDED_KEY = "erp-morning-brief-expanded";
 
@@ -69,6 +71,7 @@ export function MorningBrief({
   const [adminScope, setAdminScope] = useState<"all" | "mine">("all");
   const [completingTaskId, setCompletingTaskId] = useState<number | null>(null);
   const [hiddenNotificationIds, setHiddenNotificationIds] = useState<Set<string>>(() => new Set());
+  const [taskNoteChecks, setTaskNoteChecks] = useState<Array<{ id: string; task_id: number; note: string; is_important: boolean; check_date: string }>>([]);
   const { employee } = useAppShellUser();
   const today = getLocalDateString();
   const isAdmin = currentUserRole === "admin";
@@ -119,6 +122,19 @@ export function MorningBrief({
       ).slice(0, 5),
     [hiddenTaskIds, scopedTasks, today]
   );
+  useEffect(() => {
+    let active = true;
+    async function loadChecks() {
+      if (!scopedTasks.length) { setTaskNoteChecks([]); return; }
+      const result = await supabase.from("task_notes").select("id,task_id,note,is_important,check_date").in("task_id", scopedTasks.map((task) => task.id)).not("check_date", "is", null).lte("check_date", today).limit(100);
+      if (active && !result.error) setTaskNoteChecks((result.data ?? []).map((note) => ({ id: String(note.id), task_id: Number(note.task_id), note: String(note.note), is_important: Boolean(note.is_important), check_date: String(note.check_date) })));
+    }
+    void loadChecks();
+    window.addEventListener(TASK_NOTES_CHANGED_EVENT, loadChecks);
+    return () => { active = false; window.removeEventListener(TASK_NOTES_CHANGED_EVENT, loadChecks); };
+  }, [scopedTasks, today]);
+  const todayChecks = useMemo(() => taskNoteChecks.filter((note) => note.check_date === today).sort((a, b) => Number(b.is_important) - Number(a.is_important)), [taskNoteChecks, today]);
+  const overdueChecks = useMemo(() => taskNoteChecks.filter((note) => note.check_date < today).sort((a, b) => a.check_date.localeCompare(b.check_date)), [taskNoteChecks, today]);
   const overdueTasks = useMemo(
     () => sortTasksByPriority(scopedTasks.filter((task) => !isTaskCompleted(task.status) && task.due_date !== null && task.due_date < today && !hiddenTaskIds.has(task.id)), today).slice(0, 5),
     [hiddenTaskIds, scopedTasks, today]
@@ -316,9 +332,14 @@ export function MorningBrief({
         />
         {overdueTasks.length > 0 && <div className="mt-4 border-t border-red-100 pt-4"><div className="mb-2 flex items-center justify-between"><h3 className="text-sm font-semibold text-red-700">지연 업무</h3><span className="text-xs text-red-500">오늘 할 일과 분리 · 최대 5건</span></div><TodayTaskList tasks={overdueTasks} today={today} showAssignee={isAdmin && adminScope === "all"} completingTaskId={completingTaskId} onComplete={(task) => void handleComplete(task)} onOpenTask={(task) => openTaskDetail(task.id)}/></div>}
       </div>
+      {(todayChecks.length > 0 || overdueChecks.length > 0) && <div className="mt-5 grid gap-3 border-t border-slate-100 pt-4 md:grid-cols-2"><TaskNoteCheckList title={`오늘 확인사항 ${todayChecks.length}`} notes={todayChecks} tasks={scopedTasks}/><TaskNoteCheckList title={`지연 확인사항 ${overdueChecks.length}`} notes={overdueChecks} tasks={scopedTasks} overdue/></div>}
       <MorningBriefWorkspaceSummary />
       </div>
       </div>
     </section>
   );
+}
+
+function TaskNoteCheckList({ title, notes, tasks, overdue = false }: { title: string; notes: Array<{ id: string; task_id: number; note: string; is_important: boolean; check_date: string }>; tasks: DashboardFocusTask[]; overdue?: boolean }) {
+  return <div><h3 className={`text-sm font-semibold ${overdue ? "text-red-700" : "text-slate-900"}`}>{title}</h3><div className="mt-2 space-y-2">{notes.slice(0, 5).map((note) => { const task = tasks.find((item) => item.id === note.task_id); return <Link key={note.id} href={`/projects/${task?.project_id ?? ""}?task=${note.task_id}&note=${note.id}`} className="block rounded-xl border border-slate-100 bg-slate-50 px-3 py-2 text-xs hover:border-blue-200"><span className="font-semibold">{note.is_important ? "⚠" : "📝"} {task?.projectName ?? "프로젝트"} / {task?.task_name ?? "업무"}</span><span className="mt-1 block truncate text-slate-500" title={note.note}>{note.check_date} · {note.note}</span></Link>; })}{notes.length === 0 && <p className="text-xs text-slate-400">확인사항이 없습니다.</p>}</div></div>;
 }

@@ -19,6 +19,8 @@ test("Realtime 테이블 변경을 필요한 화면 갱신 이벤트로만 연�
   assert.deepEqual(REALTIME_TABLE_EVENTS.notification_reads, [NOTIFICATIONS_CHANGED_EVENT]);
   assert.ok(REALTIME_TABLE_EVENTS.shared_comment_reads.includes("collaboration:comment-counts-invalidated"));
   assert.deepEqual(REALTIME_TABLE_EVENTS.reference_tasks, ["reference-tasks:changed"]);
+  assert.deepEqual(REALTIME_TABLE_EVENTS.task_notes, ["task-notes:changed"]);
+  assert.deepEqual(REALTIME_TABLE_EVENTS.tasks, ["tasks:changed"]);
 });
 
 test("존재하지 않는 notifications 테이블은 구독하지 않는다", () => {

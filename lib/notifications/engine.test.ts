@@ -9,6 +9,15 @@ test("generates project, task and shipment notifications with priorities", () =>
   assert.deepEqual(items.map((item) => [item.category, item.priority]), [["project", "critical"], ["shipment", "high"], ["task", "medium"]]);
 });
 
+test("업무 메모 확인일 알림은 note와 날짜를 포함한 안정적 ID로 중복 없이 생성한다", () => {
+  const taskNotes = [{ id: "n1", task_id: 2, project_id: 1, project_name: "P", task_name: "T", note: "확인", is_important: true, check_date: today }];
+  const first = generateNotifications({ today, taskNotes });
+  const second = generateNotifications({ today, taskNotes });
+  assert.equal(first.filter((item) => item.type === "task_note_check_today").length, 1);
+  assert.equal(first[0].id, second[0].id);
+  assert.ok(first[0].action.href.includes("note=n1"));
+});
+
 test("generates Todo, Sticky and Memo without completed Todo", () => {
   const items = generateNotifications({ today, personal: [
     { id: "1", note_type: "todo", title: "todo", content: "", due_date: today, is_completed: false, is_pinned: false },

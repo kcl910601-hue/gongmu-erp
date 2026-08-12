@@ -7,6 +7,8 @@ export const COMMENT_COUNT_DELTA_EVENT = "collaboration:comment-count-delta";
 export const COMMENT_COUNTS_INVALIDATED_EVENT = "collaboration:comment-counts-invalidated";
 export const COMMENT_UNREAD_CLEARED_EVENT = "collaboration:comment-unread-cleared";
 export const REFERENCE_TASKS_CHANGED_EVENT = "reference-tasks:changed";
+export const TASK_NOTES_CHANGED_EVENT = "task-notes:changed";
+export const TASKS_CHANGED_EVENT = "tasks:changed";
 
 export type CollaborationEventName =
   | typeof PERSONAL_NOTES_CHANGED_EVENT
@@ -15,7 +17,9 @@ export type CollaborationEventName =
   | typeof SHARING_CHANGED_EVENT
   | typeof NOTIFICATIONS_CHANGED_EVENT
   | typeof COMMENT_COUNTS_INVALIDATED_EVENT
-  | typeof REFERENCE_TASKS_CHANGED_EVENT;
+  | typeof REFERENCE_TASKS_CHANGED_EVENT
+  | typeof TASK_NOTES_CHANGED_EVENT
+  | typeof TASKS_CHANGED_EVENT;
 
 export const REALTIME_TABLE_EVENTS: Record<string, readonly CollaborationEventName[]> = {
   personal_notes: [PERSONAL_NOTES_CHANGED_EVENT, TIMELINE_CHANGED_EVENT, NOTIFICATIONS_CHANGED_EVENT],
@@ -28,6 +32,8 @@ export const REALTIME_TABLE_EVENTS: Record<string, readonly CollaborationEventNa
   material_contract_notification_events: [NOTIFICATIONS_CHANGED_EVENT],
   shared_comment_reads: [COMMENT_COUNTS_INVALIDATED_EVENT],
   reference_tasks: [REFERENCE_TASKS_CHANGED_EVENT],
+  task_notes: [TASK_NOTES_CHANGED_EVENT],
+  tasks: [TASKS_CHANGED_EVENT],
 };
 
 const pendingEvents = new Map<CollaborationEventName, number>();

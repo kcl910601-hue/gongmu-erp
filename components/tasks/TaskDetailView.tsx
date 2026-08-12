@@ -12,6 +12,7 @@ export type TaskDetailData = PrioritizableTask & {
     project_name: string;
     project_code: string | null;
   } | null;
+  latestNote?: { note: string; isImportant: boolean; checkDate: string | null } | null;
 };
 
 const priorityVariant: Record<
@@ -63,6 +64,7 @@ export function TaskDetailView({
           </div>
         ))}
       </dl>
+      {task.latestNote && <div className={`mt-4 rounded-xl border p-4 ${task.latestNote.isImportant ? "border-amber-200 bg-amber-50" : "border-slate-200 bg-slate-50"}`}><div className={`text-xs font-semibold ${task.latestNote.isImportant ? "text-amber-800" : "text-slate-600"}`}>{task.latestNote.isImportant ? "⚠ 중요 메모" : "📝 메모"}{task.latestNote.checkDate && <span className="ml-2 rounded-full bg-white px-2 py-0.5 text-blue-700">확인일 {task.latestNote.checkDate}</span>}</div><p className="mt-2 whitespace-pre-wrap break-words text-sm leading-6 text-slate-700">{task.latestNote.note}</p></div>}
     </div>
   );
 }

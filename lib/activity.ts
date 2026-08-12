@@ -14,6 +14,8 @@ export type ActivityType =
   | "task_delete"
   | "task_note_create"
   | "task_note_update"
+  | "task_note_importance_update"
+  | "task_note_check_date_update"
   | "task_note_delete"
   | "shipment_create"
   | "shipment_update"

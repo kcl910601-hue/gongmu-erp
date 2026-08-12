@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import XLSX from "xlsx-js-style";
-import { buildGanttWorkbook, filterGanttTasksForRange, getGanttExcelFileName, getGanttExportDates, type GanttExcelTask } from "./gantt-export.ts";
+import { buildGanttWorkbook, createUniqueSheetName, filterGanttTasksForRange, getGanttExcelFileName, getGanttExportDates, getTemplateFileName, renderProjectScheduleWorkbook, renderSummaryWorkbook, type GanttExcelTask } from "./gantt-export.ts";
 
 function task(index: number, overrides: Partial<GanttExcelTask> = {}): GanttExcelTask {
   return { projectCode: `P-${Math.floor(index / 10)}`, projectName: `현장 ${Math.floor(index / 10)}`, taskName: `업무 ${index}`, assignee: index % 2 ? "김공무" : null, statusLabel: "진행중", status: "in_progress", startDate: "2026-12-30", endDate: "2027-01-03", progress: 40, delayed: false, ...overrides };
@@ -43,4 +43,54 @@ test("완료·지연·미배정과 경계 날짜를 셀 값과 막대 색으로 
 test("파일명에서 금지 문자를 제거하고 단일 프로젝트 접두사를 지원한다", () => {
   assert.equal(getGanttExcelFileName("2026-08-11"), "공무팀_간트차트_2026-08-11.xlsx");
   assert.equal(getGanttExcelFileName("2026-08-11", "A/B:현장?"), "A_B_현장__간트차트_2026-08-11.xlsx");
+});
+
+test("현장별 공정표는 프로젝트별 안전하고 중복 없는 Sheet를 생성한다", () => {
+  const tasks = [
+    task(0, { projectCode: "A", projectName: "매우 긴 현장명/중복 프로젝트 1234567890", orderer: "발주처 A", memo: "자재 반입 확인", memoIsImportant: true, memoCheckDate: "2026-08-15" }),
+    task(1, { projectCode: "B", projectName: "매우 긴 현장명/중복 프로젝트 1234567890", orderer: "발주처 B" }),
+    ...Array.from({ length: 98 }, (_, index) => task(index + 2, { projectCode: "A", projectName: "매우 긴 현장명/중복 프로젝트 1234567890" })),
+  ];
+  const workbook = renderProjectScheduleWorkbook({ tasks, startDate: "2026-12-28", endDate: "2027-01-05", today: "2027-01-01", generatedAt: new Date("2026-12-28T09:00:00+09:00") });
+  assert.equal(workbook.SheetNames.length, 2);
+  assert.ok(workbook.SheetNames.every((name) => name.length <= 31 && !/[\\/?*:[\]]/.test(name)));
+  assert.notEqual(workbook.SheetNames[0], workbook.SheetNames[1]);
+  const first = workbook.Sheets[workbook.SheetNames[0]] as XLSX.WorkSheet & { "!freeze"?: { xSplit: number; ySplit: number }; "!pageSetup"?: { orientation: string }; "!repeatRows"?: string };
+  assert.deepEqual(first["!freeze"], { xSplit: 8, ySplit: 8 });
+  assert.equal(first["!pageSetup"]?.orientation, "landscape");
+  assert.equal(first["!repeatRows"], "7:8");
+  assert.equal(first["A2"].v.toString().includes("현장명"), true);
+  assert.equal(first["H9"].v, "[중요][확인 08/15] 자재 반입 확인");
+  const reopened = XLSX.read(XLSX.write(workbook, { type: "buffer", bookType: "xlsx" }), { type: "buffer" });
+  assert.deepEqual(reopened.SheetNames, workbook.SheetNames);
+});
+
+test("보고용 요약은 필터 결과의 KPI와 프로젝트 기간 막대를 집계한다", () => {
+  const workbook = renderSummaryWorkbook({
+    tasks: [
+      task(0, { projectCode: "A", projectName: "현장 A", status: "completed", progress: 100 }),
+      task(1, { projectCode: "A", projectName: "현장 A", delayed: true, progress: 50 }),
+      task(11, { projectCode: "B", projectName: "현장 B", status: "pending", statusLabel: "대기", progress: 0 }),
+    ],
+    startDate: "2026-12-28", endDate: "2027-01-05", today: "2027-01-01", generatedAt: new Date("2026-12-28T09:00:00+09:00"),
+  });
+  const sheet = workbook.Sheets["요약"] as XLSX.WorkSheet & { "!freeze"?: { xSplit: number; ySplit: number }; "!pageSetup"?: { orientation: string } };
+  assert.equal(sheet["B3"].v, 2);
+  assert.equal(sheet["D3"].v, 3);
+  assert.equal(sheet["H3"].v, 1);
+  assert.equal(sheet["J3"].v, 1);
+  assert.deepEqual(sheet["!freeze"], { xSplit: 8, ySplit: 6 });
+  assert.equal(sheet["!pageSetup"]?.orientation, "landscape");
+  assert.ok(sheet["K7"].s.fill.fgColor.rgb);
+  const reopened = XLSX.read(XLSX.write(workbook, { type: "buffer", bookType: "xlsx" }), { type: "buffer" });
+  assert.equal(reopened.Sheets["요약"]["D3"].v, 3);
+});
+
+test("Template 파일명과 중복 Sheet 이름을 안전하게 만든다", () => {
+  assert.equal(getTemplateFileName("project", "2026-08-12"), "현장공정표_2026-08-12.xlsx");
+  assert.equal(getTemplateFileName("project", "2026-08-12", "A/B 현장"), "A_B 현장_공정표_2026-08-12.xlsx");
+  assert.equal(getTemplateFileName("summary", "2026-08-12"), "프로젝트_공정현황_2026-08-12.xlsx");
+  const used = new Set<string>();
+  assert.equal(createUniqueSheetName("현장", used), "현장");
+  assert.equal(createUniqueSheetName("현장", used), "현장(2)");
 });

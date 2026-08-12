@@ -523,3 +523,22 @@ Tasks
 `dashboard_preferences`는 `employee_id`를 기본키로 사용하고 카드 순서, 크기, 숨김, 접힘 상태를 `cards jsonb` 배열에 저장한다. 직원 삭제 시 개인 설정만 함께 정리되며 Dashboard 원본 데이터는 저장하지 않는다.
 
 RLS는 `employees.auth_user_id = auth.uid()`이면서 활성·승인된 본인 직원 행에 대해서만 select/insert/update/delete를 허용한다. Migration `20260806100000_create_dashboard_preferences.sql`과 검증 SQL `20260806101000_verify_dashboard_preferences.sql`은 준비만 하며 운영 DB에는 자동 적용하지 않는다.
+## Sprint 9-5H task_notes 중요도
+
+- 원본 테이블: `public.task_notes` (`task_id`, `note`, 작성자/시간 정보)
+- 신규 컬럼: `is_important boolean not null default false`
+- 기존 메모는 migration 적용 시 모두 일반 메모(`false`)로 유지됩니다.
+- 빈 메모는 기존 `task_notes.note` check constraint가 차단하며, 메모 삭제는 원본 행 삭제 정책을 유지합니다.
+- `task_notes`를 기존 `supabase_realtime` publication에 추가합니다.
+- Migration: `20260812120000_add_task_note_importance.sql`
+- Verification: `20260812121000_verify_task_note_importance.sql`
+- 운영 DB에는 자동 적용하지 않습니다.
+
+## Sprint 9-5I task_notes 확인일
+
+- 신규 컬럼: `check_date date null`
+- 기존 데이터는 `null`로 유지됩니다.
+- 날짜 기반 Calendar, Brief, Notification batch 조회를 위해 `check_date is not null` partial index를 추가합니다.
+- Migration: `20260812130000_add_task_note_check_date.sql`
+- Verification: `20260812131000_verify_task_note_check_date.sql`
+- 별도 알림/일정 복사 테이블은 없으며 운영 DB에는 자동 적용하지 않습니다.

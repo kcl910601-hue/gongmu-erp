@@ -64,7 +64,7 @@ export function TaskDetailDialog({ canEdit = true }: { canEdit?: boolean }) {
         .single();
       if (taskError) throw taskError;
 
-      const [{ data: projectData, error: projectError }, employeeResult] =
+      const [{ data: projectData, error: projectError }, employeeResult, noteResult] =
         await Promise.all([
           supabase
             .from("projects")
@@ -72,13 +72,16 @@ export function TaskDetailDialog({ canEdit = true }: { canEdit?: boolean }) {
             .eq("id", taskData.project_id)
             .maybeSingle(),
           getActiveEmployeeOptionsByFunction("operations"),
+          supabase.from("task_notes").select("note, is_important, check_date").eq("task_id", nextTaskId).order("created_at", { ascending: false }).limit(1).maybeSingle(),
         ]);
       if (projectError) throw projectError;
       if (employeeResult.error) throw new Error(employeeResult.error);
+      if (noteResult.error) throw noteResult.error;
 
       const loadedTask: TaskDetailData = {
         ...taskData,
         project: projectData,
+        latestNote: noteResult.data ? { note: String(noteResult.data.note), isImportant: Boolean(noteResult.data.is_important), checkDate: noteResult.data.check_date ? String(noteResult.data.check_date) : null } : null,
       };
       setTask(loadedTask);
       setAssignees(employeeResult.data.map((employee) => employee.value));

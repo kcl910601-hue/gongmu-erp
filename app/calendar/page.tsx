@@ -36,10 +36,11 @@ import { DdayBadge } from "@/components/ui/DdayBadge";
 import { PersonalNoteDetailModal } from "@/components/workspace/PersonalNoteDetailModal";
 import { PersonalNoteActions } from "@/components/workspace/PersonalNoteActions";
 import { ShareDialog } from "@/components/sharing/ShareDialog";
-import { COMMENT_COUNT_DELTA_EVENT, COMMENT_COUNTS_INVALIDATED_EVENT, COMMENT_UNREAD_CLEARED_EVENT } from "@/lib/collaboration-events";
+import { COMMENT_COUNT_DELTA_EVENT, COMMENT_COUNTS_INVALIDATED_EVENT, COMMENT_UNREAD_CLEARED_EVENT, TASKS_CHANGED_EVENT } from "@/lib/collaboration-events";
 import { applyCommentCounts, loadCommentCounts } from "@/lib/comment-counts";
 import { withShortEditingLock } from "@/lib/editing-locks";
 import { getCalendarPermissions } from "@/lib/permissions";
+import { getLatestTaskNotes, shouldShowActiveImportantNoteReminder, TASK_NOTES_CHANGED_EVENT, type TaskNotePreview } from "@/lib/task-notes";
 
 type Project = IntegratedProject & {
   completion_due_date: string | null;
@@ -86,6 +87,9 @@ type CalendarItem = {
   assemblyVendorName?: string;
   taskType?: string | null;
   href?: string;
+  memo: TaskNotePreview | null;
+  taskStartDate?: string;
+  taskEndDate?: string;
 };
 
 type CalendarWeekSegment = {
@@ -280,9 +284,13 @@ export default function CalendarPage() {
         setShowCompletedPersonalSchedules(normalizeShowCompletedPersonalSchedules(window.localStorage.getItem(preferenceKey)));
       });
     }, 0);
+    // 초기 로더는 아래 함수 선언을 참조하며 컴포넌트 수명 동안 교체되지 않습니다.
+    // eslint-disable-next-line react-hooks/immutability
     void loadCalendar();
+    // eslint-disable-next-line react-hooks/immutability
     void loadCurrentAssignee();
     return () => window.clearTimeout(timer);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -355,6 +363,9 @@ export default function CalendarPage() {
 
     const calendarProjects = (projectData || []) as Project[];
     const calendarTasks = (taskData || []) as unknown as Task[];
+    const noteResult = calendarTasks.length ? await supabase.from("task_notes").select("id, task_id, note, is_important, check_date, created_at, created_by_name").in("task_id", calendarTasks.map((task) => task.id)) : { data: [], error: null };
+    if (noteResult.error) toast.error(noteResult.error.message);
+    const latestNotes = getLatestTaskNotes((noteResult.data ?? []).map((note) => ({ id: String(note.id), taskId: Number(note.task_id), note: String(note.note), isImportant: Boolean(note.is_important), checkDate: note.check_date ? String(note.check_date) : null, createdAt: String(note.created_at), createdByName: note.created_by_name ? String(note.created_by_name) : null })));
 
     setProjects(calendarProjects);
     setTasks(calendarTasks);
@@ -375,6 +386,7 @@ export default function CalendarPage() {
         assemblyVendorName: getTaskAssemblyVendorName(task),
         taskType: task.task_type,
         href: `/projects/${task.project_id}`,
+        memo: latestNotes.get(task.id) ?? null,
       };
       const startDate = task.start_date || task.due_date;
       const endDate = task.due_date || task.start_date;
@@ -390,13 +402,31 @@ export default function CalendarPage() {
       }];
     });
 
-    const calendarItems = taskItems.sort((a, b) => a.date.localeCompare(b.date));
+    const checkItems: CalendarItem[] = calendarTasks.flatMap((task) => {
+      const project = projectById.get(task.project_id);
+      return (noteResult.data ?? []).filter((note) => Number(note.task_id) === task.id && note.check_date).map((note) => ({ id: `task-note-${note.id}`, date: String(note.check_date), startDate: String(note.check_date), endDate: String(note.check_date), type: "업무일정" as const, title: `${Boolean(note.is_important) ? "⚠" : "📝"} 확인 · ${task.task_name || "업무명 없음"} · ${String(note.note)}`, status: task.status, assignee: task.assignee || "미지정", projectName: project?.project_name || "-", assemblyVendorName: getTaskAssemblyVendorName(task), taskType: task.task_type, href: `/projects/${task.project_id}?task=${task.id}&note=${note.id}`, memo: { id: String(note.id), taskId: task.id, note: String(note.note), isImportant: Boolean(note.is_important), checkDate: String(note.check_date), createdAt: String(note.created_at), createdByName: note.created_by_name ? String(note.created_by_name) : null } }));
+    });
+    const activeImportantItems: CalendarItem[] = calendarTasks.flatMap((task) => {
+      const latestNote = latestNotes.get(task.id);
+      if (!shouldShowActiveImportantNoteReminder({ startDate: task.start_date, endDate: task.due_date, completed: isTaskCompleted(task.status) }, latestNote, today)) return [];
+      const project = projectById.get(task.project_id);
+      return [{ id: `task-note-active-${latestNote?.id}-${today}`, date: today, startDate: today, endDate: today, taskStartDate: task.start_date ?? undefined, taskEndDate: task.due_date ?? undefined, type: "업무일정" as const, title: `⚠ 진행 메모 · ${task.task_name || "업무명 없음"}`, status: task.status, assignee: task.assignee || "미지정", projectName: project?.project_name || "-", assemblyVendorName: getTaskAssemblyVendorName(task), taskType: task.task_type, href: `/projects/${task.project_id}?task=${task.id}&note=${latestNote?.id}`, memo: latestNote ?? null }];
+    });
+    const calendarItems = [...taskItems, ...checkItems, ...activeImportantItems].sort((a, b) => a.date.localeCompare(b.date));
 
     setItems(calendarItems);
     setIsLoading(false);
   }
 
+  useEffect(() => {
+    const handleChanged = () => { void loadCalendar(); };
+    window.addEventListener(TASK_NOTES_CHANGED_EVENT, handleChanged);
+    window.addEventListener(TASKS_CHANGED_EVENT, handleChanged);
+    return () => { window.removeEventListener(TASK_NOTES_CHANGED_EVENT, handleChanged); window.removeEventListener(TASKS_CHANGED_EVENT, handleChanged); };
+  });
+
   function getTaskIdFromCalendarItem(item: CalendarItem) {
+    if (item.id.startsWith("task-note-")) return item.memo?.taskId ?? null;
     if (item.id.startsWith("task-")) {
       return Number(item.id.replace("task-", ""));
     }
@@ -444,6 +474,8 @@ export default function CalendarPage() {
       completedDate: task.completed_date,
       delayedDays: getDelayedDays(task),
       taskTypeClassName: "bg-slate-100 text-slate-700 ring-slate-200",
+      memo: item.memo?.note ?? null,
+      memoIsImportant: item.memo?.isImportant ?? false,
     });
   }
 
@@ -629,7 +661,7 @@ export default function CalendarPage() {
     const taskStartDate = updatedTask.start_date || updatedTask.due_date;
     const taskEndDate = updatedTask.due_date || updatedTask.start_date;
     if (taskStartDate && taskEndDate) {
-      taskScheduleItems.push({ id: `task-${updatedTask.id}`, date: taskEndDate, startDate: taskStartDate, endDate: taskEndDate, type: "업무일정", title: taskTitle, status: updatedTask.status, assignee: updatedTask.assignee || "미지정", projectName, assemblyVendorName: getTaskAssemblyVendorName(updatedTask), taskType: updatedTask.task_type, href: `/projects/${updatedTask.project_id}` });
+      taskScheduleItems.push({ id: `task-${updatedTask.id}`, date: taskEndDate, startDate: taskStartDate, endDate: taskEndDate, type: "업무일정", title: taskTitle, status: updatedTask.status, assignee: updatedTask.assignee || "미지정", projectName, assemblyVendorName: getTaskAssemblyVendorName(updatedTask), taskType: updatedTask.task_type, href: `/projects/${updatedTask.project_id}`, memo: items.find((item) => item.id === `task-${updatedTask.id}`)?.memo ?? null });
     }
 
     setTasks((currentTasks) =>
@@ -659,7 +691,7 @@ export default function CalendarPage() {
     setTasks(orderResult.data);
   }
 
-  const groupedItems = useMemo(() => {
+  const groupedItems = (() => {
     const grouped: Record<string, CalendarItem[]> = {};
 
     filteredItems.forEach((item) => {
@@ -671,7 +703,7 @@ export default function CalendarPage() {
     });
 
     return Object.entries(grouped).sort(([a], [b]) => a.localeCompare(b));
-  }, [filteredItems]);
+  })();
 
   function formatKoreanDate(date: string) {
     const [year, month, day] = date.split("-");
@@ -1071,7 +1103,7 @@ export default function CalendarPage() {
                           <button
                             type="button"
                             key={`${item.id}-week-${segment.weekIndex}`}
-                            title={`${item.title} · ${getItemRange(item).start} ~ ${getItemRange(item).end}`}
+                            title={`${item.title} · ${item.projectName ?? "-"} · ${item.taskStartDate ?? getItemRange(item).start} ~ ${item.taskEndDate ?? getItemRange(item).end}${item.memo ? `\n${item.memo.isImportant ? "중요 메모" : "메모"}: ${item.memo.note}${item.memo.checkDate ? `\n확인일: ${item.memo.checkDate}` : ""}` : ""}`}
                             onClick={(event) => {
                               event.stopPropagation();
                               openTaskDetailModal(item);
@@ -1081,7 +1113,7 @@ export default function CalendarPage() {
                             )}`}
                             style={positionStyle}
                           >
-                            {item.title}
+                            <span className="flex min-w-0 items-center gap-1"><span className="min-w-0 flex-1 truncate">{item.title}</span>{item.memo && <span className="shrink-0" aria-label={item.memo.isImportant ? "중요 메모 있음" : "메모 있음"}>{item.memo.isImportant ? "⚠" : "📝"}</span>}</span>
                           </button>
                         );
                       })}
@@ -1143,7 +1175,7 @@ export default function CalendarPage() {
                               >
                                 {getDisplayType(item.type)}
                               </span>
-                              <span className="font-medium leading-6 text-slate-900">{item.title}</span>
+                              <span className="font-medium leading-6 text-slate-900">{item.title}</span>{item.memo && <span className="ml-2 shrink-0" aria-label={item.memo.isImportant ? "중요 메모 있음" : "메모 있음"} title={item.memo.note}>{item.memo.isImportant ? "⚠" : "📝"}</span>}
                             </div>
 
                             <div className="shrink-0 text-sm text-slate-500">

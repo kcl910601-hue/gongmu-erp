@@ -7,6 +7,7 @@ export type NotificationEngineInput = {
   tasks?: { id: number; project_id: number; project_name: string; task_name: string | null; assignee: string | null; status: string | null; due_date: string | null }[];
   shipments?: { id: number; project_id: number | null; project_name: string; site_name: string | null; item_name: string | null; status: string | null; shipment_date: string | null }[];
   personal?: { id: string; note_type: "todo" | "memo" | "sticky" | "reminder"; title: string | null; content: string; due_date: string | null; is_completed: boolean; is_pinned: boolean }[];
+  taskNotes?: { id: string; task_id: number; project_id: number; project_name: string; task_name: string | null; note: string; is_important: boolean; check_date: string | null }[];
   materialContractNotifications?: EngineNotification[];
   weeklyLmeChangeRate?: number | null;
 };
@@ -125,6 +126,11 @@ export function generateNotifications(input: NotificationEngineInput): EngineNot
     if (!dday || dday.diff > 0) continue;
     if (note.note_type === "todo") output.push(item({ id: `personal-todo-${dday.isExpired ? "overdue" : "today"}-${note.id}`, type: dday.isExpired ? "personal_todo_overdue" : "personal_todo_today", category: "personal", priority: dday.isExpired ? "high" : "medium", title: dday.isExpired ? "지연 Todo" : "오늘 Todo", description: note.title || note.content, date: note.due_date, action: { label: "My Workspace", href: "/?workspace=personal" }, projectName: "My Workspace" }));
     if (note.note_type === "memo" && dday.isToday) output.push(item({ id: `personal-memo-today-${note.id}`, type: "personal_memo_today", category: "personal", priority: "low", title: "오늘 Memo", description: note.title || note.content, date: note.due_date, action: { label: "My Workspace", href: "/?workspace=personal" }, projectName: "My Workspace" }));
+  }
+  for (const note of input.taskNotes ?? []) {
+    if (!note.check_date || note.check_date > input.today) continue;
+    const overdue = note.check_date < input.today;
+    output.push(item({ id: `task-note-check-${overdue ? "overdue" : "today"}-${note.id}-${note.check_date}`, type: overdue ? "task_note_check_overdue" : "task_note_check_today", category: "task", priority: overdue ? "critical" : note.is_important ? "high" : "medium", title: overdue ? "지연 확인사항" : "오늘 확인사항", description: `${note.is_important ? "[중요] " : ""}${note.task_name || "업무"} · ${note.note}`, date: note.check_date, action: { label: "업무 메모 열기", href: `/projects/${note.project_id}?task=${note.task_id}&note=${note.id}` }, projectName: note.project_name }));
   }
   output.push(...(input.materialContractNotifications ?? []));
   if (input.weeklyLmeChangeRate !== null && input.weeklyLmeChangeRate !== undefined && Math.abs(input.weeklyLmeChangeRate) >= 5) output.push(item({ id: `lme-weekly-${input.today}`, type: "lme_weekly_change", category: "lme", priority: "medium", title: "LME 전주 대비", description: `${input.weeklyLmeChangeRate > 0 ? "+" : ""}${input.weeklyLmeChangeRate.toFixed(1)}%`, date: input.today, action: { label: "LME 보기", href: "/statistics/lme" }, projectName: "LME" }));

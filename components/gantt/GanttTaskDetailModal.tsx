@@ -230,6 +230,7 @@ export function GanttTaskDetailModal({
             </div>
           ))}
         </div>
+        {task.memo && <div className={`mb-5 rounded-2xl border p-4 ${task.memoIsImportant ? "border-amber-200 bg-amber-50" : "border-slate-200 bg-slate-50"}`}><div className={`text-xs font-semibold ${task.memoIsImportant ? "text-amber-800" : "text-slate-600"}`}>{task.memoIsImportant ? "⚠ 중요 메모" : "📝 메모"}</div><p className="mt-2 whitespace-pre-wrap break-words text-sm leading-6 text-slate-700">{task.memo}</p></div>}
 
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <label>

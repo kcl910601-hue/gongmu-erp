@@ -47,6 +47,7 @@ import {
   sortRows,
   type SortDirection,
 } from "@/lib/table-view";
+import { getLatestTaskNotes, TASK_NOTES_CHANGED_EVENT, type TaskNotePreview } from "@/lib/task-notes";
 
 type Project = {
   id: number;
@@ -71,6 +72,7 @@ type Task = {
 
 type TaskWithProject = Task & {
   project: Project | null;
+  latestNote: TaskNotePreview | null;
 };
 
 const statusList = ["전체", "대기", "진행중", "완료"];
@@ -153,6 +155,8 @@ export default function TasksPage() {
   const [bulkResult, setBulkResult] = useState<BulkResult | null>(null);
 
   useEffect(() => {
+    const handleTaskNotesChanged = () => { void loadTasks(); };
+    window.addEventListener(TASK_NOTES_CHANGED_EVENT, handleTaskNotesChanged);
     const timer = window.setTimeout(() => {
       const queryFilters = getTaskFiltersFromQuery();
       if (queryFilters.hasQuery) {
@@ -162,7 +166,7 @@ export default function TasksPage() {
       void loadTasks();
     }, 0);
 
-    return () => window.clearTimeout(timer);
+    return () => { window.clearTimeout(timer); window.removeEventListener(TASK_NOTES_CHANGED_EVENT, handleTaskNotesChanged); };
   }, [setStatusFilter, setWorkFilter]);
 
   useEffect(() => {
@@ -177,6 +181,7 @@ export default function TasksPage() {
                 ...task,
                 ...updatedTask,
                 project: updatedTask.project || task.project,
+                latestNote: task.latestNote,
               }
             : task
         )
@@ -280,13 +285,19 @@ export default function TasksPage() {
 
     const projects = projectData || [];
 
-    const mergedTasks = (taskData || []).map((task) => {
+    const taskRows = taskData || [];
+    const noteResult = taskRows.length ? await supabase.from("task_notes").select("id, task_id, note, is_important, check_date, created_at, created_by_name").in("task_id", taskRows.map((task) => task.id)) : { data: [], error: null };
+    if (noteResult.error) toast.error(noteResult.error.message);
+    const latestNotes = getLatestTaskNotes((noteResult.data ?? []).map((note) => ({ id: String(note.id), taskId: Number(note.task_id), note: String(note.note), isImportant: Boolean(note.is_important), checkDate: note.check_date ? String(note.check_date) : null, createdAt: String(note.created_at), createdByName: note.created_by_name ? String(note.created_by_name) : null })));
+
+    const mergedTasks = taskRows.map((task) => {
       const matchedProject =
         projects.find((project) => project.id === task.project_id) || null;
 
       return {
         ...task,
         project: matchedProject,
+        latestNote: latestNotes.get(Number(task.id)) ?? null,
       };
     });
 
@@ -538,6 +549,7 @@ export default function TasksPage() {
         task.assignee,
         task.project?.project_name,
         task.project?.project_code,
+        task.latestNote?.note,
       ]
         .filter(Boolean)
         .some((value) =>
@@ -938,7 +950,7 @@ export default function TasksPage() {
                     </td>
 
                     <td className="p-2">{task.task_order || "-"}</td>
-                    <td className="p-2">{task.task_name || "-"}</td>
+                    <td className="min-w-0 p-2"><div className="min-w-0">{task.task_name || "-"}{task.latestNote && <p className={`mt-1 max-w-80 truncate text-xs ${task.latestNote.isImportant ? "font-semibold text-amber-700" : "text-slate-500"}`} title={task.latestNote.note}><span aria-label={task.latestNote.isImportant ? "중요 메모 있음" : "메모 있음"}>{task.latestNote.isImportant ? "⚠" : "📝"}</span>{task.latestNote.checkDate ? ` [${task.latestNote.checkDate.slice(5).replace("-", "/")} 확인]` : ""} {task.latestNote.note}</p>}</div></td>
                     <td className="p-2">{task.task_type || "-"}</td>
                     <td className="p-2">{task.assignee || "-"}</td>
                     <td className="p-2">{task.start_date || "-"}</td>

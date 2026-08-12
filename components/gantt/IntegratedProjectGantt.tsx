@@ -40,8 +40,9 @@ import { formatProjectQuantity } from "@/lib/project-quantity";
 import { compareTasksBySchedule, persistRecalculatedTaskOrders, recalculateTaskOrders } from "@/lib/task-ordering";
 import { withShortEditingLock, withShortEditingLocks } from "@/lib/editing-locks";
 import { getDday } from "@/lib/dday";
-import { downloadGanttWorkbook, filterGanttTasksForRange, getGanttExcelFileName, type GanttExcelTask } from "@/lib/excel/gantt-export";
+import { downloadGanttWorkbook, filterGanttTasksForRange, getTemplateFileName, groupGanttTasksByProject, type GanttExcelTask, type GanttExportTemplate } from "@/lib/excel/gantt-export";
 import { toast } from "@/lib/toast";
+import { getLatestTaskNotes, TASK_NOTES_CHANGED_EVENT, type TaskNotePreview } from "@/lib/task-notes";
 import {
   getProjectStatusLabel,
   getTaskStatusLabel,
@@ -211,6 +212,8 @@ export type GanttTaskDetail = {
   completedDate: string | null;
   delayedDays: number | null;
   taskTypeClassName: string;
+  memo: string | null;
+  memoIsImportant: boolean;
 };
 
 type TaskTypeColor = {
@@ -647,6 +650,7 @@ export function IntegratedProjectGantt({
   const [memoTarget, setMemoTarget] = useState<GanttMemoTarget | null>(null);
   const [projectMemos, setProjectMemos] = useState<ProjectScheduleMemo[]>([]);
   const [taskMemos, setTaskMemos] = useState<TaskScheduleMemo[]>([]);
+  const [taskNotePreviews, setTaskNotePreviews] = useState<Map<number, TaskNotePreview>>(new Map());
   const [taskDrag, setTaskDrag] = useState<TaskDragState | null>(null);
   const [taskResize, setTaskResize] = useState<TaskResizeState | null>(null);
   const [savingTaskId, setSavingTaskId] = useState<number | null>(null);
@@ -852,26 +856,31 @@ export function IntegratedProjectGantt({
     async function loadMemos() {
       const projectIds = projectIdsKey ? projectIdsKey.split(",").map(Number) : [];
       const taskIds = taskIdsKey ? taskIdsKey.split(",").map(Number) : [];
-      const [projectResult, taskResult] = await Promise.all([
+      const [projectResult, taskResult, taskNoteResult] = await Promise.all([
         projectIds.length
           ? supabase.from("project_schedule_memos").select("id, project_id, memo_date, content").in("project_id", projectIds)
           : Promise.resolve({ data: [], error: null }),
         taskIds.length
           ? supabase.from("task_schedule_memos").select("id, task_id, content").in("task_id", taskIds)
           : Promise.resolve({ data: [], error: null }),
+        taskIds.length
+          ? supabase.from("task_notes").select("id, task_id, note, is_important, check_date, created_at, created_by_name").in("task_id", taskIds)
+          : Promise.resolve({ data: [], error: null }),
       ]);
 
       if (!isActive) return;
-      if (projectResult.error || taskResult.error) {
-        console.error("Gantt memo load error:", projectResult.error || taskResult.error);
+      if (projectResult.error || taskResult.error || taskNoteResult.error) {
+        console.error("Gantt memo load error:", projectResult.error || taskResult.error || taskNoteResult.error);
         return;
       }
       setProjectMemos((projectResult.data || []) as ProjectScheduleMemo[]);
       setTaskMemos((taskResult.data || []) as TaskScheduleMemo[]);
+      setTaskNotePreviews(getLatestTaskNotes((taskNoteResult.data || []).map((note) => ({ id: String(note.id), taskId: Number(note.task_id), note: String(note.note), isImportant: Boolean(note.is_important), checkDate: note.check_date ? String(note.check_date) : null, createdAt: String(note.created_at), createdByName: note.created_by_name ? String(note.created_by_name) : null }))));
     }
 
     void loadMemos();
-    return () => { isActive = false; };
+    window.addEventListener(TASK_NOTES_CHANGED_EVENT, loadMemos);
+    return () => { isActive = false; window.removeEventListener(TASK_NOTES_CHANGED_EVENT, loadMemos); };
   }, [projectIdsKey, taskIdsKey]);
 
   useEffect(() => {
@@ -2046,22 +2055,35 @@ export function IntegratedProjectGantt({
     [collapsedViewGroups, rows, viewType]
   );
 
-  async function exportGanttExcel(_range: GanttExportRange, exportStart: string, exportEnd: string) {
+  const ganttExcelRows = useMemo<GanttExcelTask[]>(() => displayItems.flatMap((item) => item.kind === "row" ? item.row.segments
+    .map(({ task, startDate, dueDate }, displayOrder) => ({
+      projectCode: item.row.project.project_code,
+      projectName: item.row.project.project_name,
+      orderer: item.row.project.assembly_vendor,
+      projectStartDate: item.row.project.start_date,
+      projectEndDate: item.row.project.end_date ?? item.row.project.completion_due_date ?? null,
+      taskName: task.task_name,
+      assignee: task.assignee,
+      statusLabel: getTaskStatusPresentation(task, today).label,
+      status: normalizeTaskStatus(task.status),
+      startDate,
+      endDate: dueDate,
+      progress: item.row.progress,
+      delayed: getDelayedDays(task, today) !== null,
+      displayOrder,
+      memo: taskNotePreviews.get(task.id)?.note ?? null,
+      memoIsImportant: taskNotePreviews.get(task.id)?.isImportant ?? false,
+      memoCheckDate: taskNotePreviews.get(task.id)?.checkDate ?? null,
+    })) : []), [displayItems, taskNotePreviews, today]);
+
+  const ganttExportProjects = useMemo(() => groupGanttTasksByProject(ganttExcelRows).map((project) => ({ key: project.key, name: project.projectName })), [ganttExcelRows]);
+
+  async function exportGanttExcel(template: GanttExportTemplate, _range: GanttExportRange, exportStart: string, exportEnd: string, projectKey: string) {
     if (isExcelExporting) return;
-    const visibleRows: GanttExcelTask[] = displayItems.flatMap((item) => item.kind === "row" ? item.row.segments
-      .map(({ task, startDate, dueDate }) => ({
-        projectCode: item.row.project.project_code,
-        projectName: item.row.project.project_name,
-        taskName: task.task_name,
-        assignee: task.assignee,
-        statusLabel: getTaskStatusPresentation(task, today).label,
-        status: normalizeTaskStatus(task.status),
-        startDate,
-        endDate: dueDate,
-        progress: item.row.progress,
-        delayed: getDelayedDays(task, today) !== null,
-      })) : []);
-    const exportRows = filterGanttTasksForRange(visibleRows, exportStart, exportEnd);
+    const rangedRows = filterGanttTasksForRange(ganttExcelRows, exportStart, exportEnd);
+    const exportRows = template === "project" && projectKey !== "all"
+      ? rangedRows.filter((task) => JSON.stringify([task.projectCode ?? "", task.projectName]) === projectKey)
+      : rangedRows;
     if (exportRows.length === 0) {
       toast.info("선택한 기간에 내보낼 Gantt 업무가 없습니다.");
       return;
@@ -2078,7 +2100,7 @@ export function IntegratedProjectGantt({
         selectedTagFilters.size ? `태그: ${Array.from(selectedTagFilters).join(", ")}` : null,
       ].filter((value): value is string => Boolean(value));
       const projectNames = Array.from(new Set(exportRows.map((task) => task.projectName)));
-      downloadGanttWorkbook({ tasks: exportRows, startDate: exportStart, endDate: exportEnd, today, generatedAt: new Date(), filterSummary: activeFilters.join(" · ") }, getGanttExcelFileName(today, projectNames.length === 1 ? projectNames[0] : undefined));
+      downloadGanttWorkbook({ tasks: exportRows, startDate: exportStart, endDate: exportEnd, today, generatedAt: new Date(), filterSummary: activeFilters.join(" · ") }, getTemplateFileName(template, today, projectNames.length === 1 ? projectNames[0] : undefined), template);
       setIsExcelDialogOpen(false);
       toast.success(`${exportRows.length}건의 Gantt 업무를 Excel로 저장했습니다.`);
     } catch (error) {
@@ -3124,6 +3146,7 @@ export function IntegratedProjectGantt({
                         const assemblyVendorName = getTaskAssemblyVendorName(task);
                         const taskTypeColor = getTaskTypeColor(task.task_type);
                         const taskMemo = taskMemos.find((memo) => memo.task_id === task.id);
+                        const taskNote = taskNotePreviews.get(task.id);
                         const tagDefinitions = taskTags
                           .filter((item) => item.task_id === task.id)
                           .map((item) => getTaskTagDefinition(item.tag))
@@ -3139,6 +3162,7 @@ export function IntegratedProjectGantt({
                           `종료일: ${dueDate}`,
                           delayedDays !== null ? `지연: ${delayedDays}일` : null,
                           taskMemo ? `메모: ${taskMemo.content}` : null,
+                          taskNote ? `${taskNote.isImportant ? "중요 메모" : "메모"}: ${taskNote.note}` : null,
                           ...tagDefinitions.map((tag) => `${tag.icon} ${tag.label}`),
                         ].filter((value): value is string => value !== null);
 
@@ -3192,6 +3216,8 @@ export function IntegratedProjectGantt({
                                   completedDate: task.completed_date,
                                   delayedDays,
                                   taskTypeClassName: taskTypeColor.className,
+                                  memo: taskNote?.note ?? null,
+                                  memoIsImportant: taskNote?.isImportant ?? false,
                                 });
                                 taskClickTimerRef.current = null;
                               }, 220);
@@ -3246,6 +3272,7 @@ export function IntegratedProjectGantt({
                             <span className="mr-1 inline-flex font-bold" aria-label={statusPresentation.label}>
                               {statusPresentation.icon}
                             </span>
+                            {taskNote && <span className="mr-1 inline-flex shrink-0" aria-label={taskNote.isImportant ? "중요 메모 있음" : "메모 있음"} title={`${taskNote.isImportant ? "중요 메모" : "메모"}\n${taskNote.note}`}>{taskNote.isImportant ? "⚠" : "📝"}</span>}
                             {taskMemo && (
                               <span
                                 role="button"
@@ -3508,9 +3535,10 @@ export function IntegratedProjectGantt({
         currentEnd={end}
         monthStart={getMonthRange(currentMonth).start}
         monthEnd={getMonthRange(currentMonth).end}
+        projects={ganttExportProjects}
         loading={isExcelExporting}
         onClose={() => { if (!isExcelExporting) setIsExcelDialogOpen(false); }}
-        onDownload={(range, exportStart, exportEnd) => void exportGanttExcel(range, exportStart, exportEnd)}
+        onDownload={(template, range, exportStart, exportEnd, projectKey) => void exportGanttExcel(template, range, exportStart, exportEnd, projectKey)}
       />}
     </div>
   );

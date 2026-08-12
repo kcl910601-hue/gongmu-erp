@@ -402,3 +402,27 @@
 - 현재 직원 조회에서 연결 조직의 `id`, `name`을 명시적으로 가져오도록 보강했습니다.
 - 실제 후보 계정은 조직 관계가 정상이나 `position = 'dd'`여서 `스태프` 조건을 충족하지 않는다는 원인을 확인했습니다.
 - 다른 직급, 조직 관계 누락, 일반 경로와 mutation API 차단 회귀 테스트를 추가했습니다.
+## 2026-08-12 - Sprint 9-5G Gantt Excel Export Templates
+
+- Gantt Excel Dialog에 현재 화면형, 현장별 공정표, 보고용 요약 Template 선택을 추가했습니다.
+- 공통 표시 업무 데이터에서 세 workbook을 생성해 추가 조회 없이 현재 필터와 정렬을 유지합니다.
+- 프로젝트별 Sheet 이름 정규화·중복 처리, KPI 집계, 프로젝트 기간 막대, 인쇄·고정 창 설정을 추가했습니다.
+- Calendar-only Staff도 기존 `canExportCalendar` 권한으로 세 양식을 사용할 수 있습니다.
+## 2026-08-12 - Sprint 9-5H Project Task Memo Visibility
+
+- 기존 `task_notes` 원본 메모에 일반/중요 구분을 추가했습니다.
+- 프로젝트 상세, 업무 목록·상세, Calendar, Gantt에서 최신 원본 메모를 Preview로 표시합니다.
+- 기존 공통 Realtime 흐름에 `task_notes` 변경 이벤트를 연결했습니다.
+- 현장별 공정표 Excel에 메모 열과 `[중요]` 표시를 추가했습니다.
+## 2026-08-12 - Sprint 9-5I Task Memo Check Date
+
+- 업무 메모에 선택적 확인일과 오늘·내일·미지정 Quick Action을 추가했습니다.
+- Calendar 가상 확인사항, Morning Brief 오늘/지연 확인사항, Notification Engine 날짜 알림을 연결했습니다.
+- Task 목록·상세와 현장별 공정표 Excel에 확인일을 표시했습니다.
+- note id와 확인일 기반의 안정적 알림 ID 및 확인일 partial index를 추가했습니다.
+## 2026-08-12 - Sprint 9-5J Active Important Note Reminder
+
+- 오늘 진행 중인 미완료 Task의 최신 중요 메모를 Calendar `⚠ 진행 메모` 가상 일정으로 표시합니다.
+- 같은 메모의 확인일이 오늘이면 active reminder를 생략해 `⚠ 확인`과의 중복을 제거합니다.
+- Task와 task_notes 변경을 기존 공통 Realtime 흐름으로 재계산합니다.
+- Morning Brief와 Notification은 기존 check_date 전용 정책을 유지합니다.
