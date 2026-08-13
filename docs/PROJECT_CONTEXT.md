@@ -1,5 +1,9 @@
 # Gongmu ERP - Project Context
 
+## Sprint 9-7B Material Usage Request Text Payload
+
+신규 원자재 사용요청의 발주번호와 메모는 `material_usage_requests`를 원본으로 저장하며, 계약 배정 목록·프로젝트 목록·CSV·수정 초기값은 사용요청 값을 우선하고 기존 allocation 값은 레거시 fallback으로만 사용합니다. 사용요청 연결 행의 수정도 원본 요청을 갱신하고 allocation에는 값을 복제하지 않습니다. 선택 입력값은 바깥 공백을 제거하고 빈 문자열은 `null`로 정규화하며 메모 내부 줄바꿈과 발주번호 특수문자는 보존합니다.
+
 ## Sprint 9-6B Dashboard Visual Hierarchy
 
 Dashboard Large 기본 흐름은 Morning Brief → 통합 핵심 KPI → My Workspace → 진행 현황 → 최근 프로젝트/최근 활동 병렬 배치입니다. Morning Brief의 회사 업무·지연 업무·Task Note 확인사항은 그룹당 대표 3건만 표시하고 초과 항목은 원본 화면 링크로 이동합니다.
@@ -137,6 +141,12 @@ Presence sync 결과는 employeeId 기준으로 합쳐 여러 탭과 여러 기�
 댓글 읽음 정보는 `shared_comment_reads`에 `shared_item_id`, `employee_id`, `last_read_comment_id` 한 행만 저장합니다. 댓글이나 일정 복사본은 만들지 않습니다. `get_shared_comment_count_stats(uuid[])`는 전체 댓글 수와 현재 사용자가 작성하지 않았으며 마지막 읽음 ID보다 큰 댓글 수를 일괄 반환합니다.
 
 `CommentSection`이 댓글 API 응답을 화면에 표시한 뒤 응답에 포함된 마지막 댓글 ID까지만 `mark_shared_comments_read`로 기록합니다. 읽음 성공 시 현재 화면의 unread를 즉시 0으로 만들고, `shared_comment_reads` Realtime 변경으로 같은 사용자의 다른 화면도 count만 다시 조회합니다. Calendar 카드는 기존 날짜·작성자·댓글 정보를 유지하면서 소유자가 공유한 일정에는 `공유중`, 참여 일정에는 `공유받음` 태그를 표시합니다.
+
+## Sprint 9-7 원자재 사용요청과 계약배정 분리
+
+Usage Request는 실제 필요 물량 원본이고 Allocation은 특정 계약이 충당한 물량입니다. 요청은 계약별로 복제하지 않으며 `material_usage_requests 1 → material_contract_allocations N`으로 연결합니다. Unallocated는 저장 문자열이 아니라 `Usage Request quantity - cancelled 제외 Allocation 합계`로 계산합니다.
+
+신규 사용등록은 계약 가용량 안에서는 현재 계약에 빠르게 전량 배정하고, 초과 시 자동 순차분할·관리자 계약증액·초과분 미배정 중 하나를 Preview 후 선택합니다. 미배정 물량은 원가에 포함하지 않고 계약 잔여량 알림에도 영향을 주지 않습니다. 기존 allocation은 `usage_request_id = null`로 호환하며 운영 데이터 Backfill은 하지 않습니다.
 
 ## Sprint 9-6C Workspace Share Invitation Recovery
 

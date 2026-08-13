@@ -42,6 +42,7 @@ export type MaterialContractAllocation = {
   created_by_name: string | null;
   created_at: string;
   updated_at: string;
+  usage_request_id?: string | null;
 };
 
 export function isValidAllocationQuantity(value: unknown) {

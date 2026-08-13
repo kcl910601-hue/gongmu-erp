@@ -14,7 +14,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ pro
 
   const result = await supabase
     .from("material_contract_allocations")
-    .select("*, contract:raw_material_contracts(contract_name, material_code, contract_price_krw_per_kg, material:lme_materials(name), supplier:suppliers(name))")
+    .select("*, contract:raw_material_contracts(contract_name, material_code, contract_price_krw_per_kg, material:lme_materials(name), supplier:suppliers(name)), usage_request:material_usage_requests(purchase_order_no, memo)")
     .eq("allocation_type", "project")
     .eq("project_id", projectId)
     .order("allocation_date", { ascending: false })
@@ -27,6 +27,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ pro
 
   const allocations = (result.data ?? []).map((row) => {
     const contract = Array.isArray(row.contract) ? row.contract[0] : row.contract;
+    const usageRequest = Array.isArray(row.usage_request) ? row.usage_request[0] : row.usage_request;
     const supplier = Array.isArray(contract?.supplier) ? contract.supplier[0] : contract?.supplier;
     const material = Array.isArray(contract?.material) ? contract.material[0] : contract?.material;
     const quantityTons = Number(row.quantity_tons);
@@ -34,11 +35,14 @@ export async function GET(_request: Request, { params }: { params: Promise<{ pro
     return {
       ...row,
       contract: undefined,
+      usage_request: undefined,
       project_id: Number(row.project_id),
       quantity_tons: quantityTons,
       project_code: null,
       project_name: "",
       created_by_name: creatorNames.get(row.created_by) ?? null,
+      purchase_order_no: usageRequest?.purchase_order_no ?? row.purchase_order_no,
+      memo: usageRequest?.memo ?? row.memo,
       contract_name: contract?.contract_name ?? "-",
       material_code: contract?.material_code ?? "-",
       material_name: material?.name ?? null,
@@ -48,5 +52,8 @@ export async function GET(_request: Request, { params }: { params: Promise<{ pro
     } as MaterialContractAllocation & { contract_name: string; material_code: string; material_name: string | null; contract_price_krw_per_kg: number; amount_krw: number | null; supplier_name: string };
   });
   const summary = summarizeProjectMaterialAllocationCosts(allocations);
-  return Response.json({ allocations, summary, canManage: employee.role === "admin", calculationBasis: { unit: "KRW/kg", formula: "quantity_tons × 1000 × contract_price_krw_per_kg", pricePolicy: "current_immutable_contract_price" } });
+  const usageRequests = await supabase.rpc("get_material_usage_requests", { p_project_id: projectId });
+  if (usageRequests.error) return Response.json({ error: usageRequests.error.message }, { status: 500 });
+  const unallocatedTons = (usageRequests.data ?? []).reduce((sum: number, row: { unallocated_tons: number | string; status: string }) => sum + (row.status === "active" ? Number(row.unallocated_tons) : 0), 0);
+  return Response.json({ allocations, summary, unallocatedTons, canManage: employee.role === "admin", calculationBasis: { unit: "KRW/kg", formula: "quantity_tons × 1000 × contract_price_krw_per_kg", pricePolicy: "current_immutable_contract_price" } });
 }

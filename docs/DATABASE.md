@@ -1,5 +1,14 @@
 # ERP Database v1
 
+## Sprint 9-7 Material Usage Requests
+
+- `material_usage_requests`는 프로젝트·공장·기타 사용처의 실제 필요 물량 원본을 한 행으로 저장합니다. 실제 원자재 FK는 기존 구조의 `material_code → lme_materials.code`입니다.
+- `material_contract_allocations.usage_request_id` nullable FK로 요청 1개와 계약 배정 N개를 연결합니다. 기존 allocation은 FK가 null인 legacy 행으로 그대로 유지하며 자동 Backfill하지 않습니다.
+- 유효 배정량은 planned+confirmed 합계, 미배정량은 `요청량 - 유효 배정량` 계산값입니다. cancelled allocation은 미배정량으로 복귀하고 특정 계약의 가용량을 차감하지 않습니다.
+- `create_material_usage_request`는 요청 생성, 고정 순서 계약 잠금, 자동분할/미배정/관리자 증액, allocation Audit을 한 트랜잭션에서 수행합니다. `allocate_material_usage_request`는 기존 미배정량의 일부 또는 전부를 추후 계약에 배정합니다.
+- 계약 증액은 일반 UPDATE가 아니라 위 RPC의 `increase_contract` 전략에서만 허용하고 before/increase/after/reason을 기존 `activity_logs`에 기록합니다.
+- Migration `20260813110000_create_material_usage_requests.sql`과 Verification `20260813111000_verify_material_usage_requests.sql`은 운영 DB에 자동 적용하지 않습니다.
+
 ## Sprint 9-6C Share Invitation Title Lookup
 
 - `get_share_invitation_titles(uuid[])`는 현재 사용자가 inviter 또는 invitee인 invitation의 원본 제목만 일괄 반환합니다.
@@ -548,3 +557,11 @@ RLS는 `employees.auth_user_id = auth.uid()`이면서 활성·승인된 본인 �
 - Migration: `20260812130000_add_task_note_check_date.sql`
 - Verification: `20260812131000_verify_task_note_check_date.sql`
 - 별도 알림/일정 복사 테이블은 없으며 운영 DB에는 자동 적용하지 않습니다.
+# Sprint 9-7B material_usage_requests 발주번호·메모 원본화
+
+- `material_usage_requests.purchase_order_no`, `material_usage_requests.memo`가 사용요청의 원본입니다.
+- `material_contract_allocations`의 동일 필드는 기존 행 조회용 fallback이며 신규 사용요청 연결 행에는 복제하지 않습니다.
+- `update_material_usage_request_details(uuid,text,text)`는 관리자 전용 수정 RPC입니다.
+- Migration: `20260813120000_fix_material_usage_request_text_fields.sql`
+- Verification: `20260813121000_verify_material_usage_request_text_fields.sql`
+- 운영 DB에는 자동 적용하지 않습니다.

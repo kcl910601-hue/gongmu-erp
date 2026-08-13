@@ -1,5 +1,13 @@
 # CHANGELOG
 
+## Sprint 9-7 - Material Usage Requests & Unallocated Quantity
+
+- 실제 필요 물량 원본 `material_usage_requests`와 특정 계약 충당 행 `material_contract_allocations`를 1:N으로 분리했습니다.
+- 계약 초과 시 자동분할, 관리자 증액, 초과분 미배정 전략과 계약별 단가 Preview를 추가했습니다.
+- 미배정 상태 필터와 사용요청 중심 목록을 원자재 계약 화면에 추가하고 추후 일부 배정 API를 마련했습니다.
+- 계약별 고정 lock 순서, 저장 직전 expected availability 검증, allocation 및 증액 Audit을 포함한 단일 트랜잭션 RPC를 준비했습니다.
+- 기존 allocation은 변경하거나 Backfill하지 않으며 신규 FK를 nullable로 유지합니다.
+
 ## Sprint 9-6C-1 - Workspace Compact Share Requests & Reference Task Visibility
 
 - 받은 공유 요청을 Summary 아래의 한 줄 Compact Strip으로 이동하고 pending이 있을 때만 표시하며 펼침 상태에서 기존 수락·거절을 제공합니다.

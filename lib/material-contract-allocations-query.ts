@@ -4,7 +4,7 @@ import type { MaterialContractAllocation } from "@/lib/material-contract-allocat
 export async function queryMaterialContractAllocations(supabase: SupabaseClient, contractId: string) {
   const { data, error } = await supabase
     .from("material_contract_allocations")
-    .select("*, project:projects(id, project_code, project_name)")
+    .select("*, project:projects(id, project_code, project_name), usage_request:material_usage_requests(purchase_order_no, memo)")
     .eq("contract_id", contractId)
     .order("allocation_date", { ascending: false })
     .order("created_at", { ascending: false });
@@ -20,12 +20,16 @@ export async function queryMaterialContractAllocations(supabase: SupabaseClient,
   return {
     data: (data ?? []).map((row) => {
       const project = Array.isArray(row.project) ? row.project[0] : row.project;
+      const usageRequest = Array.isArray(row.usage_request) ? row.usage_request[0] : row.usage_request;
       return {
         ...row,
         project: undefined,
+        usage_request: undefined,
         project_id: row.project_id === null ? null : Number(row.project_id),
         quantity_tons: Number(row.quantity_tons),
         project_code: project?.project_code ?? null,
+        purchase_order_no: usageRequest?.purchase_order_no ?? row.purchase_order_no,
+        memo: usageRequest?.memo ?? row.memo,
         project_name: project?.project_name ?? "현장 정보 없음",
         created_by_name: names.get(row.created_by) ?? null,
       } as MaterialContractAllocation;
