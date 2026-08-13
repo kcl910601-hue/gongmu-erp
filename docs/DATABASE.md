@@ -565,3 +565,12 @@ RLS는 `employees.auth_user_id = auth.uid()`이면서 활성·승인된 본인 �
 - Migration: `20260813120000_fix_material_usage_request_text_fields.sql`
 - Verification: `20260813121000_verify_material_usage_request_text_fields.sql`
 - 운영 DB에는 자동 적용하지 않습니다.
+# Sprint 9-6C-2 받은 공유 요청 전체 수락
+
+- `accept_all_share_invitations()`는 인자를 받지 않고 `auth.uid()`에 연결된 현재 직원만 식별합니다.
+- 실행 시점의 본인 `pending` invitation만 잠그고 생성일·ID 순서 기준으로 일괄 수락합니다.
+- `shared_item_members`는 기존 unique constraint와 `ON CONFLICT DO NOTHING`으로 중복을 방지합니다.
+- 기존 invitation update trigger가 건별 Activity와 Realtime/Notification 동기화를 유지합니다.
+- Migration: `20260813130000_accept_all_share_invitations.sql`
+- Verification: `20260813131000_verify_accept_all_share_invitations.sql`
+- 운영 DB에는 자동 적용하지 않습니다.

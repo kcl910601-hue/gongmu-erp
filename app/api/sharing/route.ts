@@ -1,5 +1,5 @@
 import { getLmeContext } from "@/lib/lme-server";
-import { isSharePermission } from "@/lib/sharing";
+import { isSharePermission, type BulkShareAcceptResult } from "@/lib/sharing";
 
 export async function GET() {
   const { supabase, employee } = await getLmeContext();
@@ -33,6 +33,13 @@ export async function POST(request: Request) {
     const inviteeId = typeof body.inviteeId === "number" ? body.inviteeId : Number(body.inviteeId);
     if (!itemId || !Number.isInteger(inviteeId) || !isSharePermission(body.permission)) return Response.json({ error: "공유 대상을 확인해주세요." }, { status: 400 });
     result = await supabase.rpc("create_share_invitation", { p_item_id: itemId, p_invitee_id: inviteeId, p_permission: body.permission });
+  } else if (action === "accept_all") {
+    const requestedCount = Number(body.requestedCount);
+    if (!Number.isSafeInteger(requestedCount) || requestedCount < 2 || requestedCount > 100) return Response.json({ error: "처리할 공유 요청 수를 확인해주세요." }, { status: 400 });
+    const bulkResult = await supabase.rpc("accept_all_share_invitations");
+    if (bulkResult.error) return Response.json({ error: bulkResult.error.message }, { status: 409 });
+    const result = bulkResult.data as BulkShareAcceptResult;
+    return Response.json({ ...result, requested: requestedCount, skipped: Math.max(requestedCount - result.accepted, 0) } satisfies BulkShareAcceptResult);
   } else if (action === "accept" || action === "reject") {
     if (typeof body.invitationId !== "string") return Response.json({ error: "공유 요청을 확인해주세요." }, { status: 400 });
     result = await supabase.rpc("respond_share_invitation", { p_invitation_id: body.invitationId, p_accept: action === "accept" });

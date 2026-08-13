@@ -10,6 +10,13 @@ export type ShareEmployee = { id: number; name: string; position: string | null 
 export type ShareInvitation = { id: string; shared_item_id: string; inviter_id: number; invitee_id: number; permission: SharePermission; status: ShareInvitationStatus; responded_at: string | null; created_at: string; item_title?: string | null; shared_item?: { id: string; item_id: string; item_type: SharedItemType; owner_id: number } | null; inviter?: { id: number; name: string } | null; invitee?: { id: number; name: string } | null };
 export type SharedItemMember = { id: string; shared_item_id: string; employee_id: number; permission: SharePermission; joined_at: string; employee?: { id: number; name: string } | null };
 export type SharingOverview = { currentEmployeeId: number; employees: ShareEmployee[]; received: ShareInvitation[]; sent: ShareInvitation[]; members: SharedItemMember[] };
+export type BulkShareAcceptResult = { requested: number; accepted: number; skipped: number; failed: number };
 export function isSharePermission(value: unknown): value is SharePermission { return typeof value === "string" && SHARE_PERMISSIONS.includes(value as SharePermission); }
 export function canEditSharedNote(noteUserId: string, currentUserId: string, permission?: SharePermission | null) { return noteUserId === currentUserId || permission === "edit"; }
 export function selectPendingReceivedInvitations(overview: Pick<SharingOverview, "currentEmployeeId" | "received">) { return overview.received.filter((invitation) => invitation.invitee_id === overview.currentEmployeeId && invitation.status === "pending"); }
+export function getBulkShareAcceptMessage(result: BulkShareAcceptResult) {
+  const messages = [`공유 요청 ${result.accepted}건을 수락했습니다.`];
+  if (result.skipped > 0) messages.push(`${result.skipped}건은 이미 처리된 요청입니다.`);
+  if (result.failed > 0) messages.push(`${result.failed}건은 처리하지 못했습니다.`);
+  return messages.join("\n");
+}

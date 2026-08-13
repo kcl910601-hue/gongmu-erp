@@ -1,5 +1,9 @@
 # Gongmu ERP - Project Context
 
+## Sprint 9-6C-2 Workspace Bulk Share Accept
+
+My Workspace의 받은 공유 요청 Compact Strip은 pending 요청이 2건 이상일 때만 `전체 수락`을 제공합니다. 확인 Dialog를 거쳐 서버의 단일 `accept_all_share_invitations()` RPC가 현재 로그인 직원의 실행 시점 pending 요청만 set-based로 처리하며, 기존 단건 수락과 동일하게 member 중복 방지·invitation 상태·Activity·Realtime 흐름을 유지합니다. 완료 후 공유, 알림, 개인 일정 갱신 이벤트를 재사용하고 서버 상태를 다시 조회합니다.
+
 ## Sprint 9-7B Material Usage Request Text Payload
 
 신규 원자재 사용요청의 발주번호와 메모는 `material_usage_requests`를 원본으로 저장하며, 계약 배정 목록·프로젝트 목록·CSV·수정 초기값은 사용요청 값을 우선하고 기존 allocation 값은 레거시 fallback으로만 사용합니다. 사용요청 연결 행의 수정도 원본 요청을 갱신하고 allocation에는 값을 복제하지 않습니다. 선택 입력값은 바깥 공백을 제거하고 빈 문자열은 `null`로 정규화하며 메모 내부 줄바꿈과 발주번호 특수문자는 보존합니다.
