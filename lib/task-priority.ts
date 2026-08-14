@@ -1,4 +1,4 @@
-import { isTaskCompleted } from "@/lib/status";
+import { isTaskCompleted } from "./status.ts";
 
 export type PrioritizableTask = {
   id: number;

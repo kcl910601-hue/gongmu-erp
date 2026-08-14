@@ -27,6 +27,7 @@ import { CollapsibleSection } from "@/components/ui/CollapsibleSection";
 import { DatePicker } from "@/components/common/DatePicker";
 import { ProjectFiles } from "@/components/files/ProjectFiles";
 import { ProjectMaterialAllocationsSection } from "@/components/projects/ProjectMaterialAllocationsSection";
+import { ProjectCompletionDialog } from "@/components/projects/ProjectCompletionDialog";
 import ActivityTimeline from "@/components/activity/ActivityTimeline";
 import ProjectTimeline from "@/components/activity/ProjectTimeline";
 import { ProjectSectionDialog, type ProjectSectionDialogValue } from "@/components/projects/ProjectSectionDialog";
@@ -58,6 +59,7 @@ import { updateTask } from "@/lib/task-actions";
 import { normalizeTaskName, validateTaskName } from "@/lib/task-name";
 import { TASKS_CHANGED_EVENT } from "@/lib/collaboration-events";
 import { hasPermission, isCalendarOnlyStaff } from "@/lib/permissions";
+import { getProjectCompletionFingerprint, type ProjectCompletionCheckResult } from "@/lib/project-completion";
 import {
   getProjectStatusLabel,
   getTaskStatusLabel,
@@ -174,6 +176,8 @@ export default function ProjectDetail() {
   const [changeHistoryCount, setChangeHistoryCount] = useState(0);
   const [favoriteUserScope, setFavoriteUserScope] = useState<string | null>(null);
   const [isFavorite, setIsFavorite] = useState(false);
+  const [completionCheck, setCompletionCheck] = useState<ProjectCompletionCheckResult | null>(null);
+  const [isCompletingProject, setIsCompletingProject] = useState(false);
 
   const [projectForm, setProjectForm] = useState({
     project_code: "",
@@ -780,6 +784,14 @@ export default function ProjectDetail() {
 
     if (normalizeProjectStatus(project.status) === nextProjectStatus) return;
 
+    if (nextProjectStatus === "completed") {
+      const response = await fetch(`/api/projects/${project.id}/completion-check`);
+      const payload = await response.json() as { completionCheck?: ProjectCompletionCheckResult; error?: string };
+      if (!response.ok || !payload.completionCheck) { toast.error(payload.error ?? "프로젝트 완료 전 점검에 실패했습니다."); return; }
+      setCompletionCheck(payload.completionCheck);
+      return;
+    }
+
     let error: { message: string } | null = null;
     try {
       const result = await withShortEditingLock("project", project.id, () => supabase
@@ -818,6 +830,24 @@ export default function ProjectDetail() {
       targetId: project.id,
       metadata: { changes },
     });
+  }
+
+  async function completeProject() {
+    if (!project || !completionCheck || isCompletingProject) return;
+    setIsCompletingProject(true);
+    try {
+      const response = await withShortEditingLock("project", project.id, () => fetch(`/api/projects/${project.id}/completion-check`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: "completed", completionAcknowledged: completionCheck.hasWarnings, completionFingerprint: getProjectCompletionFingerprint(completionCheck) }) }));
+      const payload = await response.json() as { completed?: boolean; completionCheck?: ProjectCompletionCheckResult; error?: string };
+      if (!response.ok) {
+        if (payload.completionCheck) setCompletionCheck(payload.completionCheck);
+        toast.warning(payload.error ?? "프로젝트를 완료하지 못했습니다.");
+        return;
+      }
+      setProject({ ...project, status: "completed" });
+      setCompletionCheck(null);
+      toast.success("프로젝트를 완료 처리했습니다.");
+    } catch (error) { toast.error(error instanceof Error ? error.message : "프로젝트를 완료하지 못했습니다."); }
+    finally { setIsCompletingProject(false); }
   }
 
   async function saveTaskOrders(nextTasks: Task[]) {
@@ -2616,7 +2646,7 @@ export default function ProjectDetail() {
         </div>
       </div>
 
-      <ProjectMaterialAllocationsSection project={project} />
+      <div id="material-allocations" className="scroll-mt-24"><ProjectMaterialAllocationsSection project={project} /></div>
 
       <ProjectFiles projectId={projectId} />
 
@@ -2895,6 +2925,7 @@ export default function ProjectDetail() {
           onSummaryChange={handleTaskNoteSummaryChange}
         />
       )}
+      {completionCheck && <ProjectCompletionDialog result={completionCheck} pending={isCompletingProject} onCancel={() => setCompletionCheck(null)} onComplete={() => void completeProject()} />}
     </div>
   );
 }

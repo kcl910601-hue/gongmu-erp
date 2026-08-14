@@ -1,5 +1,12 @@
 # CHANGELOG
 
+## Sprint 9-9A - Project Completion Preflight Check
+
+- 프로젝트 상세에서 모든 Task 완료로 프로젝트가 `completed` 전환될 때 서버 점검 결과를 먼저 표시합니다.
+- 미완료·지연 Task, 지연 확인 메모, 미배정 원자재, 미완료 출고, `본납-도어` 공정을 기존 판정 helper와 원본 데이터로 일괄 계산합니다.
+- 경고 완료에는 acknowledgement를 강제하고 최종 요청에서 최신 결과를 재검증하며, 변경된 경우 409와 최신 점검값을 반환합니다.
+- 별도 snapshot 테이블이나 DB migration 없이 기존 Editing Lock, 권한, Activity Log를 유지합니다.
+
 ## Sprint 9-8B - Process Master Consistency Audit
 
 - 운영 `process_types`, `project_sections`, `task_templates`를 read-only로 전수 감사하고 master/actual matrix와 canonical code 목록을 문서화했습니다.

@@ -459,3 +459,9 @@ Calendar의 공정 Bar `📝/⚠`는 최신 원본 메모의 존재와 중요도
 ## Sprint 9-7B-1 자재 사용구분 UI
 
 원자재 계약의 사용등록 Dialog에서 프로젝트를 선택하면 활성 자재 사용구분을 선택하거나 다음 차수를 즉시 생성할 수 있습니다. 중앙 원자재 사용요청 화면은 `차수별 보기`와 기존 `전체 요청`을 함께 제공하며, 프로젝트 상세에는 차수별 요청·미배정 요약을 표시합니다.
+
+## Sprint 9-9A Project Completion Preflight Check
+
+프로젝트 상세에서 Task 상태 변경 결과 모든 Task가 완료되면 프로젝트를 즉시 완료하지 않고 `GET /api/projects/{id}/completion-check`의 점검 결과를 Dialog로 확인합니다. 점검은 기존 원본 데이터에서 미완료·지연 Task, 지연 Task Note 확인일, 활성 원자재 사용요청의 미배정량, 유효 미완료 출고, `project_sections.process_type = '본납-도어'` 존재 여부를 프로젝트 단위 batch 조회로 계산합니다.
+
+최종 완료는 같은 endpoint의 `PATCH`를 사용합니다. 경고가 있으면 명시적 acknowledgement가 필요하고, 최초 결과 fingerprint와 서버 최신 결과가 다르면 완료하지 않고 409와 최신 결과를 반환합니다. 완료 mutation은 기존 Project Editing Lock과 `project_update` 권한을 유지하며, 강제 완료 요약만 Activity Log metadata에 저장합니다. Viewer와 Calendar-only Staff는 완료할 수 없고 별도 DB table 또는 migration은 없습니다.
