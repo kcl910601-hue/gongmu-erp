@@ -9,6 +9,7 @@ export type NotificationEngineInput = {
   personal?: { id: string; note_type: "todo" | "memo" | "sticky" | "reminder"; title: string | null; content: string; due_date: string | null; is_completed: boolean; is_pinned: boolean }[];
   taskNotes?: { id: string; task_id: number; project_id: number; project_name: string; task_name: string | null; note: string; is_important: boolean; check_date: string | null }[];
   materialContractNotifications?: EngineNotification[];
+  requiredProcessAlerts?: EngineNotification[];
   weeklyLmeChangeRate?: number | null;
 };
 
@@ -68,9 +69,9 @@ export function deriveNotificationState<T extends { category: string; isRead: bo
   return { visibleItems, unreadItems, readItems, hiddenItems, ...buildNotificationCounts(items) };
 }
 
-export function splitNotificationMailbox<T extends { isRead: boolean; isArchived?: boolean; archivedAt?: string | null }>(items: T[]) {
-  const inbox = items.filter((item) => !item.isRead && !item.isArchived);
-  const archive = items.filter((item) => item.isArchived).sort((left, right) => (right.archivedAt ?? "").localeCompare(left.archivedAt ?? ""));
+export function splitNotificationMailbox<T extends { isRead: boolean; isArchived?: boolean; archivedAt?: string | null; isPersistent?: boolean }>(items: T[]) {
+  const inbox = items.filter((item) => item.isPersistent || (!item.isRead && !item.isArchived));
+  const archive = items.filter((item) => !item.isPersistent && item.isArchived).sort((left, right) => (right.archivedAt ?? "").localeCompare(left.archivedAt ?? ""));
   return { inbox, archive };
 }
 
@@ -133,6 +134,7 @@ export function generateNotifications(input: NotificationEngineInput): EngineNot
     output.push(item({ id: `task-note-check-${overdue ? "overdue" : "today"}-${note.id}-${note.check_date}`, type: overdue ? "task_note_check_overdue" : "task_note_check_today", category: "task", priority: overdue ? "critical" : note.is_important ? "high" : "medium", title: overdue ? "지연 확인사항" : "오늘 확인사항", description: `${note.is_important ? "[중요] " : ""}${note.task_name || "업무"} · ${note.note}`, date: note.check_date, action: { label: "업무 메모 열기", href: `/projects/${note.project_id}?task=${note.task_id}&note=${note.id}` }, projectName: note.project_name }));
   }
   output.push(...(input.materialContractNotifications ?? []));
+  output.push(...(input.requiredProcessAlerts ?? []));
   if (input.weeklyLmeChangeRate !== null && input.weeklyLmeChangeRate !== undefined && Math.abs(input.weeklyLmeChangeRate) >= 5) output.push(item({ id: `lme-weekly-${input.today}`, type: "lme_weekly_change", category: "lme", priority: "medium", title: "LME 전주 대비", description: `${input.weeklyLmeChangeRate > 0 ? "+" : ""}${input.weeklyLmeChangeRate.toFixed(1)}%`, date: input.today, action: { label: "LME 보기", href: "/statistics/lme" }, projectName: "LME" }));
   return sortNotifications(output);
 }

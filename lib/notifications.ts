@@ -8,6 +8,8 @@ import type { NotificationPriority, SmartNotificationType } from "@/lib/notifica
 import { buildWeeklyLmeComparison, getKoreanWeeklyRanges } from "@/lib/market-data/weekly-lme";
 import type { PersonalNote } from "@/lib/personal-notes";
 import { mapMaterialContractEvent, type MaterialContractNotificationEvent } from "@/lib/material-contract-notifications";
+import { evaluateRequiredProcessAlerts, type RequiredProcessProject, type RequiredProjectProcess } from "@/lib/required-process-alerts";
+import { isCalendarOnlyStaff } from "@/lib/permissions";
 
 export type NotificationSeverity = "danger" | "warning" | "info";
 export type NotificationCategory = "task" | "shipment" | "project" | "personal" | "raw_material" | "lme" | "system" | "employee";
@@ -91,6 +93,7 @@ export type NotificationItem = {
   referenceCommentId?: number;
   isPinned?: boolean;
   isHidden?: boolean;
+  isPersistent?: boolean;
 };
 
 export type NotificationSummary = {
@@ -460,6 +463,7 @@ export function calculateNotificationSummary(input: {
   materialContractEvents?: MaterialContractNotificationEvent[];
   weeklyLmeChangeRate?: number | null;
   taskNotes?: { id: string; task_id: number; project_id: number; project_name: string; task_name: string | null; note: string; is_important: boolean; check_date: string | null }[];
+  requiredProcessAlerts?: ReturnType<typeof evaluateRequiredProcessAlerts>;
 }): NotificationSummary {
   const legacy = calculateLegacyNotificationSummary(input);
   const isAdmin = input.currentEmployee?.role === "admin";
@@ -473,6 +477,7 @@ export function calculateNotificationSummary(input: {
     projects: input.projects.map((project) => ({ id: project.id, project_name: project.project_name, status: project.status ?? null, end_date: project.end_date ?? null })),
     personal: input.personal,
     materialContractNotifications: input.materialContractEvents?.map(mapMaterialContractEvent),
+    requiredProcessAlerts: input.requiredProcessAlerts,
     weeklyLmeChangeRate: input.weeklyLmeChangeRate,
     taskNotes: input.taskNotes,
     tasks: visibleTasks.map((task) => ({ ...task, project_name: getProjectName(input.projects, task.project_id) })),
@@ -506,6 +511,7 @@ export async function loadNotificationSummary(
   }
 
   const isAdmin = currentEmployee.role === "admin";
+  const calendarOnly = isCalendarOnlyStaff(currentEmployee);
   const today = getToday();
   const weekEnd = getWeekEnd(today);
   const recentCutoff = getRecentCutoffIso();
@@ -595,6 +601,29 @@ export async function loadNotificationSummary(
     : { data: [], error: null };
   if (projectResult.error) return { data: null, error: projectResult.error };
 
+  let requiredProjectsResult: { data: RequiredProcessProject[]; error: typeof projectResult.error } = { data: [], error: null };
+  if (!calendarOnly && isAdmin) {
+    requiredProjectsResult = await supabase.from("projects").select("id, project_name, status, end_date").not("end_date", "is", null) as typeof requiredProjectsResult;
+  } else if (!calendarOnly) {
+    const scopeResult = await supabase.from("tasks").select("project_id").eq("assignee", currentEmployee.name);
+    if (scopeResult.error) return { data: null, error: scopeResult.error };
+    const scopeProjectIds = Array.from(new Set((scopeResult.data ?? []).map((row) => Number(row.project_id))));
+    if (scopeProjectIds.length > 0) {
+      requiredProjectsResult = await supabase.from("projects").select("id, project_name, status, end_date").in("id", scopeProjectIds).not("end_date", "is", null) as typeof requiredProjectsResult;
+    }
+  }
+  if (requiredProjectsResult.error) return { data: null, error: requiredProjectsResult.error };
+  const requiredProjectIds = (requiredProjectsResult.data ?? []).map((project) => Number(project.id));
+  const requiredProcessesResult = requiredProjectIds.length > 0
+    ? await supabase.from("project_sections").select("project_id, process_type").in("project_id", requiredProjectIds)
+    : { data: [], error: null };
+  if (requiredProcessesResult.error) return { data: null, error: requiredProcessesResult.error };
+  const requiredProcessAlerts = evaluateRequiredProcessAlerts(
+    requiredProjectsResult.data,
+    (requiredProcessesResult.data ?? []) as RequiredProjectProcess[],
+    today
+  );
+
   const weeklyRanges = getKoreanWeeklyRanges();
   const evaluationResult = isAdmin ? await supabase.rpc("evaluate_material_contract_notifications") : { error: null };
   if (evaluationResult.error) return { data: null, error: evaluationResult.error };
@@ -628,6 +657,7 @@ export async function loadNotificationSummary(
         if (!task) return [];
         return [{ id: String(note.id), task_id: Number(note.task_id), project_id: Number(task.project_id), project_name: getProjectName(projectResult.data ?? [], Number(task.project_id)), task_name: task.task_name, note: String(note.note), is_important: Boolean(note.is_important), check_date: note.check_date ? String(note.check_date) : null }];
       }),
+      requiredProcessAlerts,
     });
   const mentionedCommentIds = new Set((mentionResult.data ?? []).map((mention) => Number(mention.comment_id)));
   const commentNotifications: NotificationItem[] = (commentResult.data ?? []).filter((comment) => !mentionedCommentIds.has(Number(comment.id))).map((comment) => {

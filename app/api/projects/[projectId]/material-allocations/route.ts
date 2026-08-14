@@ -52,8 +52,16 @@ export async function GET(_request: Request, { params }: { params: Promise<{ pro
     } as MaterialContractAllocation & { contract_name: string; material_code: string; material_name: string | null; contract_price_krw_per_kg: number; amount_krw: number | null; supplier_name: string };
   });
   const summary = summarizeProjectMaterialAllocationCosts(allocations);
-  const usageRequests = await supabase.rpc("get_material_usage_requests", { p_project_id: projectId });
+  const usageRequests = await supabase.rpc("get_material_usage_requests_v2", { p_project_id: projectId });
   if (usageRequests.error) return Response.json({ error: usageRequests.error.message }, { status: 500 });
   const unallocatedTons = (usageRequests.data ?? []).reduce((sum: number, row: { unallocated_tons: number | string; status: string }) => sum + (row.status === "active" ? Number(row.unallocated_tons) : 0), 0);
-  return Response.json({ allocations, summary, unallocatedTons, canManage: employee.role === "admin", calculationBasis: { unit: "KRW/kg", formula: "quantity_tons × 1000 × contract_price_krw_per_kg", pricePolicy: "current_immutable_contract_price" } });
+  const groupRows = await supabase.from("material_usage_groups").select("id,category,sequence,name,planned_date,status,is_active").eq("project_id", projectId).eq("is_active", true).order("category").order("sequence");
+  if (groupRows.error) return Response.json({ error: groupRows.error.message }, { status: 500 });
+  const groupSummaries = (groupRows.data ?? []).map((group) => {
+    const requests = (usageRequests.data ?? []).filter((row: { material_usage_group_id: string | null; status: string }) => row.material_usage_group_id === group.id && row.status === "active");
+    const requestedTons = requests.reduce((sum: number, row: { quantity_tons: number | string }) => sum + Number(row.quantity_tons), 0);
+    const allocatedTons = requests.reduce((sum: number, row: { allocated_tons: number | string }) => sum + Number(row.allocated_tons), 0);
+    return { ...group, requestCount: requests.length, requestedTons, allocatedTons, unallocatedTons: Math.max(requestedTons - allocatedTons, 0) };
+  });
+  return Response.json({ allocations, summary, unallocatedTons, groupSummaries, canManage: employee.role === "admin", calculationBasis: { unit: "KRW/kg", formula: "quantity_tons × 1000 × contract_price_krw_per_kg", pricePolicy: "current_immutable_contract_price" } });
 }

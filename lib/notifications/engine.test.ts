@@ -112,6 +112,14 @@ test("읽은 알림은 Archive로 이동하고 다시 미읽음 처리하면 Inb
   assert.deepEqual(restored.inbox.map((item) => item.id), ["old"]);
 });
 
+test("미해결 persistent warning은 읽어도 Inbox에 남고 Archive와 중복되지 않는다", () => {
+  const mailbox = splitNotificationMailbox([
+    { id: "required", isRead: true, isArchived: true, archivedAt: "2026-08-05T10:00:00Z", isPersistent: true },
+  ]);
+  assert.deepEqual(mailbox.inbox.map((item) => item.id), ["required"]);
+  assert.deepEqual(mailbox.archive, []);
+});
+
 test("notification search matches title, content, project, category and priority", () => {
   const item = { title: "D-DAY", description: "오늘 종료", projectName: "테스트 프로젝트", category: "project", priority: "critical" };
   for (const query of ["d-day", "오늘", "테스트", "project", "critical", ""]) assert.equal(matchesNotificationSearch(item, query), true);

@@ -1,5 +1,31 @@
 # ERP Database v1
 
+## Sprint 9-8B Process Master Consistency Audit
+
+2026-08-14 운영 read-only audit 기준 canonical process code는 `MH`, `SH`, `본납-문틀`, `본납-도어`, `AS`입니다.
+
+| code | name | active | section | template | 분류 |
+| --- | --- | ---: | ---: | ---: | --- |
+| MH | MH | true | 0 | 8 | NORMAL |
+| SH | SH | true | 2 | 8 | NORMAL |
+| 본납-문틀 | 본납-문틀 | true | 32 | 6 | NORMAL |
+| 본납-도어 | 본납-도어 | true | 54 | 9 | NORMAL |
+| AS | AS | true | 0 | 7 | NORMAL |
+| FRAME | 본납 문틀 | true | 0 | 0 | UNUSED_MASTER / LEGACY_ALIAS candidate |
+| DOOR | 본납 도어 | true | 0 | 0 | UNUSED_MASTER / LEGACY_ALIAS candidate |
+
+- `project_sections` 88건은 `본납-도어` 54, `본납-문틀` 32, `SH` 2건으로 모두 master에 존재하며 missing/unknown/inactive-used code는 없습니다.
+- 신규 프로젝트·공정 UI와 `create_project_section_with_tasks()`는 active `process_types.code`를 저장하고, template도 canonical code만 사용합니다.
+- `20260814100000_deactivate_unused_legacy_process_types.sql`은 참조 0건을 재확인한 후 `FRAME`, `DOOR`를 hard delete 없이 비활성화합니다. Project·Section·Task row count를 migration 내에서 보존 검증하며 운영 DB에 자동 적용하지 않습니다.
+- Verification은 `20260814101000_verify_process_master_consistency.sql`입니다. 현재 정합성이 확보되어 이번 Sprint에서 문자열 FK는 추가하지 않습니다.
+
+## Sprint 9-8A Required Process Alert
+
+- 필수 공정 판정은 Project Process entity인 `project_sections.process_type` code `본납-도어`를 정확히 비교하며 `tasks.task_type`과 `task_name`을 사용하지 않습니다.
+- 경고는 Notification 조회 시 접근 가능한 Project와 `project_sections`를 batch 조회해 계산하며, `required_process_missing:{projectId}:{ruleId}` key로 논리적 중복을 방지합니다.
+- 운영 조회에서 `project_sections.process_type = '본납-도어'` 54건, `DOOR` 0건이지만 `process_types`에는 `DOOR / 본납 도어`만 확인된 master 불일치가 있습니다. 이 hotfix에서 master row를 수정·병합하지 않습니다.
+- 새 테이블·컬럼·constraint·RLS·migration은 없으며 기존 `notification_reads`는 사용자별 읽음 정보만 계속 저장합니다.
+
 ## Sprint 9-7 Material Usage Requests
 
 - `material_usage_requests`는 프로젝트·공장·기타 사용처의 실제 필요 물량 원본을 한 행으로 저장합니다. 실제 원자재 FK는 기존 구조의 `material_code → lme_materials.code`입니다.
@@ -574,3 +600,15 @@ RLS는 `employees.auth_user_id = auth.uid()`이면서 활성·승인된 본인 �
 - Migration: `20260813130000_accept_all_share_invitations.sql`
 - Verification: `20260813131000_verify_accept_all_share_invitations.sql`
 - 운영 DB에는 자동 적용하지 않습니다.
+# Sprint 9-7A Usage Request Lifecycle
+
+- `update_material_usage_request`는 요청 row와 연결 allocation을 잠근 상태에서 요청량 하한을 검증하고 수량·발주번호·사용일·메모를 수정합니다.
+- `cancel_material_usage_request`는 요청을 soft cancel하고 연결된 planned/confirmed allocation을 같은 transaction에서 취소합니다. confirmed가 있으면 사유가 필수입니다.
+- `get_material_usage_request_history`는 usage request ID가 기록된 기존 Activity/Allocation Audit 이벤트를 최신순으로 제공합니다.
+- Legacy `usage_request_id IS NULL` allocation은 영향을 받지 않습니다.
+- Migration: `20260813140000_complete_material_usage_request_lifecycle.sql`
+- Verification: `20260813141000_verify_material_usage_request_lifecycle.sql`
+- 운영 DB에는 자동 적용하지 않습니다.
+## Sprint 9-7B-1 Editing Lock
+
+자재 사용구분의 상태·예정일·메모·Archive 편집은 `editing_locks.resource_type = 'material_usage_group'`을 사용합니다. 추가 migration은 `20260813160000_add_material_usage_group_editing_lock.sql`이며 기존 9-7B migration 다음에 적용합니다.

@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { getMonthWeekLayout, getRequiredMonthWeekHeight, getSundayFirstMonthDays } from "./calendar-grid.ts";
+import { getMonthWeekLayout, getRequiredMonthWeekHeight, getSundayFirstMonthDays, MONTH_WEEK_LAYOUT } from "./calendar-grid.ts";
 
 test("일요일 시작 월은 첫 칸에 1일을 배치한다", () => {
   assert.equal(getSundayFirstMonthDays("2026-02")[0], "2026-02-01");
 });
 
 test("회사 일정 lane 수에 따라 월간 주 높이가 증가한다", () => {
+  assert.equal(MONTH_WEEK_LAYOUT.companyLaneHeight, 35);
   const lane0 = getRequiredMonthWeekHeight({ companyLaneCount: 0, personalItemCount: 0, showCompany: true, showPersonalCards: false });
   const lane1 = getRequiredMonthWeekHeight({ companyLaneCount: 1, personalItemCount: 0, showCompany: true, showPersonalCards: false });
   const lane3 = getRequiredMonthWeekHeight({ companyLaneCount: 3, personalItemCount: 0, showCompany: true, showPersonalCards: false });

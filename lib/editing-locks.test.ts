@@ -3,7 +3,7 @@ import test from "node:test";
 import { EditingLockConflictError, formatHierarchicalDeleteLockMessage, isEditingLockResourceType, normalizeEditingLockResourceId, withShortEditingLock } from "./editing-locks.ts";
 
 test("공통 잠금 리소스 타입만 허용한다", () => {
-  for (const value of ["project", "task", "personal_note", "shipment", "employee", "comment", "setting"]) assert.equal(isEditingLockResourceType(value), true);
+  for (const value of ["project", "task", "personal_note", "shipment", "employee", "comment", "setting", "material_usage_request", "material_usage_group"]) assert.equal(isEditingLockResourceType(value), true);
   assert.equal(isEditingLockResourceType("projects"), false);
   assert.equal(isEditingLockResourceType(""), false);
 });

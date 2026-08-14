@@ -245,7 +245,7 @@ export default function NotificationsPage() {
               isMarkingRead={markingIds.has(item.id)}
               onToggleRead={() => toggleOneRead(item)}
               onTogglePin={() => setPreference(item, { isPinned: !item.isPinned })}
-              onHide={() => setPreference(item, { isHidden: !item.isHidden })}
+              onHide={item.isPersistent ? undefined : () => setPreference(item, { isHidden: !item.isHidden })}
               onSelect={() => item.isRead ? undefined : toggleOneRead(item)}
             />
           ))}

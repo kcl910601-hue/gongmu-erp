@@ -1,6 +1,8 @@
 import type { PostgrestError } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
 import type { ProcessType } from "@/types/process-type";
+import { normalizeProcessTypeCode } from "./process-type-code";
+export { normalizeProcessTypeCode } from "./process-type-code";
 
 const PROCESS_TYPE_COLUMNS =
   "id, code, name, sort_order, color, is_active, created_at, updated_at";
@@ -14,18 +16,6 @@ type ProcessTypeResult = {
   data: ProcessType | null;
   error: PostgrestError | null;
 };
-
-export function normalizeProcessTypeCode(value: string) {
-  const trimmed = value.trim();
-  const comparisonKey = trimmed
-    .normalize("NFKC")
-    .replace(/[^\p{L}\p{N}]+/gu, "")
-    .toLocaleLowerCase("ko-KR");
-
-  if (comparisonKey === "본납문틀") return "본납-문틀";
-  if (comparisonKey === "본납도어") return "본납-도어";
-  return trimmed;
-}
 
 function normalizeProcessTypes(processTypes: ProcessType[]) {
   const byCode = new Map<string, ProcessType>();

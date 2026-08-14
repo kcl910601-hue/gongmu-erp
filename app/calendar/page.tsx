@@ -1108,7 +1108,7 @@ export default function CalendarPage() {
                               event.stopPropagation();
                               openTaskDetailModal(item);
                             }}
-                            className={`pointer-events-auto h-7 min-w-0 truncate border px-2 text-left text-xs font-semibold shadow-sm transition-colors hover:brightness-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-200 ${roundedClass} ${getTaskDueClassName(
+                            className={`pointer-events-auto h-[29px] min-w-0 truncate border px-2 text-left text-[13px] font-semibold leading-4 shadow-sm transition-colors hover:brightness-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-200 ${roundedClass} ${getTaskDueClassName(
                               item
                             )}`}
                             style={positionStyle}

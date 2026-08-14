@@ -11,6 +11,13 @@ export function normalizeOptionalMaterialUsageText(value: unknown) {
   const normalized = value.trim();
   return normalized || null;
 }
+export function canReduceMaterialUsageQuantity(nextQuantityTons: number, allocatedTons: number) {
+  return Number.isFinite(nextQuantityTons) && nextQuantityTons > 0 && normalizeMaterialTons(nextQuantityTons) >= normalizeMaterialTons(allocatedTons);
+}
+export function summarizeUnallocatedUsageRequests(rows: readonly Pick<MaterialUsageRequest, "status" | "unallocated_tons">[]) {
+  const active = rows.filter((row) => row.status === "active" && row.unallocated_tons > 0);
+  return { count: active.length, totalTons: normalizeMaterialTons(active.reduce((sum, row) => sum + row.unallocated_tons, 0)) };
+}
 export function normalizeMaterialTons(value: number) { return Math.round(value * PRECISION) / PRECISION; }
 export function getMaterialUsageAllocationState(requestedTons: number, allocatedTons: number): MaterialUsageAllocationState {
   const remaining = normalizeMaterialTons(Math.max(requestedTons - allocatedTons, 0));
@@ -32,4 +39,4 @@ export function buildMaterialUsageAllocationPreview(requestedTons: number, candi
   }
   return { allocations, allocatedTons: normalizeMaterialTons(requestedTons - remaining), unallocatedTons: remaining, estimatedCostKrw: allocations.reduce((sum, row) => sum + row.amountKrw, 0) };
 }
-export type MaterialUsageRequest = { id: string; material_code: string; allocation_type: MaterialAllocationType; project_id: number | null; destination_name: string | null; quantity_tons: number; purchase_order_no: string | null; usage_date: string; memo: string | null; status: "active" | "cancelled"; allocated_tons: number; unallocated_tons: number; allocation_state: MaterialUsageAllocationState; created_at: string };
+export type MaterialUsageRequest = { id: string; material_code: string; allocation_type: MaterialAllocationType; project_id: number | null; destination_name: string | null; quantity_tons: number; purchase_order_no: string | null; usage_date: string; memo: string | null; status: "active" | "cancelled"; allocated_tons: number; unallocated_tons: number; allocation_state: MaterialUsageAllocationState; created_at: string; material_usage_group_id: string | null; group_name: string | null; group_category: import("./material-usage-groups").MaterialUsageGroupCategory | null; group_sequence: number | null; group_status: import("./material-usage-groups").MaterialUsageGroupStatus | null; group_planned_date: string | null; group_is_active: boolean | null };

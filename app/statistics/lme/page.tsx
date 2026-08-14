@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Download, ExternalLink, FileUp, Plus } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { ErrorState } from "@/components/ui/ErrorState";
@@ -22,6 +22,7 @@ import { LME_MARKET_SOURCE_URL } from "@/lib/lme-market";
 const tabs = ["시장 시세", "원자재 계약", "계약 비교", "계약 이력"] as const;
 export default function LmeStatisticsPage() {
   const { employee } = useAppShellUser(); const isAdmin = employee?.role === "admin"; const market = useLmeMarket(); const [activeTab,setActiveTab]=useState<(typeof tabs)[number]>("시장 시세"); const [entryOpen,setEntryOpen]=useState(false); const [importOpen,setImportOpen]=useState(false);
+  useEffect(()=>{const timer=window.setTimeout(()=>{if(new URLSearchParams(window.location.search).has("group"))setActiveTab(tabs[1]);},0);return()=>window.clearTimeout(timer);},[]);
   const exportParams = new URLSearchParams(); Object.entries(market.filters).forEach(([key,value])=>{if(value&&key!=="period")exportParams.set(key,value);});
   return <main className="min-h-screen space-y-4 bg-slate-50 p-5 text-slate-900"><header className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between"><div><h1 className="text-xl font-bold">알루미늄 LME 시세</h1><p className="mt-1 text-sm text-slate-500">시장 시세 이력과 원자재 구매 의사결정을 위한 통계입니다.</p></div><div className="flex flex-wrap gap-2"><a href={LME_MARKET_SOURCE_URL} target="_blank" rel="noreferrer" className="inline-flex h-9 items-center gap-2 rounded-xl border border-slate-300 bg-white px-3.5 text-sm font-medium"><ExternalLink size={15}/>한국비철금속협회 열기</a><a href={`/api/statistics/lme/market/export?${exportParams}`} className="inline-flex h-9 items-center gap-2 rounded-xl border border-emerald-600 bg-emerald-600 px-3.5 text-sm font-medium text-white"><Download size={15}/>CSV Export</a>{isAdmin&&<><Button variant="outline" onClick={()=>setImportOpen(true)}><FileUp size={15}/>검증된 초기 데이터 가져오기</Button><Button variant="primary" onClick={()=>setEntryOpen(true)}><Plus size={15}/>시장 시세 등록</Button></>}</div></header>
     <nav className="flex overflow-x-auto rounded-xl border border-slate-200 bg-white p-1" aria-label="LME 통계 영역">{tabs.map((tab)=><button key={tab} onClick={()=>setActiveTab(tab)} className={`min-w-max rounded-lg px-4 py-2 text-sm font-semibold ${activeTab===tab?"bg-slate-950 text-white":"text-slate-500 hover:bg-slate-50"}`}>{tab}</button>)}</nav>

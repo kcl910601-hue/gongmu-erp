@@ -9,6 +9,7 @@ export const COMMENT_UNREAD_CLEARED_EVENT = "collaboration:comment-unread-cleare
 export const REFERENCE_TASKS_CHANGED_EVENT = "reference-tasks:changed";
 export const TASK_NOTES_CHANGED_EVENT = "task-notes:changed";
 export const TASKS_CHANGED_EVENT = "tasks:changed";
+export const MATERIAL_USAGE_REQUESTS_CHANGED_EVENT = "material-usage-requests:changed";
 
 export type CollaborationEventName =
   | typeof PERSONAL_NOTES_CHANGED_EVENT
@@ -19,7 +20,8 @@ export type CollaborationEventName =
   | typeof COMMENT_COUNTS_INVALIDATED_EVENT
   | typeof REFERENCE_TASKS_CHANGED_EVENT
   | typeof TASK_NOTES_CHANGED_EVENT
-  | typeof TASKS_CHANGED_EVENT;
+  | typeof TASKS_CHANGED_EVENT
+  | typeof MATERIAL_USAGE_REQUESTS_CHANGED_EVENT;
 
 export const REALTIME_TABLE_EVENTS: Record<string, readonly CollaborationEventName[]> = {
   personal_notes: [PERSONAL_NOTES_CHANGED_EVENT, TIMELINE_CHANGED_EVENT, NOTIFICATIONS_CHANGED_EVENT],
@@ -34,6 +36,11 @@ export const REALTIME_TABLE_EVENTS: Record<string, readonly CollaborationEventNa
   reference_tasks: [REFERENCE_TASKS_CHANGED_EVENT],
   task_notes: [TASK_NOTES_CHANGED_EVENT],
   tasks: [TASKS_CHANGED_EVENT],
+  projects: [NOTIFICATIONS_CHANGED_EVENT],
+  project_sections: [NOTIFICATIONS_CHANGED_EVENT],
+  material_usage_requests: [MATERIAL_USAGE_REQUESTS_CHANGED_EVENT],
+  material_usage_groups: [MATERIAL_USAGE_REQUESTS_CHANGED_EVENT],
+  material_contract_allocations: [MATERIAL_USAGE_REQUESTS_CHANGED_EVENT],
 };
 
 const pendingEvents = new Map<CollaborationEventName, number>();

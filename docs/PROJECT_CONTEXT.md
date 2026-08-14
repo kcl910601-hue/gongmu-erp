@@ -1,5 +1,17 @@
 # Gongmu ERP - Project Context
 
+## Sprint 9-8B Process Master Consistency
+
+운영 전수 감사에서 `project_sections` 88건과 `task_templates` 38건은 모두 canonical master code(`MH`, `SH`, `본납-문틀`, `본납-도어`, `AS`)를 사용했습니다. `FRAME`, `DOOR`는 section·template 참조가 모두 0건인 legacy alias 후보이므로 삭제하지 않고 비활성화 migration만 준비했습니다. 실제 Project Process row는 변경하지 않으며 Required Process Alert의 canonical `본납-도어`도 유지합니다.
+
+## Sprint 9-8A Required Process Alert
+
+프로젝트 종료일의 4 calendar months 전부터 진행 대상 프로젝트에 `project_sections.process_type = '본납-도어'`인 공정이 없으면 Notification에 persistent warning을 표시합니다. 하위 Task 수와 `tasks.task_type`은 판정에 사용하지 않습니다. 룰은 `RequiredProcessRule` config로 관리하고 `required_process_missing:{projectId}:{ruleId}` stable key를 사용하며, 별도 Notification row를 매일 생성하지 않습니다. Project Process·Project Realtime 변경은 기존 Notification 갱신 이벤트로 재평가합니다. Admin은 전체, 일반 사용자와 Viewer는 기존 업무 담당 프로젝트 범위만 대상이며 Calendar-only Staff에는 추가 접근을 열지 않습니다.
+
+## Sprint 9-7A Usage Request Lifecycle
+
+원자재 사용요청은 생성·계약 배정·부분 미배정 이후 요청량/발주번호/사용일/메모 수정, 추가 배정, 취소, 통합 History까지 관리합니다. 요청량은 현재 활성 배정량보다 작게 줄일 수 없고 대상 프로젝트/공장 유형은 변경하지 않습니다. 요청 취소는 hard delete 없이 연결된 예정·확정 allocation을 함께 취소하여 계약 가용량과 프로젝트 원가를 기존 집계 규칙으로 복원합니다. Viewer는 목록과 History만 조회하고 Admin만 mutation을 수행합니다.
+
 ## Sprint 9-6C-2 Workspace Bulk Share Accept
 
 My Workspace의 받은 공유 요청 Compact Strip은 pending 요청이 2건 이상일 때만 `전체 수락`을 제공합니다. 확인 Dialog를 거쳐 서버의 단일 `accept_all_share_invitations()` RPC가 현재 로그인 직원의 실행 시점 pending 요청만 set-based로 처리하며, 기존 단건 수락과 동일하게 member 중복 방지·invitation 상태·Activity·Realtime 흐름을 유지합니다. 완료 후 공유, 알림, 개인 일정 갱신 이벤트를 재사용하고 서버 상태를 다시 조회합니다.
@@ -444,3 +456,6 @@ Notification Engine은 조회 시점에 오늘/지연 확인사항을 평가합�
 Calendar의 공정 Bar `📝/⚠`는 최신 원본 메모의 존재와 중요도를 나타냅니다. multi-day 업무는 주 경계별 visible segment로 나뉘며 각 주에서 보이는 대표 segment 안에 제목과 아이콘을 함께 렌더링합니다. 매 날짜별 아이콘은 만들지 않습니다.
 
 오늘이 미완료 Task 기간에 포함되고 최신 메모가 중요할 때 Calendar에 `⚠ 진행 메모` 가상 회사 일정을 한 건 표시합니다. 같은 원본 메모의 `check_date`가 오늘이면 기존 `⚠ 확인`만 유지해 중복을 제거합니다. 이 active reminder는 Calendar 시각 표시 전용이며 Morning Brief, Notification, Gantt, Timeline, Excel에는 추가하지 않습니다.
+## Sprint 9-7B-1 자재 사용구분 UI
+
+원자재 계약의 사용등록 Dialog에서 프로젝트를 선택하면 활성 자재 사용구분을 선택하거나 다음 차수를 즉시 생성할 수 있습니다. 중앙 원자재 사용요청 화면은 `차수별 보기`와 기존 `전체 요청`을 함께 제공하며, 프로젝트 상세에는 차수별 요청·미배정 요약을 표시합니다.

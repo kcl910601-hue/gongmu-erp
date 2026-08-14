@@ -1,0 +1,3 @@
+import assert from "node:assert/strict";import test from "node:test";import{aggregateMaterialUsageGroup,getMaterialUsageGroupName,isMaterialUsageGroupCategory}from"./material-usage-groups.ts";
+test("문틀/도어/기타 구분과 표시명을 만든다",()=>{assert.equal(isMaterialUsageGroupCategory("frame"),true);assert.equal(isMaterialUsageGroupCategory("factory"),false);assert.equal(getMaterialUsageGroupName("door",2),"도어 2차");});
+test("취소 요청을 제외해 그룹 요청·배정·미배정을 집계한다",()=>{assert.deepEqual(aggregateMaterialUsageGroup([{status:"active",quantity_tons:15,allocated_tons:10},{status:"cancelled",quantity_tons:20,allocated_tons:0}]),{requestCount:1,requestedTons:15,allocatedTons:10,unallocatedTons:5});});

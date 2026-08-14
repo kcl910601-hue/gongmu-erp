@@ -47,5 +47,12 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     p_increase_reason: typeof body.increaseReason === "string" ? body.increaseReason : null,
   });
   if (error) return Response.json({ error: error.message }, { status: error.code === "42501" ? 403 : 400 });
+  const materialUsageGroupId = typeof body.materialUsageGroupId === "string" && body.materialUsageGroupId ? body.materialUsageGroupId : null;
+  if (materialUsageGroupId) {
+    const usageRequestId = typeof data === "object" && data !== null && "usage_request_id" in data ? String(data.usage_request_id) : null;
+    if (!usageRequestId) return Response.json({ error: "생성된 사용요청 ID를 확인하지 못했습니다." }, { status: 500 });
+    const groupResult = await supabase.rpc("set_material_usage_request_group", { p_usage_request_id: usageRequestId, p_group_id: materialUsageGroupId });
+    if (groupResult.error) return Response.json({ error: groupResult.error.message }, { status: groupResult.error.code === "42501" ? 403 : 400 });
+  }
   return Response.json({ usageRequest: data }, { status: 201 });
 }

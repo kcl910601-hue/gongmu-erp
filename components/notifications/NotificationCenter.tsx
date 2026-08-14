@@ -559,7 +559,7 @@ export default function NotificationCenter() {
                       isMarkingRead={markingIds.has(item.id)}
                       onToggleRead={() => toggleOneRead(item)}
                       onTogglePin={() => setPreference(item, { isPinned: !item.isPinned })}
-                      onHide={() => setPreference(item, { isHidden: true })}
+                      onHide={item.isPersistent ? undefined : () => setPreference(item, { isHidden: true })}
                       navigateOnSelect={false}
                       onSelect={async () => {
                         if (!item.isRead) await toggleOneRead(item);

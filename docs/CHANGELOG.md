@@ -1,5 +1,19 @@
 # CHANGELOG
 
+## Sprint 9-8B - Process Master Consistency Audit
+
+- 운영 `process_types`, `project_sections`, `task_templates`를 read-only로 전수 감사하고 master/actual matrix와 canonical code 목록을 문서화했습니다.
+- 실제 참조가 없는 `FRAME`, `DOOR` master만 비활성화하는 migration과 row-count 보존 Verification을 준비했습니다.
+- `project_sections`, `projects`, `tasks`는 수정·삭제하지 않으며 Required Process Alert canonical code를 유지합니다.
+
+## Sprint 9-8A - Required Process Alert
+
+- 진행 중인 프로젝트의 종료일 4개월 전부터 `project_sections.process_type = '본납-도어'`가 없으면 필수 공정 미등록 경고를 표시합니다.
+- 달력 월 차감으로 월말·윤년을 보정하고, Project + Rule stable key로 반복 평가 중복을 방지합니다.
+- 미해결 경고는 읽음 처리 후에도 Inbox에 유지되며 Project Process 생성·삭제·type 변경, 프로젝트 종료일·상태 변경을 Realtime으로 재평가합니다.
+- 신규 DB 테이블·migration은 없으며 알림 조회 시 batch 평가합니다.
+- 9-8A-1에서 Task Type 판정을 제거하고 실제 Project Process entity 기준으로 수정했습니다.
+
 ## Sprint 9-7 - Material Usage Requests & Unallocated Quantity
 
 - 실제 필요 물량 원본 `material_usage_requests`와 특정 계약 충당 행 `material_contract_allocations`를 1:N으로 분리했습니다.
@@ -482,3 +496,8 @@
 - 같은 메모의 확인일이 오늘이면 active reminder를 생략해 `⚠ 확인`과의 중복을 제거합니다.
 - Task와 task_notes 변경을 기존 공통 Realtime 흐름으로 재계산합니다.
 - Morning Brief와 Notification은 기존 check_date 전용 정책을 유지합니다.
+# Sprint 9-7A
+
+- 원자재 사용요청 수정, 추가 배정, soft cancel, 통합 History와 취소 필터를 추가했습니다.
+- 요청 취소 시 연결 allocation을 함께 취소하여 계약 가용량과 프로젝트 원가 집계가 기존 규칙대로 복원됩니다.
+- Sprint 9-7B-1: 사용등록 그룹 선택/즉시 생성, 차수별·전체 요청 전환, 그룹 편집·Archive, 프로젝트 요약, 그룹 정보 포함 CSV를 연결했습니다.
