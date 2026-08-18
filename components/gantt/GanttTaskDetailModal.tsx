@@ -18,6 +18,7 @@ import { DdayBadge } from "@/components/ui/DdayBadge";
 import { getDday } from "@/lib/dday";
 import { EditingLockNotice } from "@/components/editing/EditingLockNotice";
 import { useEditingLock } from "@/hooks/useEditingLock";
+import { CalendarTaskNotesSection } from "@/components/calendar/CalendarTaskNotesSection";
 
 type GanttTaskDetailModalProps = {
   task: GanttTaskDetail;
@@ -25,6 +26,7 @@ type GanttTaskDetailModalProps = {
   onClose: () => void;
   onTaskUpdated: (task: IntegratedTask) => void;
   canEdit?: boolean;
+  showCalendarTaskNotes?: boolean;
 };
 
 const statusOptions = ["pending", "in_progress", "completed"];
@@ -43,6 +45,7 @@ export function GanttTaskDetailModal({
   onClose,
   onTaskUpdated,
   canEdit = true,
+  showCalendarTaskNotes = false,
 }: GanttTaskDetailModalProps) {
   const [editStartDate, setEditStartDate] = useState(task.startDate || "");
   const [editDueDate, setEditDueDate] = useState(task.dueDate || "");
@@ -179,7 +182,7 @@ export function GanttTaskDetailModal({
         role="dialog"
         aria-modal="true"
         aria-labelledby="gantt-task-detail-title"
-        className="w-full max-w-[640px] rounded-2xl border border-slate-200 bg-white p-6 shadow-xl"
+        className="max-h-[calc(100dvh-2rem)] w-full max-w-[640px] overflow-y-auto rounded-2xl border border-slate-200 bg-white p-6 shadow-xl"
         onClick={(event) => event.stopPropagation()}
       >
         <EditingLockNotice state={editingLock.state} lock={editingLock.lock} error={editingLock.error}/>
@@ -230,7 +233,7 @@ export function GanttTaskDetailModal({
             </div>
           ))}
         </div>
-        {task.memo && <div className={`mb-5 rounded-2xl border p-4 ${task.memoIsImportant ? "border-amber-200 bg-amber-50" : "border-slate-200 bg-slate-50"}`}><div className={`text-xs font-semibold ${task.memoIsImportant ? "text-amber-800" : "text-slate-600"}`}>{task.memoIsImportant ? "⚠ 중요 메모" : "📝 메모"}</div><p className="mt-2 whitespace-pre-wrap break-words text-sm leading-6 text-slate-700">{task.memo}</p></div>}
+        {showCalendarTaskNotes ? <CalendarTaskNotesSection taskId={task.taskId} taskName={task.taskName || "업무명 없음"} projectId={task.projectId} today={today} canCreate={canEdit}/> : task.memo && <div className={`mb-5 rounded-2xl border p-4 ${task.memoIsImportant ? "border-amber-200 bg-amber-50" : "border-slate-200 bg-slate-50"}`}><div className={`text-xs font-semibold ${task.memoIsImportant ? "text-amber-800" : "text-slate-600"}`}>{task.memoIsImportant ? "⚠ 중요 메모" : "📝 메모"}</div><p className="mt-2 whitespace-pre-wrap break-words text-sm leading-6 text-slate-700">{task.memo}</p></div>}
 
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <label>

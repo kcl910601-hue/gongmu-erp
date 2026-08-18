@@ -14,6 +14,8 @@ export type TaskNotePreview = {
 
 export type TaskNoteCheckDateStatus = "none" | "upcoming" | "today" | "overdue";
 
+export type TaskNoteListItem = { id: string; created_at: string };
+
 export function isValidTaskNoteCheckDate(value: string | null) {
   if (value === null) return true;
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
@@ -51,6 +53,34 @@ export function getLatestTaskNotes(notes: TaskNotePreview[]) {
     if (!current || note.createdAt > current.createdAt) latest.set(note.taskId, note);
   }
   return latest;
+}
+
+export function getCalendarTaskNoteDisplayPreviews(notes: TaskNotePreview[]) {
+  const latest = getLatestTaskNotes(notes);
+  const importantTaskIds = new Set(notes.filter((note) => note.isImportant).map((note) => note.taskId));
+  return new Map(Array.from(latest, ([taskId, note]) => [taskId, importantTaskIds.has(taskId) ? { ...note, isImportant: true } : note]));
+}
+
+export function mergeTaskNoteNewest<T extends TaskNoteListItem>(notes: T[], incoming: T) {
+  return [incoming, ...notes.filter((note) => note.id !== incoming.id)]
+    .sort((left, right) => right.created_at.localeCompare(left.created_at));
+}
+
+export function replaceTaskNote<T extends TaskNoteListItem>(notes: T[], updated: T) {
+  return notes.map((note) => note.id === updated.id ? updated : note);
+}
+
+export function removeTaskNote<T extends TaskNoteListItem>(notes: T[], noteId: string) {
+  return notes.filter((note) => note.id !== noteId);
+}
+
+export function canManageCalendarTaskNote(input: { canEditCalendar: boolean; createdBy: string; currentUserId: string | null; role: string | null | undefined }) {
+  return input.canEditCalendar && (input.createdBy === input.currentUserId || input.role === "admin");
+}
+
+export function getCompactTaskNotes<T extends TaskNoteListItem>(notes: T[], expanded: boolean, limit = 3) {
+  const sorted = [...notes].sort((left, right) => right.created_at.localeCompare(left.created_at));
+  return expanded ? sorted : sorted.slice(0, limit);
 }
 
 export function formatTaskNoteForExport(note: Pick<TaskNotePreview, "note" | "isImportant" | "checkDate"> | null | undefined) {

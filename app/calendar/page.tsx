@@ -40,7 +40,7 @@ import { COMMENT_COUNT_DELTA_EVENT, COMMENT_COUNTS_INVALIDATED_EVENT, COMMENT_UN
 import { applyCommentCounts, loadCommentCounts } from "@/lib/comment-counts";
 import { withShortEditingLock } from "@/lib/editing-locks";
 import { getCalendarPermissions } from "@/lib/permissions";
-import { getLatestTaskNotes, shouldShowActiveImportantNoteReminder, TASK_NOTES_CHANGED_EVENT, type TaskNotePreview } from "@/lib/task-notes";
+import { getCalendarTaskNoteDisplayPreviews, getLatestTaskNotes, shouldShowActiveImportantNoteReminder, TASK_NOTES_CHANGED_EVENT, type TaskNotePreview } from "@/lib/task-notes";
 
 type Project = IntegratedProject & {
   completion_due_date: string | null;
@@ -365,7 +365,9 @@ export default function CalendarPage() {
     const calendarTasks = (taskData || []) as unknown as Task[];
     const noteResult = calendarTasks.length ? await supabase.from("task_notes").select("id, task_id, note, is_important, check_date, created_at, created_by_name").in("task_id", calendarTasks.map((task) => task.id)) : { data: [], error: null };
     if (noteResult.error) toast.error(noteResult.error.message);
-    const latestNotes = getLatestTaskNotes((noteResult.data ?? []).map((note) => ({ id: String(note.id), taskId: Number(note.task_id), note: String(note.note), isImportant: Boolean(note.is_important), checkDate: note.check_date ? String(note.check_date) : null, createdAt: String(note.created_at), createdByName: note.created_by_name ? String(note.created_by_name) : null })));
+    const taskNotes = (noteResult.data ?? []).map((note) => ({ id: String(note.id), taskId: Number(note.task_id), note: String(note.note), isImportant: Boolean(note.is_important), checkDate: note.check_date ? String(note.check_date) : null, createdAt: String(note.created_at), createdByName: note.created_by_name ? String(note.created_by_name) : null }));
+    const latestNotes = getLatestTaskNotes(taskNotes);
+    const calendarDisplayNotes = getCalendarTaskNoteDisplayPreviews(taskNotes);
 
     setProjects(calendarProjects);
     setTasks(calendarTasks);
@@ -386,7 +388,7 @@ export default function CalendarPage() {
         assemblyVendorName: getTaskAssemblyVendorName(task),
         taskType: task.task_type,
         href: `/projects/${task.project_id}`,
-        memo: latestNotes.get(task.id) ?? null,
+        memo: calendarDisplayNotes.get(task.id) ?? null,
       };
       const startDate = task.start_date || task.due_date;
       const endDate = task.due_date || task.start_date;
@@ -1303,6 +1305,7 @@ export default function CalendarPage() {
           today={today}
           onTaskUpdated={(updatedTask) => void handleCalendarTaskDetailUpdated(updatedTask)}
           canEdit={calendarPermissions.canEditCalendar}
+          showCalendarTaskNotes
           onClose={() => setSelectedTask(null)}
         />
       )}

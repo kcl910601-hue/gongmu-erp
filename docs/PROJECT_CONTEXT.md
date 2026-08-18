@@ -1,5 +1,13 @@
 # Gongmu ERP - Project Context
 
+## Sprint 9-9B Calendar Task Note Quick Entry
+
+Calendar의 기존 회사 Task 상세 Modal은 `task_notes` 원본을 상세 열기 시 Task 단위로 조회하고 최신 3건을 compact하게 표시합니다. 기존 Task 편집 권한이 있는 사용자는 같은 Modal에서 일반·중요 메모와 선택 확인일을 바로 저장하며, Viewer와 Calendar-only Staff는 조회만 가능합니다. 저장은 Project 상세와 동일한 `task_notes` INSERT, `task_note_create` Activity, 공통 Task Note 변경 이벤트를 사용하므로 Calendar Bar 최신 메모 아이콘, 확인일 가상 일정, Notification 평가와 Realtime 재조회가 별도 복사본 없이 갱신됩니다. 수정·삭제는 기존 Project 상세에서 수행하며 DB migration은 없습니다.
+
+## Sprint 9-9B-1 Calendar Task Note Edit & Delete
+
+Calendar Task 메모 Row는 Project 상세와 동일하게 작성자 또는 Admin에게만 본문·중요 여부·확인일 인라인 수정과 확인 후 삭제를 제공합니다. Viewer와 Calendar-only Staff는 기존 Calendar 편집 권한 경계로 읽기 전용이며 Note 전용 Lock은 추가하지 않습니다. UPDATE/DELETE 성공 시 로컬 목록을 즉시 반영하고 기존 Task Note 변경 이벤트로 Calendar Bar, 확인일 가상 일정과 다른 화면을 재조회합니다. Calendar Bar는 최신 메모 본문을 유지하면서 Task에 중요 메모가 하나라도 남아 있으면 ⚠를 유지합니다. 별도 API, Realtime channel, DB migration은 없습니다.
+
 ## Sprint 9-8B Process Master Consistency
 
 운영 전수 감사에서 `project_sections` 88건과 `task_templates` 38건은 모두 canonical master code(`MH`, `SH`, `본납-문틀`, `본납-도어`, `AS`)를 사용했습니다. `FRAME`, `DOOR`는 section·template 참조가 모두 0건인 legacy alias 후보이므로 삭제하지 않고 비활성화 migration만 준비했습니다. 실제 Project Process row는 변경하지 않으며 Required Process Alert의 canonical `본납-도어`도 유지합니다.

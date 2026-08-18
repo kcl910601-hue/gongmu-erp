@@ -1,5 +1,17 @@
 # CHANGELOG
 
+## Sprint 9-9B-1 - Calendar Task Note Edit & Delete
+
+- Calendar 회사 Task 상세에서 작성자 또는 Admin이 메모 본문, 중요 여부, 확인일을 인라인 수정하고 확인 후 삭제할 수 있습니다.
+- 기존 `task_notes` UPDATE/DELETE, Activity Log, 공통 변경 이벤트를 재사용해 Bar 아이콘과 확인일 가상 일정을 즉시 다시 계산합니다.
+- Viewer와 Calendar-only Staff는 읽기 전용이며 신규 API, Lock, DB migration은 없습니다.
+
+## Sprint 9-9B - Calendar Task Note Quick Entry
+
+- Calendar 회사 Task 상세에 최신 메모 3건 조회, 전체 펼침, 일반·중요 메모와 확인일 빠른 작성을 추가했습니다.
+- 기존 `task_notes`, Activity Log, 공통 Realtime 변경 이벤트를 재사용하고 Viewer와 Calendar-only Staff는 읽기 전용으로 유지했습니다.
+- 메모 수정·삭제는 기존 Project 상세에서 유지하며 DB migration은 없습니다.
+
 ## Sprint 9-9A - Project Completion Preflight Check
 
 - 프로젝트 상세에서 모든 Task 완료로 프로젝트가 `completed` 전환될 때 서버 점검 결과를 먼저 표시합니다.
