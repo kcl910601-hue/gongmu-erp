@@ -13,7 +13,7 @@ export function getSundayFirstMonthDays(monthValue: string) {
 
 export const MONTH_WEEK_LAYOUT = {
   dateHeaderHeight: 52,
-  companyLaneHeight: 35,
+  companyLaneHeight: 44,
   personalCardHeight: 64,
   personalCardGap: 4,
   sectionGap: 12,

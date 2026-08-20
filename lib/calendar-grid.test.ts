@@ -7,7 +7,7 @@ test("일요일 시작 월은 첫 칸에 1일을 배치한다", () => {
 });
 
 test("회사 일정 lane 수에 따라 월간 주 높이가 증가한다", () => {
-  assert.equal(MONTH_WEEK_LAYOUT.companyLaneHeight, 35);
+  assert.equal(MONTH_WEEK_LAYOUT.companyLaneHeight, 44);
   const lane0 = getRequiredMonthWeekHeight({ companyLaneCount: 0, personalItemCount: 0, showCompany: true, showPersonalCards: false });
   const lane1 = getRequiredMonthWeekHeight({ companyLaneCount: 1, personalItemCount: 0, showCompany: true, showPersonalCards: false });
   const lane3 = getRequiredMonthWeekHeight({ companyLaneCount: 3, personalItemCount: 0, showCompany: true, showPersonalCards: false });
@@ -15,6 +15,14 @@ test("회사 일정 lane 수에 따라 월간 주 높이가 증가한다", () =>
   assert.equal(lane0, lane1);
   assert.ok(lane3 > lane1);
   assert.ok(lane10 > lane3);
+});
+
+test("회사 Task Bar 높이와 간격을 포함한 44px lane pitch를 주 높이에 반영한다", () => {
+  const lane3 = getMonthWeekLayout({ companyLaneCount: 3, personalItemCount: 0, showCompany: true, showPersonalCards: false });
+  const lane10 = getMonthWeekLayout({ companyLaneCount: 10, personalItemCount: 0, showCompany: true, showPersonalCards: false });
+  assert.equal(lane3.companyAreaHeight, 132);
+  assert.equal(lane10.companyAreaHeight, 440);
+  assert.equal(lane10.companyAreaHeight - lane3.companyAreaHeight, 7 * 44);
 });
 
 test("개인 일정과 필터 결과에 따라 필요한 높이를 다시 계산한다", () => {
