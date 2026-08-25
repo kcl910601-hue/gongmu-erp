@@ -260,6 +260,9 @@ export default function Sidebar() {
               <Link href="/statistics/project-contracts" className={`block rounded-lg px-2 py-1.5 text-xs font-semibold ${pathname === "/statistics/project-contracts" ? "bg-blue-50 text-blue-700" : "text-slate-600 hover:bg-slate-100"}`}>프로젝트 계약관리</Link>
               <Link href="/statistics/project-profit" className={`block rounded-lg px-2 py-1.5 text-xs font-semibold ${pathname === "/statistics/project-profit" ? "bg-blue-50 text-blue-700" : "text-slate-600 hover:bg-slate-100"}`}>프로젝트 손익 분석</Link>
               <Link href="/statistics/project-costs" className={`block rounded-lg px-2 py-1.5 text-xs font-semibold ${pathname === "/statistics/project-costs" ? "bg-blue-50 text-blue-700" : "text-slate-600 hover:bg-slate-100"}`}>프로젝트 비용관리</Link>
+              <Link href="/statistics/coating-costs" className={`block rounded-lg px-2 py-1.5 text-xs font-semibold ${pathname === "/statistics/coating-costs" ? "bg-blue-50 text-blue-700" : "text-slate-600 hover:bg-slate-100"}`}>도장 원가관리</Link>
+              <Link href="/statistics/accessories" className={`block rounded-lg px-2 py-1.5 text-xs font-semibold ${pathname === "/statistics/accessories" ? "bg-blue-50 text-blue-700" : "text-slate-600 hover:bg-slate-100"}`}>부자재 관리</Link>
+              <Link href="/statistics/glass-costs" className={`block rounded-lg px-2 py-1.5 text-xs font-semibold ${pathname === "/statistics/glass-costs" ? "bg-blue-50 text-blue-700" : "text-slate-600 hover:bg-slate-100"}`}>유리 원가관리</Link>
               <Link href="/statistics/project-margin" className={`block rounded-lg px-2 py-1.5 text-xs font-semibold ${pathname === "/statistics/project-margin" ? "bg-blue-50 text-blue-700" : "text-slate-600 hover:bg-slate-100"}`}>프로젝트 마진 분석</Link>
               {["프로젝트 분석", "AS 분석", "리포트"].map((label) => <span key={label} className="block px-2 py-1.5 text-xs text-slate-400">{label} <small>(향후)</small></span>)}
             </div>}

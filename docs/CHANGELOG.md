@@ -520,3 +520,52 @@
 - 원자재 사용요청 수정, 추가 배정, soft cancel, 통합 History와 취소 필터를 추가했습니다.
 - 요청 취소 시 연결 allocation을 함께 취소하여 계약 가용량과 프로젝트 원가 집계가 기존 규칙대로 복원됩니다.
 - Sprint 9-7B-1: 사용등록 그룹 선택/즉시 생성, 차수별·전체 요청 전환, 그룹 편집·Archive, 프로젝트 요약, 그룹 정보 포함 CSV를 연결했습니다.
+
+## 2026-08-21 - Sprint 9-10A Project List Excel Export
+
+- 프로젝트 목록 Action에 조회 권한 사용자를 위한 `현재 목록 다운로드`를 추가했습니다.
+- 현재 검색·필터·정렬 결과 전체를 페이지네이션과 무관하게 추가 조회 없이 Excel로 생성합니다.
+- 한글 상태, 기존 진행률, 날짜 서식, 필터 요약, AutoFilter, 고정 헤더를 적용하고 내부 ID를 제외했습니다.
+- 빈 결과와 중복 클릭, 성공·실패 Toast를 처리했으며 기존 양식 다운로드와 업로드는 유지합니다.
+
+## 2026-08-21 - Sprint 9-10B Project Cost Excel Import
+
+- 프로젝트 비용관리 Admin Action에 3-Sheet Excel 양식과 검증 Preview 기반 업로드를 추가했습니다.
+- VAT 빈칸·0·직접 입력을 구분하고 오류 전체 차단, 기존 DB·Excel 내부 중복 Warning 확인 흐름을 적용했습니다.
+- Batch 추적 테이블과 기존 비용 원본 연결 컬럼, 원자적 Bulk RPC migration 및 verification SQL을 준비했습니다.
+- 등록 성공 후 기존 비용 KPI와 열린 상세 이력을 재조회하며 수기 비용 등록 구조는 유지합니다.
+
+## 2026-08-21 - Sprint 9-10C Project Cost Current Data Excel Export
+
+- 프로젝트 비용관리 Action에 현재 필터 결과의 실제 비용 원본을 내려받는 `현재 비용 다운로드`를 추가했습니다.
+- 비용 내역·요약 2개 Sheet에 한글 분류·지급상태, 유효/무효, 수기/Excel 등록, Batch 파일명과 기존 저장 금액을 출력합니다.
+- 기존 프로젝트 필터 endpoint를 재사용하고 Project·Employee·Batch를 일괄 resolve해 N+1 조회를 방지했습니다.
+- 유효 비용 기준 전체·분류별·프로젝트별 요약과 AutoFilter, 고정 헤더, 날짜·금액 서식을 적용했습니다.
+
+## 2026-08-21 — Sprint 9-11A
+
+- organizations 기반 유리업체 역할과 월별 유리 계산서·프로젝트 배분·배분 이력을 추가했다.
+- 부분 배분, DB 초과 배분 차단, 무효 제외, Statement 편집 잠금과 shared realtime 연동을 추가했다.
+- 프로젝트 마진 계산에 VAT 제외 유리 실제원가를 추가했다. AL 예상원가와 기존 부대비용 구조는 유지한다.
+- Project Margin 상세에 유리 실제원가 간편등록·수정·무효와 계산서 상세표를 추가하고, Statement+Allocation atomic RPC 및 공동 계산서 보호 규칙을 적용했다.
+
+## 2026-08-21 — Sprint 9-11A-2
+
+- 프로젝트별 AL 예상원가와 유리 실제원가를 원가분석 화면에서 함께 조회하고 관리하도록 통합했다.
+- 원가분석에 유리 간편등록·상세·수정·무효와 공동 계산서 관리 링크를 기존 공용 UI로 연결했다.
+- Project Margin의 유리원가 영역은 조회 전용으로 전환하고 원가분석 관리 링크를 추가했다.
+- 기존 API·RPC·Realtime 이벤트를 재사용했으며 DB migration은 추가하지 않았다.
+
+## 2026-08-21 — Sprint 9-11A-4
+
+- 협력업체 설정 표시 명칭을 업체 관리로 정리하고 supplier/assembly/coating/glass를 AL업체/조립업체/도장업체/유리업체로 표시한다.
+- 도장 월 계산서, 프로젝트 배분, 배분 이력과 Admin RPC/RLS/Realtime/Editing Lock migration을 추가했다.
+- 도장 원가관리와 프로젝트 고정 Quick Entry를 추가하고 단독 계산서 수정·무효 및 공동 계산서 보호를 적용했다.
+- 원가분석과 Project Margin에 도장 실제원가를 별도 표시하고 AL·도장·유리·부대비용 총원가 계산에 반영했다.
+
+## 2026-08-21 — Sprint 9-12A
+
+- 부자재업체 유형과 부자재 Master, 단가 이력, 프로젝트 실제 소진 Snapshot 구조를 추가했다.
+- EA/M/SET, 국내/수입, KRW 직접단가와 USD+수동 환율 방식을 지원하고 서버 RPC에서 원화환산 및 총원가를 재계산한다.
+- 부자재 관리 화면과 원가분석 소진등록·수정·무효 UI를 추가했다.
+- 부자재 실제원가를 현재 집계 자재원가와 Project Margin 총원가·손익·원가율·마진율에 반영했다.

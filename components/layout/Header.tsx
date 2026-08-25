@@ -26,7 +26,7 @@ const pageTitles: Record<string, string> = {
   "/settings": "설정",
   "/settings/templates": "업무 템플릿 관리",
   "/settings/employees": "직원 관리",
-  "/settings/partners": "협력업체 관리",
+  "/settings/partners": "업체 관리",
 };
 
 function getPageTitle(pathname: string) {

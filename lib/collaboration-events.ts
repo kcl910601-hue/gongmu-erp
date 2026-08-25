@@ -10,6 +10,9 @@ export const REFERENCE_TASKS_CHANGED_EVENT = "reference-tasks:changed";
 export const TASK_NOTES_CHANGED_EVENT = "task-notes:changed";
 export const TASKS_CHANGED_EVENT = "tasks:changed";
 export const MATERIAL_USAGE_REQUESTS_CHANGED_EVENT = "material-usage-requests:changed";
+export const GLASS_COSTS_CHANGED_EVENT = "glass-costs:changed";
+export const COATING_COSTS_CHANGED_EVENT = "coating-costs:changed";
+export const ACCESSORIES_CHANGED_EVENT = "accessories:changed";
 
 export type CollaborationEventName =
   | typeof PERSONAL_NOTES_CHANGED_EVENT
@@ -21,7 +24,10 @@ export type CollaborationEventName =
   | typeof REFERENCE_TASKS_CHANGED_EVENT
   | typeof TASK_NOTES_CHANGED_EVENT
   | typeof TASKS_CHANGED_EVENT
-  | typeof MATERIAL_USAGE_REQUESTS_CHANGED_EVENT;
+  | typeof MATERIAL_USAGE_REQUESTS_CHANGED_EVENT
+  | typeof GLASS_COSTS_CHANGED_EVENT
+  | typeof COATING_COSTS_CHANGED_EVENT
+  | typeof ACCESSORIES_CHANGED_EVENT;
 
 export const REALTIME_TABLE_EVENTS: Record<string, readonly CollaborationEventName[]> = {
   personal_notes: [PERSONAL_NOTES_CHANGED_EVENT, TIMELINE_CHANGED_EVENT, NOTIFICATIONS_CHANGED_EVENT],
@@ -41,6 +47,12 @@ export const REALTIME_TABLE_EVENTS: Record<string, readonly CollaborationEventNa
   material_usage_requests: [MATERIAL_USAGE_REQUESTS_CHANGED_EVENT],
   material_usage_groups: [MATERIAL_USAGE_REQUESTS_CHANGED_EVENT],
   material_contract_allocations: [MATERIAL_USAGE_REQUESTS_CHANGED_EVENT],
+  glass_cost_statements: [GLASS_COSTS_CHANGED_EVENT],
+  glass_cost_allocations: [GLASS_COSTS_CHANGED_EVENT],
+  coating_cost_statements: [COATING_COSTS_CHANGED_EVENT],
+  coating_cost_allocations: [COATING_COSTS_CHANGED_EVENT],
+  accessory_items: [ACCESSORIES_CHANGED_EVENT],
+  project_accessory_usages: [ACCESSORIES_CHANGED_EVENT],
 };
 
 const pendingEvents = new Map<CollaborationEventName, number>();

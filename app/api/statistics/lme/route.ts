@@ -23,7 +23,7 @@ function parsePayload(body: LmePayload): { data: LmeInput | null; error: string 
   if (!/^\d{4}-\d{2}-\d{2}$/.test(referenceDate) || (round !== 1 && round !== 2)) {
     return { data: null, error: "기준일과 회차를 확인해주세요." };
   }
-  if (typeof body.supplierId !== "string" || !body.supplierId) return { data: null, error: "공급업체를 선택해주세요." };
+  if (typeof body.supplierId !== "string" || !body.supplierId) return { data: null, error: "AL업체를 선택해주세요." };
   if ([lmeAlUsdPerTon, exchangeRateKrwPerUsd, processingCostKrwPerKg, appliedPriceKrwPerKg].some((value) => value === null || value < 0)) {
     return { data: null, error: "시세, 환율, 인가공비와 적용단가는 0 이상의 숫자여야 합니다." };
   }
@@ -67,7 +67,7 @@ function toDatabasePayload(input: LmeInput) {
 }
 
 function databaseError(error: { code?: string; message: string }) {
-  if (error.code === "23505") return Response.json({ error: "같은 기준연월, 회차, 공급업체 자료가 이미 있습니다." }, { status: 409 });
+  if (error.code === "23505") return Response.json({ error: "같은 기준연월, 회차, AL업체 자료가 이미 있습니다." }, { status: 409 });
   if (error.code === "23514") return Response.json({ error: "입력값이 허용 범위를 벗어났습니다." }, { status: 400 });
   return Response.json({ error: error.message }, { status: 500 });
 }

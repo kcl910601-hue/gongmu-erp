@@ -1,5 +1,5 @@
 export const EDITING_LOCK_RESOURCE_TYPES = [
-  "project", "task", "personal_note", "shipment", "employee", "comment", "setting", "material_usage_request", "material_usage_group",
+  "project", "task", "personal_note", "shipment", "employee", "comment", "setting", "material_usage_request", "material_usage_group", "glass_cost_statement", "coating_cost_statement", "accessory_item", "project_accessory_usage",
 ] as const;
 
 export type EditingLockResourceType = (typeof EDITING_LOCK_RESOURCE_TYPES)[number];

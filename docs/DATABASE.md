@@ -211,6 +211,15 @@ Sprint 5-11C/5-11D 운영 확인에서 실제 `pg_policies`, table grants와 RLS
 
 이 문서는 프로젝트 루트의 `db_schema_columns.csv`, `db_foreign_keys.csv`, migration과 운영 검증 결과를 기준으로 작성합니다. 존재하지 않는 테이블이나 컬럼은 임의로 추가해 문서화하지 않습니다.
 
+## Sprint 9-10B Project Cost Excel Import
+
+- 원본 비용은 기존 `project_cost_entries`이며 시스템 분류 code는 `subcontract`, `transportation`, `labor`, `installation`, `as_service`, `other`입니다.
+- `project_cost_import_batches`는 원본 파일명, 등록자, 건수, 공급가·VAT·합계를 저장하고 Excel 등록 비용은 nullable `project_cost_entries.import_batch_id`로 연결합니다. 기존 수기·기존 데이터는 null입니다.
+- VAT 빈칸은 기존 `calculateCostVat`와 같은 반올림 10%, 0은 명시적 0원으로 구분합니다.
+- 중복 판정은 Preview Warning이며 프로젝트·분류·발생일·금액·VAT·업체와 문서번호 우선 식별값을 조합합니다. 오류는 전체 등록을 차단합니다.
+- `import_project_cost_entries(text,jsonb)`는 Admin 권한과 1~1,000행, 현재 프로젝트 코드, 활성 시스템 분류, 날짜·금액·지급상태를 재검증하고 Batch 및 비용 행을 원자적으로 저장합니다.
+- Migration `20260821120000_add_project_cost_excel_import.sql`과 Verification `20260821121000_verify_project_cost_excel_import.sql`은 운영 DB에 자동 적용하지 않습니다.
+
 ## 1. Database Overview
 
 CSV 기준 실제 테이블은 다음 7개입니다.
@@ -612,3 +621,33 @@ RLS는 `employees.auth_user_id = auth.uid()`이면서 활성·승인된 본인 �
 ## Sprint 9-7B-1 Editing Lock
 
 자재 사용구분의 상태·예정일·메모·Archive 편집은 `editing_locks.resource_type = 'material_usage_group'`을 사용합니다. 추가 migration은 `20260813160000_add_material_usage_group_editing_lock.sql`이며 기존 9-7B migration 다음에 적용합니다.
+
+## Glass actual cost
+
+- `glass_cost_statements`: 유리업체별 월 계산서. `accounting_month`는 월 1일 `date`, 금액은 KRW `bigint`, 삭제 대신 `active/void`를 사용한다.
+- `glass_cost_allocations`: 계산서 공급가액의 프로젝트 배분. Statement 내 프로젝트당 한 행이며 유효 배분합계가 공급가액을 초과하지 않도록 RPC가 Statement 행을 잠근다.
+- `glass_cost_allocation_history`: 배분 생성·수정·무효·복원 전후 JSON 감사이력이다.
+- 프로젝트 유리 실제원가는 active Statement와 active Allocation의 공급가액 배분합계이며 VAT를 포함하지 않는다.
+- 신규 테이블은 승인 ERP 사용자 SELECT, Admin RPC mutation 정책을 사용한다. Migration은 자동 적용하지 않는다.
+- `create_project_glass_cost_entry`는 Statement와 현재 프로젝트 100% Allocation을 atomic 생성한다.
+- `update_project_glass_cost_entry`와 `void_project_glass_cost_entry`는 활성 Allocation이 하나이고 공급가액과 일치하는 경우만 허용하여 공동 계산서를 보호한다.
+
+## Coating actual cost
+
+- `organizations.partner_type = coating`을 도장업체로 사용하며 별도 업체 master를 만들지 않는다.
+- `coating_cost_statements`는 업체별 월 계산서, `coating_cost_allocations`는 프로젝트별 공급가액 배분, `coating_cost_allocation_history`는 배분 변경 전후 이력이다.
+- 활성 Allocation 합계는 Statement 공급가액을 초과할 수 없으며 저장 RPC가 Statement를 `FOR UPDATE`로 잠근다.
+- 프로젝트 도장 실제원가는 active Statement와 active Allocation의 공급가액 배분합계이고 VAT는 제외한다.
+- 승인 ERP 사용자는 RLS를 통해 조회하고 mutation은 Admin 전용 RPC로 수행한다.
+- `create/update/void_project_coating_cost_entry`는 단독 프로젝트 100% 배분 Quick Entry를 원자적으로 처리하고 공동 계산서를 보호한다.
+- Migration `20260821150000_create_coating_actual_cost_management.sql`과 Verification `20260821151000_verify_coating_actual_cost_management.sql`은 운영 DB에 자동 적용하지 않는다.
+
+## Accessory actual usage cost
+
+- `organizations.partner_type = accessory`를 부자재업체로 사용한다.
+- `accessory_items`는 코드, 이름, 규격, 단위, 국내/수입, 가격방식, 통화와 현재단가를 저장하고 `accessory_price_history`가 단가·통화 변경 이력을 보존한다.
+- `project_accessory_usages`는 프로젝트 실제 소진 수량과 등록 당시 Master/가격/환율 Snapshot 및 서버 계산 KRW 총원가를 저장한다.
+- `EA`, `SET` 수량은 정수, `M`은 소수점 4자리까지 허용한다. 가격·환율은 `numeric(18,4)`, 최종 KRW는 `bigint`다.
+- 외화는 `round(외화단가 × 환율)`로 원화단가를 만든 뒤 `round(수량 × 원화단가)`로 총원가를 계산한다. 원화 직접단가는 환율을 저장하지 않는다.
+- Admin RPC가 Master+Price History와 Usage Snapshot+Activity Log를 각각 같은 transaction에서 처리한다.
+- Migration `20260821160000_create_accessory_actual_usage_cost.sql`과 Verification `20260821161000_verify_accessory_actual_usage_cost.sql`은 운영 DB에 자동 적용하지 않는다.

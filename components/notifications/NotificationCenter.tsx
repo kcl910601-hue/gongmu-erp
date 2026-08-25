@@ -50,6 +50,7 @@ import { SHARE_PERMISSION_LABELS, type ShareInvitation, type SharingOverview } f
 import { dispatchPersonalNotesChanged } from "@/lib/personal-notes";
 import { AddReferenceTaskButton } from "@/components/workspace/AddReferenceTaskButton";
 import type { ReferenceTask } from "@/lib/reference-tasks";
+import { fetchJson } from "@/lib/fetch-json";
 
 type NotificationFilter = "all" | "task" | "project" | "raw_material" | "personal" | "system";
 type NotificationMailbox = "inbox" | "archive";
@@ -237,6 +238,7 @@ export default function NotificationCenter() {
   const [summary, setSummary] = useState<NotificationSummary | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
+  const [warningMessage, setWarningMessage] = useState("");
   const [activeFilter, setActiveFilter] = useState<NotificationFilter>("all");
   const [mailbox, setMailbox] = useState<NotificationMailbox>("inbox");
   const [showUnreadOnly, setShowUnreadOnly] = useState(false);
@@ -255,17 +257,35 @@ export default function NotificationCenter() {
     requestInFlightRef.current = true;
     setIsLoading(true);
     setErrorMessage("");
+    setWarningMessage("");
 
-    const [notificationResult, sharingResponse, referenceResponse] = await Promise.all([loadNotificationSummary(100, employee), fetch("/api/sharing", { cache: "no-store" }).catch(() => null), fetch("/api/reference-tasks", { cache: "no-store" }).catch(() => null)]);
+    const [notificationResult, sharingResult, referenceResult] = await Promise.all([
+      loadNotificationSummary(100, employee),
+      fetchJson<SharingOverview>("/api/sharing", { cache: "no-store" }),
+      fetchJson<{ tasks?: ReferenceTask[] }>("/api/reference-tasks", { cache: "no-store" }),
+    ]);
     const { data, error } = notificationResult;
-    if (sharingResponse?.ok) {
-      const sharing = await sharingResponse.json() as SharingOverview;
+    if (sharingResult.data) {
+      const sharing = sharingResult.data;
       const invitations = [...sharing.received, ...sharing.sent.filter((invitation) => invitation.status !== "pending")];
       setShareInvitations([...new Map(invitations.map((invitation) => [invitation.id, invitation])).values()].slice(0, 100));
     }
-    if (referenceResponse?.ok) {
-      const references = await referenceResponse.json() as { tasks?: ReferenceTask[] };
+    if (referenceResult.data) {
+      const references = referenceResult.data;
       setReferenceCommentIds(new Set((references.tasks ?? []).flatMap((task) => task.commentId === null ? [] : [task.commentId])));
+    }
+
+    const supplementalErrors = [
+      sharingResult.error ? `/api/sharing: ${sharingResult.error.message}` : null,
+      referenceResult.error ? `/api/reference-tasks: ${referenceResult.error.message}` : null,
+    ].filter((message): message is string => message !== null);
+    if (supplementalErrors.length > 0) {
+      const message = supplementalErrors.join(" / ");
+      const hasServerFailure = [sharingResult.response, referenceResult.response]
+        .some((supplementalResponse) => supplementalResponse === null || supplementalResponse.status >= 500);
+      const logSupplementalFailure = hasServerFailure ? console.error : console.warn;
+      logSupplementalFailure("NotificationCenter loadNotifications supplemental API error:", message);
+      setWarningMessage("일부 알림 정보를 불러오지 못했습니다.");
     }
 
     if (error) {
@@ -345,9 +365,13 @@ export default function NotificationCenter() {
 
   useEffect(() => {
     async function refreshReferenceTasks() {
-      const response = await fetch("/api/reference-tasks", { cache: "no-store" });
-      if (!response.ok) return;
-      const result = await response.json() as { tasks?: ReferenceTask[] };
+      const { data: result, error, response } = await fetchJson<{ tasks?: ReferenceTask[] }>("/api/reference-tasks", { cache: "no-store" });
+      if (error || !result) {
+        const logSupplementalFailure = response && response.status < 500 ? console.warn : console.error;
+        logSupplementalFailure("NotificationCenter reference task refresh error:", `/api/reference-tasks: ${error?.message ?? `HTTP ${response?.status ?? "unknown"}`}`);
+        setWarningMessage("참조 작업 정보를 불러오지 못했습니다.");
+        return;
+      }
       setReferenceCommentIds(new Set((result.tasks ?? []).flatMap((task) => task.commentId === null ? [] : [task.commentId])));
     }
     window.addEventListener(REFERENCE_TASKS_CHANGED_EVENT, refreshReferenceTasks);
@@ -542,6 +566,11 @@ export default function NotificationCenter() {
             </div>
 
             <div className="flex-1 overflow-y-auto p-4">
+              {warningMessage && !errorMessage ? (
+                <p role="status" className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                  {warningMessage}
+                </p>
+              ) : null}
               {isLoading ? (
                 <TableSkeleton rows={6} columns={1} />
               ) : errorMessage ? (

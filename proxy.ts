@@ -1,7 +1,7 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 import { getEmployeeByAuth } from "@/lib/auth";
-import { canCalendarOnlyStaffAccessApi, canEmployeeAccessRoute, isAuthorizedEmployee, isCalendarOnlyStaff } from "@/lib/permissions";
+import { createProxyApiErrorResponse, decideProxyAccess } from "@/lib/proxy-access";
 
 const PUBLIC_PATHS = ["/login", "/signup"];
 
@@ -36,27 +36,28 @@ export async function proxy(request: NextRequest) {
   const {
     data: { user },
   } = await supabase.auth.getUser();
-  if (!user && isApi) return response;
-  if (!user) {
-    return NextResponse.redirect(new URL("/login", request.url));
+  const employeeResult = user
+    ? await getEmployeeByAuth(supabase, user)
+    : { employee: null, error: null };
+  const decision = decideProxyAccess({
+    isApi,
+    pathname: request.nextUrl.pathname,
+    method: request.method,
+    isAuthenticated: Boolean(user),
+    employee: employeeResult.employee,
+    employeeLookupError: employeeResult.error,
+  });
+
+  if (decision.type === "api-error") {
+    const apiResponse = createProxyApiErrorResponse(decision);
+    response.headers.getSetCookie().forEach((cookie) => apiResponse.headers.append("set-cookie", cookie));
+    return apiResponse;
   }
 
-  const { employee } = await getEmployeeByAuth(supabase, user);
-
-  if (!isAuthorizedEmployee(employee)) {
-    const redirectResponse = NextResponse.redirect(new URL("/login", request.url));
-    response.cookies.getAll().forEach((cookie) =>
-      redirectResponse.cookies.set(cookie.name, cookie.value)
-    );
+  if (decision.type === "redirect") {
+    const redirectResponse = NextResponse.redirect(new URL(decision.pathname, request.url));
+    response.cookies.getAll().forEach((cookie) => redirectResponse.cookies.set(cookie.name, cookie.value));
     return redirectResponse;
-  }
-
-  if (isApi && isCalendarOnlyStaff(employee) && !canCalendarOnlyStaffAccessApi(request.nextUrl.pathname, request.method)) {
-    return NextResponse.json({ error: "스태프 계정은 Calendar 조회 전용입니다." }, { status: 403 });
-  }
-
-  if (!isApi && !canEmployeeAccessRoute(employee, request.nextUrl.pathname)) {
-    return NextResponse.redirect(new URL(isCalendarOnlyStaff(employee) ? "/calendar" : "/forbidden", request.url));
   }
 
   return response;

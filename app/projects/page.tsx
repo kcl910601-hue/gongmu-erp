@@ -21,6 +21,7 @@ import { addActivity } from "@/lib/activity";
 import { toast } from "@/lib/toast";
 import { formatProjectQuantity } from "@/lib/project-quantity";
 import { downloadProjectExcelTemplate } from "@/lib/excel/project-template";
+import { downloadProjectListWorkbook } from "@/lib/excel/project-list-export";
 import {
   getProjects,
   type ProjectListItem,
@@ -218,6 +219,7 @@ export default function ProjectsPage() {
   const [showModal, setShowModal] = useState(false);
   const [showExcelUpload, setShowExcelUpload] = useState(false);
   const [isDownloadingTemplate, setIsDownloadingTemplate] = useState(false);
+  const [isDownloadingList, setIsDownloadingList] = useState(false);
   const [selectedProject, setSelectedProject] = useState<ProjectListItem | null>(null);
   const [projects, setProjects] = useState<ProjectListItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -284,6 +286,36 @@ const loadRole = useCallback(async function loadRole() {
       toast.error("엑셀 양식을 생성하지 못했습니다. 잠시 후 다시 시도해 주세요.");
     } finally {
       setIsDownloadingTemplate(false);
+    }
+  }
+
+  async function handleListDownload() {
+    if (isDownloadingList) return;
+    if (sortedProjects.length === 0) {
+      toast.error("다운로드할 프로젝트가 없습니다.");
+      return;
+    }
+    setIsDownloadingList(true);
+    try {
+      const vendorNames = [...new Map(projects.flatMap((project) => project.assemblyVendors).map((vendor) => [vendor.organizationId, vendor])).values()]
+        .filter((vendor) => assemblyVendorFilter.includes(vendor.organizationId))
+        .map((vendor) => vendor.organizationName)
+        .join(", ");
+      const filters = [
+        search.trim() ? `검색: ${search.trim()}` : "",
+        statusFilter !== "전체" ? `상태: ${statusFilter}` : "",
+        salespersonFilter !== "전체" ? `영업담당: ${salespersonFilter}` : "",
+        managerFilter !== "전체" ? `공무담당: ${managerFilter}` : "",
+        vendorNames ? `조립업체: ${vendorNames}` : "",
+        dueFilter !== "전체" ? `종료예정일: ${dueFilter}` : "",
+      ].filter(Boolean);
+      downloadProjectListWorkbook({ projects: sortedProjects, generatedAt: new Date(), filterSummary: filters.join(" · ") || "전체" });
+      toast.success("프로젝트 목록 Excel을 다운로드했습니다.");
+    } catch (error) {
+      console.error("project list excel export error", error);
+      toast.error("프로젝트 목록 Excel 생성에 실패했습니다.");
+    } finally {
+      setIsDownloadingList(false);
     }
   }
 
@@ -503,14 +535,14 @@ const loadRole = useCallback(async function loadRole() {
           </p>
         </div>
 
-        {canCreate && <div className="flex shrink-0 flex-wrap gap-2"><Button onClick={() => void handleTemplateDownload()} disabled={isDownloadingTemplate} variant="outline" className="rounded-2xl px-4 py-2.5">{isDownloadingTemplate ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />} {isDownloadingTemplate ? "양식 생성 중..." : "엑셀 양식 다운로드"}</Button><Button onClick={() => setShowExcelUpload(true)} variant="outline" className="rounded-2xl px-4 py-2.5"><FileSpreadsheet size={16} /> 엑셀 업로드</Button><Button
+        <div className="flex shrink-0 flex-wrap gap-2">{canCreate && <Button onClick={() => void handleTemplateDownload()} disabled={isDownloadingTemplate} variant="outline" className="rounded-2xl px-4 py-2.5">{isDownloadingTemplate ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />} {isDownloadingTemplate ? "양식 생성 중..." : "엑셀 양식 다운로드"}</Button>}<Button onClick={() => void handleListDownload()} disabled={isDownloadingList} variant="outline" className="rounded-2xl px-4 py-2.5">{isDownloadingList ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />} {isDownloadingList ? "목록 생성 중..." : "현재 목록 다운로드"}</Button>{canCreate && <><Button onClick={() => setShowExcelUpload(true)} variant="outline" className="rounded-2xl px-4 py-2.5"><FileSpreadsheet size={16} /> 엑셀 업로드</Button><Button
             onClick={() => { setSelectedProject(null); setShowModal(true); }}
             variant="primary"
             className="flex items-center justify-center gap-2 rounded-2xl px-4 py-2.5 text-sm font-medium shadow-sm transition-colors hover:bg-blue-700"
           >
             <Plus size={16} />
             신규 프로젝트
-          </Button></div>}
+          </Button></>}</div>
       </div>
 
       <div className="mb-5 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">

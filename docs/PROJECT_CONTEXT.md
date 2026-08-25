@@ -473,3 +473,53 @@ Calendar의 공정 Bar `📝/⚠`는 최신 원본 메모의 존재와 중요도
 프로젝트 상세에서 Task 상태 변경 결과 모든 Task가 완료되면 프로젝트를 즉시 완료하지 않고 `GET /api/projects/{id}/completion-check`의 점검 결과를 Dialog로 확인합니다. 점검은 기존 원본 데이터에서 미완료·지연 Task, 지연 Task Note 확인일, 활성 원자재 사용요청의 미배정량, 유효 미완료 출고, `project_sections.process_type = '본납-도어'` 존재 여부를 프로젝트 단위 batch 조회로 계산합니다.
 
 최종 완료는 같은 endpoint의 `PATCH`를 사용합니다. 경고가 있으면 명시적 acknowledgement가 필요하고, 최초 결과 fingerprint와 서버 최신 결과가 다르면 완료하지 않고 409와 최신 결과를 반환합니다. 완료 mutation은 기존 Project Editing Lock과 `project_update` 권한을 유지하며, 강제 완료 요약만 Activity Log metadata에 저장합니다. Viewer와 Calendar-only Staff는 완료할 수 없고 별도 DB table 또는 migration은 없습니다.
+
+## Sprint 9-10A Project List Excel Export
+
+프로젝트 목록의 `현재 목록 다운로드`는 현재 사용자에게 조회된 전체 Project 데이터에서 화면의 검색, 상태·영업담당·공무담당·조립업체·종료예정일 필터와 정렬이 적용된 최종 목록을 그대로 사용합니다. 화면 페이지 크기와 무관하게 필터 결과 전체를 단일 `프로젝트 목록` Sheet로 생성하며 추가 DB 조회는 없습니다.
+
+Excel에는 업무용 표시 필드, 한글 상태명, 기존 Task 집계 진행률, 로컬 날짜 값, 적용 필터 요약, AutoFilter와 고정 헤더를 포함합니다. 내부 ID는 제외하고 기존 `xlsx-js-style` client-side 생성 방식을 재사용하며 DB 및 권한 구조 변경은 없습니다.
+
+## Sprint 9-10B Project Cost Excel Import
+
+프로젝트 비용관리의 Admin Action에 `Excel 양식`, `Excel 업로드`를 추가했습니다. 양식은 비용 입력·프로젝트 목록·작성 안내 3개 Sheet이며 프로젝트 코드를 현재 `projects` 원본에 연결하고 시스템 비용 분류 6개와 기존 지급상태를 사용합니다. VAT 빈칸은 기존 `Math.round(공급가액 × 10%)`, 숫자 0은 0원, 그 외 숫자는 직접 입력값입니다.
+
+업로드는 5MB·1,000행 제한 아래 parse 후 서버 Preview를 거치며 정상·중복 의심·오류를 구분합니다. 오류가 하나라도 있으면 전체 등록을 막고 중복 의심은 확인 후 허용합니다. 최종 등록은 서버가 현재 Project·분류·금액·날짜·지급상태를 재검증하고 `import_project_cost_entries` RPC가 Batch와 기존 `project_cost_entries`를 한 트랜잭션으로 저장합니다. 원자재비와 기존 수기 비용 등록·집계 구조는 변경하지 않습니다.
+
+## Sprint 9-10C Project Cost Current Data Excel Export
+
+프로젝트 비용관리의 `현재 비용 다운로드`는 기존 프로젝트 조회 endpoint에 현재 화면의 검색·상태·담당자·공정·비용 등록 여부·비용 분류·프로젝트 시작일 필터를 그대로 전달합니다. 최종 프로젝트 집합의 실제 `project_cost_entries`를 등록자와 Import Batch metadata까지 일괄 조회하며 행별 추가 조회는 없습니다.
+
+Workbook은 `비용 내역`과 `요약` 2개 Sheet입니다. 비용 내역은 수기·Excel 등록과 유효·무효 행을 구분하고 내부 ID 없이 한글 분류·지급상태, 저장된 VAT·합계, 날짜·금액 서식, AutoFilter와 고정 헤더를 제공합니다. 요약 금액은 기존 KPI처럼 유효 비용만 집계하며 전체·유효·무효 건수, 6개 분류별 및 프로젝트별 공급가액을 표시합니다. DB 변경은 없습니다.
+
+## Sprint 9-11A 유리 실제원가
+
+- 유리업체는 `organizations.partner_type = glass`로 관리한다.
+- 유리 실제원가는 월별 계산서 공급가액을 프로젝트에 배분한 금액이며 VAT는 제외한다.
+- 프로젝트 현재 집계 총원가는 `AL 예상원가 + 유리 실제원가 + 부대비용`이다.
+- 유리 실제원가는 견적 자평 계산과 독립적이며 AL 예상원가 계산은 변경하지 않는다.
+- Project Margin Quick Entry는 현재 프로젝트를 대상으로 기존 Statement와 100% Allocation을 한 트랜잭션에서 생성한다.
+- Project Margin은 현장별 간편등록·조회, Glass Cost Management는 전체 계산서·부분/공동 배분 정산 역할을 담당하며 동일 원본을 사용한다.
+
+## Sprint 9-11A-2 원가분석 유리원가 입력
+
+- 원가분석은 프로젝트별 AL 예상원가와 유리 실제원가의 기본 입력·관리 위치다.
+- 유리 실제원가 간편등록·수정·무효는 기존 공용 UI와 동일 RPC를 재사용하고, 공동 계산서는 전체 유리원가 관리로 연결한다.
+- Project Margin의 유리원가 영역은 조회 전용이며 `원가분석에서 관리` 링크를 제공한다.
+- DB 및 RPC 변경 없이 기존 Realtime 이벤트로 원가분석의 유리 집계를 갱신한다.
+
+## Sprint 9-11A-4 업체 관리와 도장 실제원가
+
+- 사용자 표시 명칭은 `업체 관리`이며 내부 `supplier` code는 `AL업체`, `assembly`는 `조립업체`, `coating`은 `도장업체`, `glass`는 `유리업체`로 표시한다.
+- 도장 실제원가는 `coating_cost_statements → coating_cost_allocations → projects` 구조의 유효 공급가액 배분합계다. VAT는 보관하되 원가에서 제외한다.
+- 원가분석의 현재 집계 자재원가는 `AL 예상원가 + 도장 실제원가 + 유리 실제원가`이며, Project Margin 총원가는 여기에 부대비용을 더한다.
+- 단독 100% 배분은 원가분석 Quick Entry에서 관리하고 공동 계산서는 도장 원가관리에서 배분한다.
+- 도장 DB 변경은 신규 migration으로만 준비하며 기존 유리 및 AL migration과 데이터는 변경하지 않는다.
+
+## Sprint 9-12A 부자재 실제 소진원가
+
+- `accessory_items`는 BOM에서도 재사용 가능한 부자재 Master이며 단위(EA/M/SET), 국내/수입, 원화 직접/외화 가격방식과 현재단가를 관리한다.
+- `project_accessory_usages`는 등록 당시 단위·구분·통화·단가·수동 환율·원화환산단가를 Snapshot으로 보존한다. Master 변경으로 과거 원가를 재계산하지 않는다.
+- 원화환산단가를 먼저 원 단위 반올림하고 `수량 × 원화환산단가`를 다시 원 단위 반올림한다.
+- 현재 집계 자재원가는 `AL 예상 + 도장 실제 + 유리 실제 + 부자재 실제`, Project Margin 총원가는 여기에 부대비용을 더한다.
+- 별도 부자재업체 Master 없이 `organizations.partner_type = accessory`를 사용한다.

@@ -10,7 +10,7 @@ const tabs = [
   { href: "/settings/maintenance", label: "시스템 점검모드", adminOnly: true },
   { href: "/settings/templates", label: "업무 템플릿 관리", adminOnly: false },
   { href: "/settings/employees", label: "직원 관리", adminOnly: false },
-  { href: "/settings/partners", label: "협력업체 관리", adminOnly: false },
+  { href: "/settings/partners", label: "업체 관리", adminOnly: false },
 ];
 
 export default function SettingsLayout({ children }: { children: ReactNode }) {
