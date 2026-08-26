@@ -1,12 +1,17 @@
 import { supabase } from "@/lib/supabase";
+import {
+  addFavoriteToList,
+  favoriteProjectsStorageKey,
+  MAX_FAVORITE_PROJECTS,
+  removeFavoriteFromList,
+  resolveFavoriteHydration,
+} from "@/lib/favorite-projects";
 
 const RECENT_PROJECTS_KEY = "gongmu-recent-projects";
 const RECENT_TASKS_KEY = "gongmu-recent-tasks";
-const FAVORITE_PROJECTS_KEY = "gongmu-favorite-projects";
 const RECENT_WORKSPACE_KEY = "gongmu-recent-workspace";
 const MAX_RECENT_PROJECTS = 10;
 const MAX_RECENT_TASKS = 15;
-const MAX_FAVORITE_PROJECTS = 10;
 const MAX_RECENT_WORKSPACE = 15;
 
 export type RecentWorkspaceItem = {
@@ -71,7 +76,7 @@ export function getRecentTasksStorageKey(userScope: string | null) {
 }
 
 export function getFavoriteProjectsStorageKey(userScope: string) {
-  return `${FAVORITE_PROJECTS_KEY}:${userScope}`;
+  return favoriteProjectsStorageKey(userScope);
 }
 
 export function getRecentWorkspaceStorageKey(userScope: string | null) {
@@ -155,11 +160,15 @@ export async function hydrateFavoriteProjectsFromDatabase(
     .limit(MAX_FAVORITE_PROJECTS);
 
   if (favoriteError) {
-    return readFavoriteProjects(userScope);
+    return resolveFavoriteHydration(null, readFavoriteProjects(userScope));
   }
   if (!favoriteRows?.length) {
-    writeStorageList(getFavoriteProjectsStorageKey(userScope), []);
-    return [];
+    const favorites = resolveFavoriteHydration(
+      [],
+      readFavoriteProjects(userScope)
+    );
+    writeStorageList(getFavoriteProjectsStorageKey(userScope), favorites);
+    return favorites;
   }
 
   const { data: projects, error: projectsError } = await supabase
@@ -279,20 +288,14 @@ export function addFavoriteProject(
 ) {
   if (!userScope) return false;
 
-  const currentProjects = readFavoriteProjects(userScope);
-  const existingProject = currentProjects.find(
-    (item) => item.project_id === project.project_id
-  );
   const nextProject: FavoriteProject = {
     ...project,
-    favorited_at: existingProject?.favorited_at || new Date().toISOString(),
+    favorited_at: new Date().toISOString(),
   };
-  const nextProjects = [
-    nextProject,
-    ...currentProjects.filter(
-      (item) => item.project_id !== nextProject.project_id
-    ),
-  ].slice(0, MAX_FAVORITE_PROJECTS);
+  const nextProjects = addFavoriteToList(
+    readFavoriteProjects(userScope),
+    nextProject
+  );
 
   writeStorageList(getFavoriteProjectsStorageKey(userScope), nextProjects);
   void persistFavoriteProject(project.project_id);
@@ -307,8 +310,9 @@ export function removeFavoriteProject(
 ) {
   if (!userScope) return false;
 
-  const nextProjects = readFavoriteProjects(userScope).filter(
-    (project) => project.project_id !== projectId
+  const nextProjects = removeFavoriteFromList(
+    readFavoriteProjects(userScope),
+    projectId
   );
 
   writeStorageList(getFavoriteProjectsStorageKey(userScope), nextProjects);
@@ -367,7 +371,7 @@ async function persistFavoriteProject(projectId: number) {
       auth_user_id: session.user.id,
       project_id: projectId,
     },
-    { onConflict: "auth_user_id,project_id" }
+    { onConflict: "auth_user_id,project_id", ignoreDuplicates: true }
   );
   if (error) return;
 
