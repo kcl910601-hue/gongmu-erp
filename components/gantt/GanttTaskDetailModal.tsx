@@ -189,6 +189,7 @@ export function GanttTaskDetailModal({
         <div className="mb-5 flex items-start justify-between gap-4 border-b border-slate-100 pb-4">
           <div className="min-w-0">
             <div className="mb-2 flex flex-wrap items-center gap-2">
+              {task.processTypeName && <span className="inline-flex max-w-full rounded-full bg-blue-50 px-2.5 py-1 text-xs font-semibold text-blue-700 ring-1 ring-blue-200">{task.processTypeName}</span>}
               <span
                 className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ring-1 ${task.taskTypeClassName}`}
               >
@@ -199,9 +200,9 @@ export function GanttTaskDetailModal({
             <h2
               id="gantt-task-detail-title"
               className="truncate text-xl font-bold tracking-tight text-slate-950"
-              title={task.taskName || "업무명 없음"}
+              title={`${task.processTypeName ? `[${task.processTypeName}] ` : ""}${task.taskName || "업무명 없음"}`}
             >
-              {task.taskName || "업무명 없음"}
+              {task.processTypeName ? `[${task.processTypeName}] ` : ""}{task.taskName || "업무명 없음"}
             </h2>
             <p className="mt-1 truncate text-sm font-medium text-slate-600">
               {task.projectName} · {task.assemblyVendorName}
@@ -223,6 +224,7 @@ export function GanttTaskDetailModal({
             ["조립업체", task.assemblyVendorName],
             ["프로젝트 코드", task.projectCode || "-"],
             ["업무유형", task.taskType || "미지정"],
+            ...(task.processTypeName ? [["대공정", task.processTypeName]] : []),
             ["담당자", task.assignee || "미배정"],
           ].map(([label, value]) => (
             <div key={label} className="rounded-2xl bg-slate-50 p-3">

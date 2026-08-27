@@ -65,6 +65,7 @@ export type IntegratedProject = {
   completion_due_date?: string | null;
   quantity: number | null;
   quantity_unit: string | null;
+  process_type?: string | null;
 };
 
 export type IntegratedTask = {
@@ -214,6 +215,7 @@ export type GanttTaskDetail = {
   taskTypeClassName: string;
   memo: string | null;
   memoIsImportant: boolean;
+  processTypeName?: string | null;
 };
 
 type TaskTypeColor = {
