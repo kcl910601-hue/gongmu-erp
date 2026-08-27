@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import {
   CalendarDays,
   Check,
@@ -44,7 +44,7 @@ import { withShortEditingLock } from "@/lib/editing-locks";
 import { getCalendarPermissions } from "@/lib/permissions";
 import { getCalendarTaskNoteDisplayPreviews, getLatestTaskNotes, shouldShowActiveImportantNoteReminder, TASK_NOTES_CHANGED_EVENT, type TaskNotePreview } from "@/lib/task-notes";
 import { buildCalendarProcessTypeMap, resolveCalendarProcessType, type CalendarProcessType } from "@/lib/calendar-process-type";
-import { calculateVariableStack } from "@/lib/calendar-variable-stack";
+import { calculateVariableStack, getCalendarSegmentKey } from "@/lib/calendar-variable-stack";
 import { getCalendarTaskMetadata, type CalendarTaskMetadataKind } from "@/lib/calendar-task-metadata";
 import { getCalendarProjectScheduleDate, isCalendarCompanyItemCompleted, matchesCalendarCompletedVisibility, matchesCalendarPersonalCompletedVisibility } from "@/lib/calendar-completed-visibility";
 import { completeTask, updateTask } from "@/lib/task-actions";
@@ -816,10 +816,10 @@ export default function CalendarPage() {
     showCompanySchedule ? calendarVisibleItems : [],
     splitMonthIntoWeeks(calendarDays)
   );
-  const calendarMeasurementKey = calendarWeekLayouts.map((week) => `${week.days.join("-")}:${week.segments.map((segment) => segment.item.id).join(",")}`).join("|");
+  const calendarMeasurementKey = calendarWeekLayouts.map((week) => `${week.days.join("-")}:${week.segments.map((segment) => `${segment.item.id}:${segment.startColumn}:${segment.span}:${segment.laneIndex}`).join(",")}`).join("|");
   const personalNoteMeasurementKey = displayedPersonalNotes.map((note) => `${note.id}:${note.title}:${note.content}:${note.comment_count ?? 0}:${note.unread_comment_count ?? 0}:${note.sharing?.memberCount ?? 0}`).join("|");
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (viewMode !== "달력 보기") return;
     const segmentElements = [...document.querySelectorAll<HTMLElement>("[data-calendar-segment-key]")];
     const personalStackElements = [...document.querySelectorAll<HTMLElement>("[data-calendar-personal-stack]")];
@@ -1151,7 +1151,7 @@ export default function CalendarPage() {
                 const maxPersonalNoteCount = showPersonalSchedule ? Math.max(0, ...week.days.map((date) => date ? personalNotesByDate.get(date)?.length ?? 0 : 0)) : 0;
                 const baseWeekLayout = getMonthWeekLayout({ companyLaneCount: week.laneCount, personalItemCount: maxPersonalNoteCount, showCompany: showCompanySchedule, showPersonalCards: showPersonalSchedule });
                 const stackLayout = calculateVariableStack(week.segments.map((segment) => {
-                  const segmentKey = `${segment.item.id}-week-${segment.weekIndex}`;
+                  const segmentKey = getCalendarSegmentKey(segment.item.id, segment.weekIndex);
                   return { id: segmentKey, startColumn: segment.startColumn, span: segment.span, laneIndex: segment.laneIndex, height: calendarSegmentHeights[segmentKey] ?? (segment.item.id.startsWith("task-note-") ? 29 : 28) };
                 }));
                 const measuredCompanyHeight = showCompanySchedule ? stackLayout.height : 0;
@@ -1222,11 +1222,12 @@ export default function CalendarPage() {
                         const roundedClass = `${
                           segment.isRangeStart ? "rounded-l-lg" : "rounded-l-none"
                         } ${segment.isRangeEnd ? "rounded-r-lg" : "rounded-r-none"}`;
-                        const segmentKey = `${item.id}-week-${segment.weekIndex}`;
+                        const segmentKey = getCalendarSegmentKey(item.id, segment.weekIndex);
                         const positionStyle = {
                           gridColumn: `${segment.startColumn} / span ${segment.span}`,
                           gridRow: 1,
                           transform: `translateY(${stackLayout.offsets.get(segmentKey) ?? 0}px)`,
+                          visibility: calendarSegmentHeights[segmentKey] === undefined ? "hidden" as const : "visible" as const,
                         };
 
                         return (
