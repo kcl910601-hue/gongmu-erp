@@ -8,6 +8,7 @@ import {
   ChevronRight,
   Plus,
   RefreshCw,
+  RotateCcw,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { recordRecentTask } from "@/lib/recent";
@@ -23,12 +24,13 @@ import { GanttTaskDetailModal } from "@/components/gantt/GanttTaskDetailModal";
 import { usePermission } from "@/hooks/usePermission";
 import {
   getTaskStatusLabel,
+  isProjectCompleted,
   isTaskCompleted,
   isTaskInProgress,
 } from "@/lib/status";
 import { PROJECT_SELECT_FIELDS } from "@/lib/projects";
 import { persistRecalculatedTaskOrders } from "@/lib/task-ordering";
-import { COMPLETED_PERSONAL_SCHEDULE_STYLES, getCalendarMonthRange, getPersonalNoteCommentBadge, matchesCalendarSourceFilter, matchesCompletedPersonalScheduleFilter, normalizeCalendarSourceFilter, normalizeShowCompletedPersonalSchedules, PERSONAL_NOTES_CHANGED_EVENT, dispatchPersonalNotesChanged, openNoteEditor, selectPersonalNotesForCalendar, type CalendarSourceFilter, type PersonalNote } from "@/lib/personal-notes";
+import { COMPLETED_PERSONAL_SCHEDULE_STYLES, getCalendarMonthRange, getPersonalNoteCommentBadge, matchesCalendarSourceFilter, normalizeCalendarSourceFilter, normalizeShowCompletedPersonalSchedules, PERSONAL_NOTES_CHANGED_EVENT, dispatchPersonalNotesChanged, openNoteEditor, selectPersonalNotesForCalendar, type CalendarSourceFilter, type PersonalNote } from "@/lib/personal-notes";
 import { toast } from "@/lib/toast";
 import { getMonthWeekLayout, getSundayFirstMonthDays, MONTH_WEEK_LAYOUT } from "@/lib/calendar-grid";
 import { getDday } from "@/lib/dday";
@@ -44,6 +46,9 @@ import { getCalendarTaskNoteDisplayPreviews, getLatestTaskNotes, shouldShowActiv
 import { buildCalendarProcessTypeMap, resolveCalendarProcessType, type CalendarProcessType } from "@/lib/calendar-process-type";
 import { calculateVariableStack } from "@/lib/calendar-variable-stack";
 import { getCalendarTaskMetadata, type CalendarTaskMetadataKind } from "@/lib/calendar-task-metadata";
+import { getCalendarProjectScheduleDate, isCalendarCompanyItemCompleted, matchesCalendarCompletedVisibility, matchesCalendarPersonalCompletedVisibility } from "@/lib/calendar-completed-visibility";
+import { completeTask, updateTask } from "@/lib/task-actions";
+import { applyCalendarTaskQuickStatus, getCalendarTaskQuickAction, restoreCalendarTaskQuickStatus } from "@/lib/calendar-task-quick-complete";
 
 type Project = IntegratedProject & {
   completion_due_date: string | null;
@@ -82,7 +87,7 @@ type CalendarItem = {
   date: string;
   startDate?: string;
   endDate?: string;
-  type: "업무일정";
+  type: "준공예정" | "업무일정";
   title: string;
   displayTitle?: string;
   status: string | null;
@@ -112,6 +117,8 @@ type CalendarWeekLayout = {
   segments: CalendarWeekSegment[];
   laneCount: number;
 };
+
+type CalendarRightPanelTab = "tasks" | "personal";
 
 function CalendarMetadataBadge({ kind, label, className = "" }: { kind: CalendarTaskMetadataKind; label: string; className?: string }) {
   const variantClass = kind === "assembly" ? "bg-slate-50/80 text-slate-600 ring-slate-300" : kind === "taskType" ? "bg-violet-50/80 text-violet-700 ring-violet-200" : "bg-blue-50/80 text-blue-700 ring-blue-200";
@@ -228,7 +235,7 @@ function buildWeekSegments(
 }
 
 const quickFilters: QuickFilter[] = ["전체", "내 업무", "지연", "오늘", "이번 주"];
-const typeList = ["전체", "업무일정"];
+const typeList = ["전체", "준공예정", "업무일정"];
 const viewList = ["달력 보기", "타임라인 보기", "간트 보기"];
 const CALENDAR_SOURCE_FILTER_KEY = "calendar-source-filter";
 const SHOW_COMPLETED_PERSONAL_SCHEDULES_KEY = "showCompletedPersonalSchedules";
@@ -270,6 +277,9 @@ export default function CalendarPage() {
   const personalNoteDeepLinkHandledRef = useRef(false);
   const [shareTarget, setShareTarget] = useState<PersonalNote | null>(null);
   const [selectedTask, setSelectedTask] = useState<GanttTaskDetail | null>(null);
+  const [updatingTaskStatusIds, setUpdatingTaskStatusIds] = useState<Set<number>>(() => new Set());
+  const [rightPanelTab, setRightPanelTab] = useState<CalendarRightPanelTab>("tasks");
+  const rightPanelBodyRef = useRef<HTMLDivElement>(null);
   const [calendarSegmentHeights, setCalendarSegmentHeights] = useState<Record<string, number>>({});
   const [calendarPersonalStackHeights, setCalendarPersonalStackHeights] = useState<Record<string, number>>({});
   const [quickFilter, setQuickFilter] = useState<QuickFilter>("전체");
@@ -280,7 +290,6 @@ export default function CalendarPage() {
   const [assigneeFilter, setAssigneeFilter] = useState("전체");
   const [viewMode, setViewMode] = useState("달력 보기");
   const [sourceFilter, setSourceFilter] = useState<CalendarSourceFilter>("all");
-  const [showCompletedPersonalSchedules, setShowCompletedPersonalSchedules] = useState(true);
   const [calendarPreferenceKey, setCalendarPreferenceKey] = useState<string | null>(null);
   const [currentMonth, setCurrentMonth] = useState(() =>
     getLocalMonthValue()
@@ -304,7 +313,7 @@ export default function CalendarPage() {
         if (!userId) return;
         const preferenceKey = `${SHOW_COMPLETED_PERSONAL_SCHEDULES_KEY}:${userId}`;
         setCalendarPreferenceKey(preferenceKey);
-        setShowCompletedPersonalSchedules(normalizeShowCompletedPersonalSchedules(window.localStorage.getItem(preferenceKey)));
+        setShowCompleted(normalizeShowCompletedPersonalSchedules(window.localStorage.getItem(preferenceKey)));
       });
     }, 0);
     // 초기 로더는 아래 함수 선언을 참조하며 컴포넌트 수명 동안 교체되지 않습니다.
@@ -449,7 +458,12 @@ export default function CalendarPage() {
       const project = projectById.get(task.project_id);
       return [{ id: `task-note-active-${latestNote?.id}-${today}`, date: today, startDate: today, endDate: today, taskStartDate: task.start_date ?? undefined, taskEndDate: task.due_date ?? undefined, type: "업무일정" as const, title: `⚠ 진행 메모 · ${task.task_name || "업무명 없음"}`, status: task.status, assignee: task.assignee || "미지정", projectName: project?.project_name || "-", assemblyVendorName: getTaskAssemblyVendorName(task), taskType: task.task_type, href: `/projects/${task.project_id}?task=${task.id}&note=${latestNote?.id}`, memo: latestNote ?? null }];
     });
-    const calendarItems = [...taskItems, ...checkItems, ...activeImportantItems].sort((a, b) => a.date.localeCompare(b.date));
+    const projectItems: CalendarItem[] = calendarProjects.flatMap((project) => {
+      const scheduleDate = getCalendarProjectScheduleDate(project.completion_due_date);
+      if (!scheduleDate) return [];
+      return [{ id: `project-${project.id}`, date: scheduleDate, type: "준공예정" as const, title: project.project_name, displayTitle: project.project_name, status: project.status, assignee: project.task_manager || "미지정", projectName: project.project_name, href: `/projects/${project.id}`, memo: null }];
+    });
+    const calendarItems = [...projectItems, ...taskItems, ...checkItems, ...activeImportantItems].sort((a, b) => a.date.localeCompare(b.date));
 
     setItems(calendarItems);
     setIsLoading(false);
@@ -473,6 +487,10 @@ export default function CalendarPage() {
 
   function isTaskCalendarItem(item: CalendarItem) {
     return getTaskIdFromCalendarItem(item) !== null;
+  }
+
+  function isProjectCalendarItem(item: CalendarItem) {
+    return item.id.startsWith("project-");
   }
 
   function getDelayedDays(task: Task) {
@@ -517,6 +535,47 @@ export default function CalendarPage() {
     });
   }
 
+  async function toggleTaskCompleted(item: CalendarItem) {
+    const taskId = getTaskIdFromCalendarItem(item);
+    if (taskId === null || updatingTaskStatusIds.has(taskId) || !calendarPermissions.canEditCalendar) return;
+    const task = tasks.find((candidate) => candidate.id === taskId);
+    if (!task) {
+      toast.error("업무 정보를 찾을 수 없습니다.");
+      return;
+    }
+    const action = getCalendarTaskQuickAction(task.status, calendarPermissions.canEditCalendar);
+    if (!action) return;
+    const previous = { status: task.status, completed_date: task.completed_date };
+    const optimisticTask = applyCalendarTaskQuickStatus(task, action.nextStatus, today);
+    setUpdatingTaskStatusIds((current) => new Set(current).add(taskId));
+    setTasks((current) => current.map((candidate) => candidate.id === taskId ? optimisticTask : candidate));
+    setItems((current) => current.map((candidate) => getTaskIdFromCalendarItem(candidate) === taskId ? { ...candidate, status: optimisticTask.status } : candidate));
+    setSelectedTask((current) => current?.taskId === taskId ? { ...current, status: optimisticTask.status, completedDate: optimisticTask.completed_date } : current);
+
+    try {
+      const savedTask = isTaskCompleted(action.nextStatus)
+        ? await completeTask(task)
+        : await updateTask(task, { status: action.nextStatus });
+      setTasks((current) => current.map((candidate) => candidate.id === taskId ? { ...candidate, ...savedTask } : candidate));
+      setItems((current) => current.map((candidate) => getTaskIdFromCalendarItem(candidate) === taskId ? { ...candidate, status: savedTask.status } : candidate));
+      setSelectedTask((current) => current?.taskId === taskId ? { ...current, status: savedTask.status, completedDate: savedTask.completed_date } : current);
+      window.dispatchEvent(new Event(TASKS_CHANGED_EVENT));
+      toast.success(isTaskCompleted(savedTask.status) ? "업무를 완료했습니다." : "업무 완료를 취소했습니다.");
+    } catch (error) {
+      const restoredTask = restoreCalendarTaskQuickStatus(task, previous);
+      setTasks((current) => current.map((candidate) => candidate.id === taskId ? restoredTask : candidate));
+      setItems((current) => current.map((candidate) => getTaskIdFromCalendarItem(candidate) === taskId ? { ...candidate, status: previous.status } : candidate));
+      setSelectedTask((current) => current?.taskId === taskId ? { ...current, status: previous.status, completedDate: previous.completed_date } : current);
+      toast.error(error instanceof Error ? error.message : "업무 상태를 변경하지 못했습니다.");
+    } finally {
+      setUpdatingTaskStatusIds((current) => {
+        const next = new Set(current);
+        next.delete(taskId);
+        return next;
+      });
+    }
+  }
+
   function getTypeStyle(type: string) {
     if (type === "업무일정") {
       return "bg-slate-50 text-slate-700 border-slate-200";
@@ -540,16 +599,16 @@ export default function CalendarPage() {
   }
 
   function isCompletedFilterTarget(item: CalendarItem) {
-    return isTaskCompleted(item.status);
+    return isCalendarCompanyItemCompleted(isProjectCalendarItem(item) ? "project" : "task", item.status);
   }
 
   function getTaskDueLabel(item: CalendarItem) {
-    if (isTaskCompleted(item.status)) return "완료";
+    if (isCompletedFilterTarget(item)) return "완료";
     return getDday(item.date, today)?.label ?? "-";
   }
 
   function getTaskDueClassName(item: CalendarItem) {
-    if (isTaskCompleted(item.status)) {
+    if (isCompletedFilterTarget(item)) {
       return "border-emerald-200 bg-emerald-50 text-emerald-700";
     }
 
@@ -571,7 +630,7 @@ export default function CalendarPage() {
   }
 
   function getCalendarItemPriority(item: CalendarItem) {
-    if (item.type !== "업무일정") return 3;
+    if (item.type !== "업무일정") return isProjectCompleted(item.status) ? 4 : 3;
     if (isTaskCompleted(item.status)) return 4;
     if (item.date < today) return 1;
     if (item.date === today) return 2;
@@ -666,9 +725,7 @@ export default function CalendarPage() {
     return quickMatched && typeMatched && assigneeMatched;
   });
 
-  const calendarVisibleItems = filteredItems.filter((item) =>
-    showCompleted || !isCompletedFilterTarget(item)
-  );
+  const calendarVisibleItems = filteredItems.filter((item) => matchesCalendarCompletedVisibility(isProjectCalendarItem(item) ? "project" : "task", item.status, showCompleted));
   const currentViewItems = viewMode === "달력 보기" ? calendarVisibleItems : filteredItems;
 
   const ganttTaskIds = useMemo(
@@ -753,7 +810,7 @@ export default function CalendarPage() {
   const showCompanySchedule = sourceFilter === "all" || sourceFilter === "company";
   const showPersonalSchedule = sourceFilter !== "company";
   const visibleCompanyCount = showCompanySchedule ? currentViewItems.length : 0;
-  const displayedPersonalNotes = useMemo(() => personalNotes.filter((note) => matchesCalendarSourceFilter(note, sourceFilter) && matchesCompletedPersonalScheduleFilter(note, showCompletedPersonalSchedules)), [personalNotes, showCompletedPersonalSchedules, sourceFilter]);
+  const displayedPersonalNotes = useMemo(() => personalNotes.filter((note) => matchesCalendarSourceFilter(note, sourceFilter) && matchesCalendarPersonalCompletedVisibility(note.is_completed, showCompleted)), [personalNotes, showCompleted, sourceFilter]);
   const visiblePersonalCount = showPersonalSchedule ? displayedPersonalNotes.length : 0;
   const calendarWeekLayouts = buildWeekSegments(
     showCompanySchedule ? calendarVisibleItems : [],
@@ -813,11 +870,15 @@ export default function CalendarPage() {
   const personalNoteIdsKey = personalNotes.map((note) => note.id).join(",");
 
   useEffect(() => {
-    if (!showCompletedPersonalSchedules && selectedPersonalNote?.is_completed) {
+    rightPanelBodyRef.current?.scrollTo({ top: 0 });
+  }, [selectedDate]);
+
+  useEffect(() => {
+    if (!showCompleted && selectedPersonalNote?.is_completed) {
       const timer = window.setTimeout(() => setSelectedPersonalNoteId(null), 0);
       return () => window.clearTimeout(timer);
     }
-  }, [selectedPersonalNote, showCompletedPersonalSchedules]);
+  }, [selectedPersonalNote, showCompleted]);
 
   useEffect(() => {
     if (personalNoteDeepLinkHandledRef.current) return;
@@ -969,7 +1030,7 @@ export default function CalendarPage() {
       <div className="mb-5 min-w-0 max-w-full rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
         <div className="flex w-full min-w-0 flex-wrap items-end gap-x-3 gap-y-2">
           <div className="min-w-0 max-w-full"><div className="mb-1.5 text-xs font-medium text-slate-500">일정 소스</div><div className="flex max-w-full flex-wrap rounded-2xl bg-slate-100 p-1">{sourceFilters.map((filter) => <button key={filter.value} type="button" onClick={() => { setSourceFilter(filter.value); if (filter.value !== "all" && filter.value !== "company") setViewMode("달력 보기"); window.localStorage.setItem(CALENDAR_SOURCE_FILTER_KEY, filter.value); }} className={`shrink-0 whitespace-nowrap rounded-xl px-3 py-2 text-sm font-medium transition ${sourceFilter === filter.value ? "bg-white text-blue-700 shadow-sm" : "text-slate-500 hover:text-slate-800"}`}>{filter.label}</button>)}</div></div>
-          <div className="shrink-0"><div className="mb-1.5 text-xs font-medium text-slate-500">개인 일정</div><button type="button" role="switch" aria-checked={showCompletedPersonalSchedules} onClick={() => setShowCompletedPersonalSchedules((current) => { const next = !current; if (calendarPreferenceKey) window.localStorage.setItem(calendarPreferenceKey, String(next)); return next; })} className="inline-flex h-10 min-w-[104px] shrink-0 items-center justify-start gap-2 whitespace-nowrap rounded-2xl border border-slate-200 bg-slate-50 px-3 text-sm font-medium text-slate-700 hover:bg-white focus-visible:ring-2 focus-visible:ring-violet-200 sm:min-w-[124px] lg:min-w-[140px]"><span className={`flex h-5 w-9 shrink-0 items-center rounded-full p-0.5 transition-colors ${showCompletedPersonalSchedules ? "bg-violet-600" : "bg-slate-300"}`} aria-hidden="true"><span className={`h-4 w-4 shrink-0 rounded-full bg-white shadow-sm transition-transform ${showCompletedPersonalSchedules ? "translate-x-4" : "translate-x-0"}`}/></span><span className="shrink-0 whitespace-nowrap"><span className="sm:hidden">완료 일정</span><span className="hidden sm:inline">완료 일정 표시</span></span></button></div>
+          <div className="shrink-0"><div className="mb-1.5 text-xs font-medium text-slate-500">전체 일정</div><button type="button" role="switch" aria-checked={showCompleted} onClick={() => setShowCompleted((current) => { const next = !current; if (calendarPreferenceKey) window.localStorage.setItem(calendarPreferenceKey, String(next)); return next; })} className="inline-flex h-10 min-w-[104px] shrink-0 items-center justify-start gap-2 whitespace-nowrap rounded-2xl border border-slate-200 bg-slate-50 px-3 text-sm font-medium text-slate-700 hover:bg-white focus-visible:ring-2 focus-visible:ring-violet-200 sm:min-w-[124px] lg:min-w-[140px]"><span className={`flex h-5 w-9 shrink-0 items-center rounded-full p-0.5 transition-colors ${showCompleted ? "bg-violet-600" : "bg-slate-300"}`} aria-hidden="true"><span className={`h-4 w-4 shrink-0 rounded-full bg-white shadow-sm transition-transform ${showCompleted ? "translate-x-4" : "translate-x-0"}`}/></span><span className="shrink-0 whitespace-nowrap"><span className="sm:hidden">완료 일정</span><span className="hidden sm:inline">완료 일정 표시</span></span></button></div>
           <div className="min-w-0 max-w-full">
             <div className="mb-1.5 text-xs font-medium text-slate-500">보기 방식</div>
 
@@ -1021,16 +1082,6 @@ export default function CalendarPage() {
             </select>
           </div>
 
-          {viewMode === "달력 보기" && <div className="shrink-0">
-            <div className="mb-1.5 text-xs font-medium text-slate-500">완료</div>
-            <Button
-              onClick={() => setShowCompleted((current) => !current)}
-              variant={showCompleted ? "secondary" : "primary"}
-              className="h-10 shrink-0 whitespace-nowrap rounded-2xl px-4 text-sm font-medium transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-blue-100"
-            >
-              {showCompleted ? "완료 숨기기" : "완료 보기"}
-            </Button>
-          </div>}
         </div>
       </div>
 
@@ -1165,8 +1216,9 @@ export default function CalendarPage() {
                     <div className={`pointer-events-none absolute inset-x-0 top-11 z-10 grid items-start gap-x-1.5 sm:gap-x-2 ${CALENDAR_WEEK_COLUMNS_CLASS}`} style={{ height: measuredCompanyHeight }}>
                       {week.segments.map((segment) => {
                         const { item } = segment;
-                        const isTaskBar = !item.id.startsWith("task-note-");
-                        const metadata = isTaskBar ? getCalendarTaskMetadata({ assemblyVendorName: item.assemblyVendorName, processTypeName: item.processType?.name, taskType: item.taskType }) : [];
+                        const isReminderBar = item.id.startsWith("task-note-");
+                        const isStandardBar = !isReminderBar;
+                        const metadata = isTaskCalendarItem(item) && !isReminderBar ? getCalendarTaskMetadata({ assemblyVendorName: item.assemblyVendorName, processTypeName: item.processType?.name, taskType: item.taskType }) : [];
                         const roundedClass = `${
                           segment.isRangeStart ? "rounded-l-lg" : "rounded-l-none"
                         } ${segment.isRangeEnd ? "rounded-r-lg" : "rounded-r-none"}`;
@@ -1185,14 +1237,15 @@ export default function CalendarPage() {
                             title={`${metadata.map((entry) => `${entry.kind === "assembly" ? "조립업체" : entry.kind === "process" ? "대공정" : "업무유형"}: ${entry.label}`).join("\n")}${metadata.length ? "\n" : ""}${item.displayTitle ?? item.title} · ${item.projectName ?? "-"} · ${item.taskStartDate ?? getItemRange(item).start} ~ ${item.taskEndDate ?? getItemRange(item).end}${item.memo ? `\n${item.memo.isImportant ? "중요 메모" : "메모"}: ${item.memo.note}${item.memo.checkDate ? `\n확인일: ${item.memo.checkDate}` : ""}` : ""}`}
                             onClick={(event) => {
                               event.stopPropagation();
-                              openTaskDetailModal(item);
+                              if (isProjectCalendarItem(item) && item.href) window.location.href = item.href;
+                              else openTaskDetailModal(item);
                             }}
-                            className={`pointer-events-auto min-w-0 border px-1.5 text-left text-xs font-semibold leading-4 shadow-sm transition-colors hover:brightness-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-200 ${isTaskBar ? "min-h-7 py-0.5" : "h-[29px] truncate"} ${roundedClass} ${getTaskDueClassName(
+                            className={`pointer-events-auto min-w-0 border px-1.5 text-left text-xs font-semibold leading-4 shadow-sm transition-colors hover:brightness-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-200 ${isStandardBar ? "min-h-7 py-0.5" : "h-[29px] truncate"} ${roundedClass} ${getTaskDueClassName(
                               item
                             )}`}
                             style={positionStyle}
                           >
-                            <span className={`flex min-w-0 gap-0.5 text-left ${isTaskBar ? "flex-col items-start" : "items-center"}`}>{metadata.length > 0 && <span className="flex max-w-full flex-wrap items-center gap-1">{metadata.map((entry) => <CalendarMetadataBadge key={entry.kind} kind={entry.kind} label={entry.label}/>)}</span>}<span className="flex min-w-0 w-full items-start gap-1"><span className={`min-w-0 flex-1 ${isTaskBar ? "whitespace-normal break-words text-[11px] [overflow-wrap:anywhere]" : "truncate"}`}>{isTaskBar ? item.displayTitle ?? item.title : item.title}</span>{item.memo && <span className="shrink-0" aria-label={item.memo.isImportant ? "중요 메모 있음" : "메모 있음"}>{item.memo.isImportant ? "⚠" : "📝"}</span>}</span></span>
+                            <span className={`flex min-w-0 gap-0.5 text-left ${isStandardBar ? "flex-col items-start" : "items-center"}`}>{metadata.length > 0 && <span className="flex max-w-full flex-wrap items-center gap-1">{metadata.map((entry) => <CalendarMetadataBadge key={entry.kind} kind={entry.kind} label={entry.label}/>)}</span>}<span className="flex min-w-0 w-full items-start gap-1"><span className={`min-w-0 flex-1 ${isStandardBar ? "whitespace-normal break-words text-[11px] [overflow-wrap:anywhere]" : "truncate"}`}>{isStandardBar ? item.displayTitle ?? item.title : item.title}</span>{item.memo && <span className="shrink-0" aria-label={item.memo.isImportant ? "중요 메모 있음" : "메모 있음"}>{item.memo.isImportant ? "⚠" : "📝"}</span>}</span></span>
                           </button>
                         );
                       })}
@@ -1289,15 +1342,25 @@ export default function CalendarPage() {
       )}
         </div>
 
-        <aside className={`min-w-0 overflow-x-hidden rounded-2xl border border-slate-200 bg-white p-5 shadow-sm ${viewMode === "간트 보기" ? "hidden" : ""}`}>
-          <div className="mb-5 border-b border-slate-100 pb-4">
+        <aside className={`min-w-0 overflow-x-hidden rounded-2xl border border-slate-200 bg-white p-5 shadow-sm 2xl:sticky 2xl:top-4 2xl:flex 2xl:max-h-[calc(100vh-2rem)] 2xl:self-start 2xl:flex-col 2xl:overflow-hidden ${viewMode === "간트 보기" ? "hidden" : ""}`}>
+          <div className="shrink-0 border-b border-slate-100 bg-white pb-4">
             <h2 className="text-lg font-bold tracking-tight text-slate-950">
               {formatKoreanDate(selectedDate)}
             </h2>
             <p className="mt-1 text-sm leading-6 text-slate-500">{showCompanySchedule && `회사 일정 ${selectedDateTaskItems.length}건`}{showCompanySchedule && showPersonalSchedule ? " · " : ""}{showPersonalSchedule && `내 일정 ${selectedDatePersonalNotes.length}건`}</p>
+            <div role="tablist" aria-label="선택 날짜 일정 종류" className="mt-3 grid grid-cols-2 gap-1 rounded-xl bg-slate-100 p-1">
+              {([
+                { id: "tasks", label: "선택 날짜 업무", count: selectedDateTaskItems.length },
+                { id: "personal", label: "내 일정", count: selectedDatePersonalNotes.length },
+              ] as const).map((tab) => {
+                const isActive = rightPanelTab === tab.id;
+                return <button key={tab.id} type="button" role="tab" aria-selected={isActive} aria-controls={`calendar-${tab.id}-tabpanel`} id={`calendar-${tab.id}-tab`} onClick={() => { setRightPanelTab(tab.id); rightPanelBodyRef.current?.scrollTo({ top: 0 }); }} className={`min-h-10 rounded-lg border px-2.5 py-2 text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-200 ${isActive ? "border-slate-300 bg-white text-slate-900 shadow-sm ring-1 ring-slate-200" : "border-transparent text-slate-500 hover:bg-white/70 hover:text-slate-700"}`}>{tab.label} <span className="ml-1 tabular-nums">{tab.count}</span></button>;
+              })}
+            </div>
           </div>
 
-          {showCompanySchedule && <div className="mb-5 min-w-0 rounded-2xl bg-slate-50 p-3.5">
+          <div ref={rightPanelBodyRef} className="mt-5 min-h-0 2xl:flex-1 2xl:overflow-y-auto 2xl:pr-1">
+          {rightPanelTab === "tasks" && <div role="tabpanel" id="calendar-tasks-tabpanel" aria-labelledby="calendar-tasks-tab" className="mb-5 min-w-0 rounded-2xl bg-slate-50 p-3.5">
             <div className="mb-3 flex items-center justify-between gap-3">
               <h3 className="text-sm font-semibold text-slate-800">선택 날짜 업무</h3>
               <span className="rounded-full bg-white px-2.5 py-1 text-xs font-medium text-slate-500">
@@ -1306,13 +1369,13 @@ export default function CalendarPage() {
             </div>
 
             {selectedDateTaskItems.length > 0 ? (
-              <div className="max-h-[520px] min-w-0 space-y-2 overflow-x-hidden overflow-y-auto pr-1">
-                {selectedDateTaskItems.map((item) => { const metadata = item.id.startsWith("task-note-") ? [] : getCalendarTaskMetadata({ assemblyVendorName: item.assemblyVendorName, processTypeName: item.processType?.name, taskType: item.taskType }); return (
+              <div className="max-h-[520px] min-w-0 space-y-2 overflow-x-hidden overflow-y-auto pr-1 2xl:max-h-none 2xl:overflow-y-visible 2xl:pr-0">
+                {selectedDateTaskItems.map((item) => { const metadata = item.id.startsWith("task-note-") ? [] : getCalendarTaskMetadata({ assemblyVendorName: item.assemblyVendorName, processTypeName: item.processType?.name, taskType: item.taskType }); const taskId = getTaskIdFromCalendarItem(item); const quickAction = /^task-\d+$/.test(item.id) ? getCalendarTaskQuickAction(item.status, calendarPermissions.canEditCalendar) : null; const isUpdating = taskId !== null && updatingTaskStatusIds.has(taskId); return (
+                  <article key={item.id} className="min-w-0 overflow-hidden rounded-2xl border border-slate-200 bg-white text-sm transition-colors duration-150 hover:border-blue-200 hover:shadow-sm">
                   <button
                     type="button"
-                    key={item.id}
                     onClick={() => openTaskDetailModal(item)}
-                    className="block w-full min-w-0 overflow-hidden rounded-2xl border border-slate-200 bg-white p-3.5 text-left text-sm transition-colors duration-150 hover:border-blue-200 hover:bg-blue-50 hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-100"
+                    className="block w-full min-w-0 p-3.5 text-left transition-colors duration-150 hover:bg-blue-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-100"
                   >
                     <div className="flex min-w-0 flex-col items-start gap-1 text-left text-xs font-semibold leading-5 text-slate-950">
                       {metadata.length > 0 && <span className="flex max-w-full flex-wrap items-center gap-1">{metadata.map((entry) => <CalendarMetadataBadge key={entry.kind} kind={entry.kind} label={entry.label}/>)}</span>}
@@ -1338,6 +1401,11 @@ export default function CalendarPage() {
                       )}
                     </div>
                   </button>
+                  {quickAction && <div className="flex items-center justify-between gap-2 border-t border-slate-100 px-3.5 py-2">
+                    <button type="button" disabled={isUpdating} onClick={(event) => { event.stopPropagation(); void toggleTaskCompleted(item); }} className={`inline-flex min-h-8 items-center gap-1 rounded-lg border px-2.5 py-1 text-[10px] font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-200 disabled:cursor-not-allowed disabled:opacity-50 ${isTaskCompleted(item.status) ? "border-emerald-200 bg-emerald-100 text-emerald-700" : "border-slate-200 bg-white text-slate-600 hover:border-emerald-200 hover:text-emerald-700"}`} title={quickAction.label}>{isTaskCompleted(item.status) ? <RotateCcw size={12}/> : <Check size={12}/>} {isUpdating ? "저장 중" : quickAction.label}</button>
+                    <button type="button" onClick={() => openTaskDetailModal(item)} className="min-h-8 rounded-lg px-2.5 py-1 text-[10px] font-semibold text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-100">상세보기</button>
+                  </div>}
+                  </article>
                 ); })}
               </div>
             ) : (
@@ -1352,12 +1420,23 @@ export default function CalendarPage() {
             )}
           </div>}
 
-          {showPersonalSchedule && <div className="mb-5 min-w-0 rounded-2xl bg-violet-50 p-3.5">
+          {rightPanelTab === "personal" && <div role="tabpanel" id="calendar-personal-tabpanel" aria-labelledby="calendar-personal-tab" className="mb-5 min-w-0 rounded-2xl bg-violet-50 p-3.5">
             <div className="mb-3 flex items-center justify-between gap-3"><div><h3 className="text-sm font-semibold text-slate-800">내 일정</h3><p className="mt-0.5 text-xs text-slate-500">직접 만든 일정과 수락한 공유 일정</p></div>{!calendarReadOnly && <button type="button" onClick={() => openNoteEditor({ noteType: "todo", dueDate: selectedDate })} className="inline-flex items-center gap-1 rounded-xl bg-violet-600 px-3 py-2 text-xs font-semibold text-white hover:bg-violet-700"><Plus size={14}/>내 일정 추가</button>}</div>
-            {selectedDatePersonalNotes.length > 0 ? <div className="max-h-80 space-y-2 overflow-y-auto pr-1">{selectedDatePersonalNotes.map((note) => { const isSharedWithMe = Boolean(note.sharing && note.sharing.permission !== "owner"); const isSharedByMe = note.sharing?.permission === "owner" && note.sharing.memberCount > 0; const authorName = note.sharing?.ownerName ?? currentAssignee ?? "-"; const commentBadge = getPersonalNoteCommentBadge(note); return <article key={note.id} className={`rounded-xl border p-3 transition ${note.is_completed ? COMPLETED_PERSONAL_SCHEDULE_STYLES.card : "border-slate-200 bg-white"}`}><button type="button" onClick={() => setSelectedPersonalNoteId(note.id)} className="block w-full min-w-0 text-left outline-none focus-visible:ring-2 focus-visible:ring-violet-200"><p className={`min-w-0 whitespace-normal break-words text-xs font-semibold [overflow-wrap:anywhere] ${note.is_completed ? COMPLETED_PERSONAL_SCHEDULE_STYLES.title : "text-slate-800"}`}>{note.title || note.content}</p><div className={`mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px] ${note.is_completed ? COMPLETED_PERSONAL_SCHEDULE_STYLES.meta : "text-slate-400"}`}><span>{note.due_date ?? "날짜 없음"}</span><span>작성자 {authorName}</span>{note.is_completed && <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-1.5 py-0.5 font-semibold text-emerald-700"><Check size={10}/>완료</span>}{commentBadge && <span>💬 {commentBadge}</span>}{isSharedByMe && <span className="rounded-full bg-blue-100 px-1.5 py-0.5 font-semibold text-blue-700">공유중</span>}{isSharedWithMe && <span className="rounded-full bg-violet-100 px-1.5 py-0.5 font-semibold text-violet-700">공유받음</span>}</div></button><div className="mt-1 flex items-center justify-end"><PersonalNoteActions note={note} commentsOpen={false} timelineOpen={false} onEdit={() => openNoteEditor({ note })} onShare={() => setShareTarget(note)} onTogglePin={() => void patchPersonalNote(note, { isPinned: !note.is_pinned })} onDelete={() => void deletePersonalNote(note)} onToggleComments={() => setSelectedPersonalNoteId(note.id)} onToggleTimeline={() => setSelectedPersonalNoteId(note.id)}/></div></article>; })}</div> : <EmptyState message="선택한 날짜에 개인 일정이 없습니다." className="rounded-xl bg-white p-6 text-center text-sm text-slate-400"/>}
+            {selectedDatePersonalNotes.length > 0 ? <div className="max-h-80 space-y-2 overflow-y-auto pr-1 2xl:max-h-none 2xl:overflow-y-visible 2xl:pr-0">{selectedDatePersonalNotes.map((note) => {
+              const isSharedWithMe = Boolean(note.sharing && note.sharing.permission !== "owner");
+              const isSharedByMe = note.sharing?.permission === "owner" && note.sharing.memberCount > 0;
+              const authorName = note.sharing?.ownerName ?? currentAssignee ?? "-";
+              const commentBadge = getPersonalNoteCommentBadge(note);
+              const canComplete = !calendarReadOnly && note.sharing?.permission !== "view";
+              return <article key={note.id} className={`rounded-xl border p-3 transition ${note.is_completed ? COMPLETED_PERSONAL_SCHEDULE_STYLES.card : "border-slate-200 bg-white"}`}>
+                <button type="button" onClick={() => setSelectedPersonalNoteId(note.id)} className="block w-full min-w-0 text-left outline-none focus-visible:ring-2 focus-visible:ring-violet-200"><p className={`min-w-0 whitespace-normal break-words text-xs font-semibold [overflow-wrap:anywhere] ${note.is_completed ? COMPLETED_PERSONAL_SCHEDULE_STYLES.title : "text-slate-800"}`}>{note.title || note.content}</p><div className={`mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px] ${note.is_completed ? COMPLETED_PERSONAL_SCHEDULE_STYLES.meta : "text-slate-400"}`}><span>{note.due_date ?? "날짜 없음"}</span><span>작성자 {authorName}</span>{note.is_completed && <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-1.5 py-0.5 font-semibold text-emerald-700"><Check size={10}/>완료</span>}{commentBadge && <span>💬 {commentBadge}</span>}{isSharedByMe && <span className="rounded-full bg-blue-100 px-1.5 py-0.5 font-semibold text-blue-700">공유중</span>}{isSharedWithMe && <span className="rounded-full bg-violet-100 px-1.5 py-0.5 font-semibold text-violet-700">공유받음</span>}</div></button>
+                <div className="mt-1 flex items-center justify-between gap-2">{canComplete && <button type="button" onClick={() => void patchPersonalNote(note, { isCompleted: !note.is_completed })} className={`inline-flex min-h-8 items-center gap-1 rounded-lg border px-2.5 py-1 text-[10px] font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-200 ${note.is_completed ? "border-emerald-200 bg-emerald-100 text-emerald-700" : "border-slate-200 bg-white text-slate-600 hover:border-emerald-200 hover:text-emerald-700"}`} title={note.is_completed ? "완료 취소" : "완료"}><Check size={12}/>{note.is_completed ? "완료 취소" : "완료"}</button>}<PersonalNoteActions note={note} commentsOpen={false} timelineOpen={false} onEdit={() => openNoteEditor({ note })} onShare={() => setShareTarget(note)} onTogglePin={() => void patchPersonalNote(note, { isPinned: !note.is_pinned })} onDelete={() => void deletePersonalNote(note)} onToggleComments={() => setSelectedPersonalNoteId(note.id)} onToggleTimeline={() => setSelectedPersonalNoteId(note.id)}/></div>
+              </article>;
+            })}</div> : <EmptyState message="표시할 내 일정이 없습니다." className="rounded-xl bg-white p-6 text-center text-sm text-slate-400"/>}
           </div>}
+          </div>
 
-          <div>
+          <div className="shrink-0 border-t border-slate-100 pt-4">
             <h3 className="mb-3 text-sm font-semibold text-slate-800">Legend</h3>
             <div className="flex flex-wrap gap-2">
               {legendItems.map((item) => (
