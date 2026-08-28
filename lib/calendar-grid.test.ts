@@ -36,7 +36,7 @@ test("개인 일정과 필터 결과에 따라 필요한 높이를 다시 계산
 
 test("개인 일정 0, 1, 5, 10개의 높이를 모두 반영한다", () => {
   const heights = [0, 1, 5, 10].map((personalItemCount) => getRequiredMonthWeekHeight({ companyLaneCount: 0, personalItemCount, showCompany: false, showPersonalCards: true }));
-  assert.equal(heights[0], 140);
+  assert.equal(heights[0], 168);
   assert.ok(heights[1] >= heights[0]);
   assert.ok(heights[2] > heights[1]);
   assert.ok(heights[3] > heights[2]);

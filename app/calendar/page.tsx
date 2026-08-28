@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import {
   CalendarDays,
   Check,
@@ -32,7 +32,7 @@ import { PROJECT_SELECT_FIELDS } from "@/lib/projects";
 import { persistRecalculatedTaskOrders } from "@/lib/task-ordering";
 import { COMPLETED_PERSONAL_SCHEDULE_STYLES, getCalendarMonthRange, getPersonalNoteCommentBadge, matchesCalendarSourceFilter, normalizeCalendarSourceFilter, normalizeShowCompletedPersonalSchedules, PERSONAL_NOTES_CHANGED_EVENT, dispatchPersonalNotesChanged, openNoteEditor, selectPersonalNotesForCalendar, type CalendarSourceFilter, type PersonalNote } from "@/lib/personal-notes";
 import { toast } from "@/lib/toast";
-import { getMonthWeekLayout, getSundayFirstMonthDays, MONTH_WEEK_LAYOUT } from "@/lib/calendar-grid";
+import { getSundayFirstMonthDays } from "@/lib/calendar-grid";
 import { getDday } from "@/lib/dday";
 import { DdayBadge } from "@/components/ui/DdayBadge";
 import { PersonalNoteDetailModal } from "@/components/workspace/PersonalNoteDetailModal";
@@ -44,7 +44,7 @@ import { withShortEditingLock } from "@/lib/editing-locks";
 import { getCalendarPermissions } from "@/lib/permissions";
 import { getCalendarTaskNoteDisplayPreviews, getLatestTaskNotes, shouldShowActiveImportantNoteReminder, TASK_NOTES_CHANGED_EVENT, type TaskNotePreview } from "@/lib/task-notes";
 import { buildCalendarProcessTypeMap, resolveCalendarProcessType, type CalendarProcessType } from "@/lib/calendar-process-type";
-import { calculateVariableStack, getCalendarSegmentKey } from "@/lib/calendar-variable-stack";
+import { CALENDAR_DATE_DIVIDER_CLASS, allocateCalendarCompanySlots, getCalendarCompanyGridPosition, getCalendarTaskScheduleRange, getCalendarWeekGridLayout } from "@/lib/calendar-variable-stack";
 import { getCalendarTaskMetadata, type CalendarTaskMetadataKind } from "@/lib/calendar-task-metadata";
 import { getCalendarProjectScheduleDate, isCalendarCompanyItemCompleted, matchesCalendarCompletedVisibility, matchesCalendarPersonalCompletedVisibility } from "@/lib/calendar-completed-visibility";
 import { completeTask, updateTask } from "@/lib/task-actions";
@@ -102,22 +102,6 @@ type CalendarItem = {
   processType?: CalendarProcessType | null;
 };
 
-type CalendarWeekSegment = {
-  item: CalendarItem;
-  weekIndex: number;
-  startColumn: number;
-  span: number;
-  laneIndex: number;
-  isRangeStart: boolean;
-  isRangeEnd: boolean;
-};
-
-type CalendarWeekLayout = {
-  days: Array<string | null>;
-  segments: CalendarWeekSegment[];
-  laneCount: number;
-};
-
 type CalendarRightPanelTab = "tasks" | "personal";
 
 function CalendarMetadataBadge({ kind, label, className = "" }: { kind: CalendarTaskMetadataKind; label: string; className?: string }) {
@@ -169,71 +153,6 @@ function getItemRange(item: CalendarItem) {
   return start <= end ? { start, end } : { start: end, end: start };
 }
 
-function buildWeekSegments(
-  items: CalendarItem[],
-  weeks: Array<Array<string | null>>
-): CalendarWeekLayout[] {
-  return weeks.map((days, weekIndex) => {
-    const visibleDays = days.filter((date): date is string => date !== null);
-    const weekStart = visibleDays[0];
-    const weekEnd = visibleDays[visibleDays.length - 1];
-
-    if (!weekStart || !weekEnd) {
-      return { days, segments: [], laneCount: 0 };
-    }
-
-    const segments = items
-      .flatMap((item) => {
-        const range = getItemRange(item);
-        if (range.end < weekStart || range.start > weekEnd) return [];
-
-        const segmentStart = range.start < weekStart ? weekStart : range.start;
-        const segmentEnd = range.end > weekEnd ? weekEnd : range.end;
-        const startIndex = days.indexOf(segmentStart);
-        const endIndex = days.indexOf(segmentEnd);
-        if (startIndex < 0 || endIndex < startIndex) return [];
-
-        return [{
-          item,
-          weekIndex,
-          startColumn: startIndex + 1,
-          span: endIndex - startIndex + 1,
-          laneIndex: 0,
-          isRangeStart: segmentStart === range.start,
-          isRangeEnd: segmentEnd === range.end,
-        }];
-      })
-      .sort((a, b) =>
-        a.startColumn - b.startColumn ||
-        b.span - a.span ||
-        a.item.id.localeCompare(b.item.id)
-      );
-
-    const laneEndColumns: number[] = [];
-    const assignedSegments = segments.map((segment) => {
-      const segmentEndColumn = segment.startColumn + segment.span - 1;
-      let laneIndex = laneEndColumns.findIndex(
-        (lastEndColumn) => lastEndColumn < segment.startColumn
-      );
-
-      if (laneIndex === -1) {
-        laneIndex = laneEndColumns.length;
-        laneEndColumns.push(segmentEndColumn);
-      } else {
-        laneEndColumns[laneIndex] = segmentEndColumn;
-      }
-
-      return { ...segment, laneIndex };
-    });
-
-    return {
-      days,
-      segments: assignedSegments,
-      laneCount: laneEndColumns.length,
-    };
-  });
-}
-
 const quickFilters: QuickFilter[] = ["전체", "내 업무", "지연", "오늘", "이번 주"];
 const typeList = ["전체", "준공예정", "업무일정"];
 const viewList = ["달력 보기", "타임라인 보기", "간트 보기"];
@@ -280,8 +199,6 @@ export default function CalendarPage() {
   const [updatingTaskStatusIds, setUpdatingTaskStatusIds] = useState<Set<number>>(() => new Set());
   const [rightPanelTab, setRightPanelTab] = useState<CalendarRightPanelTab>("tasks");
   const rightPanelBodyRef = useRef<HTMLDivElement>(null);
-  const [calendarSegmentHeights, setCalendarSegmentHeights] = useState<Record<string, number>>({});
-  const [calendarPersonalStackHeights, setCalendarPersonalStackHeights] = useState<Record<string, number>>({});
   const [quickFilter, setQuickFilter] = useState<QuickFilter>("전체");
   const [showCompleted, setShowCompleted] = useState(false);
   const [showCompletedProjects, setShowCompletedProjects] = useState(false);
@@ -434,16 +351,15 @@ export default function CalendarPage() {
         memo: calendarDisplayNotes.get(task.id) ?? null,
         processType,
       };
-      const startDate = task.start_date || task.due_date;
-      const endDate = task.due_date || task.start_date;
-      if (!startDate || !endDate) return [];
+      const scheduleRange = getCalendarTaskScheduleRange({ startDate: task.start_date, dueDate: task.due_date, completedDate: task.completed_date });
+      if (!scheduleRange) return [];
 
       return [{
         ...common,
         id: `task-${task.id}`,
-        date: endDate,
-        startDate,
-        endDate,
+        date: scheduleRange.end,
+        startDate: scheduleRange.start,
+        endDate: scheduleRange.end,
         type: "업무일정" as const,
       }];
     });
@@ -753,11 +669,10 @@ export default function CalendarPage() {
     });
     const taskTitle = getTaskCalendarTitle(project, updatedTask);
     const taskScheduleItems: CalendarItem[] = [];
-    const taskStartDate = updatedTask.start_date || updatedTask.due_date;
-    const taskEndDate = updatedTask.due_date || updatedTask.start_date;
-    if (taskStartDate && taskEndDate) {
+    const taskScheduleRange = getCalendarTaskScheduleRange({ startDate: updatedTask.start_date, dueDate: updatedTask.due_date, completedDate: updatedTask.completed_date });
+    if (taskScheduleRange) {
       const currentItem = items.find((item) => item.id === `task-${updatedTask.id}`);
-      taskScheduleItems.push({ id: `task-${updatedTask.id}`, date: taskEndDate, startDate: taskStartDate, endDate: taskEndDate, type: "업무일정", title: taskTitle, displayTitle: getTaskCalendarDisplayTitle(project, updatedTask), status: updatedTask.status, assignee: updatedTask.assignee || "미지정", projectName, assemblyVendorName: getTaskAssemblyVendorLabel(updatedTask) ?? undefined, taskType: updatedTask.task_type, href: `/projects/${updatedTask.project_id}`, memo: currentItem?.memo ?? null, processType: currentItem?.processType ?? null });
+      taskScheduleItems.push({ id: `task-${updatedTask.id}`, date: taskScheduleRange.end, startDate: taskScheduleRange.start, endDate: taskScheduleRange.end, type: "업무일정", title: taskTitle, displayTitle: getTaskCalendarDisplayTitle(project, updatedTask), status: updatedTask.status, assignee: updatedTask.assignee || "미지정", projectName, assemblyVendorName: getTaskAssemblyVendorLabel(updatedTask) ?? undefined, taskType: updatedTask.task_type, href: `/projects/${updatedTask.project_id}`, memo: currentItem?.memo ?? null, processType: currentItem?.processType ?? null });
     }
 
     setTasks((currentTasks) =>
@@ -812,36 +727,7 @@ export default function CalendarPage() {
   const visibleCompanyCount = showCompanySchedule ? currentViewItems.length : 0;
   const displayedPersonalNotes = useMemo(() => personalNotes.filter((note) => matchesCalendarSourceFilter(note, sourceFilter) && matchesCalendarPersonalCompletedVisibility(note.is_completed, showCompleted)), [personalNotes, showCompleted, sourceFilter]);
   const visiblePersonalCount = showPersonalSchedule ? displayedPersonalNotes.length : 0;
-  const calendarWeekLayouts = buildWeekSegments(
-    showCompanySchedule ? calendarVisibleItems : [],
-    splitMonthIntoWeeks(calendarDays)
-  );
-  const calendarMeasurementKey = calendarWeekLayouts.map((week) => `${week.days.join("-")}:${week.segments.map((segment) => `${segment.item.id}:${segment.startColumn}:${segment.span}:${segment.laneIndex}`).join(",")}`).join("|");
-  const personalNoteMeasurementKey = displayedPersonalNotes.map((note) => `${note.id}:${note.title}:${note.content}:${note.comment_count ?? 0}:${note.unread_comment_count ?? 0}:${note.sharing?.memberCount ?? 0}`).join("|");
-
-  useLayoutEffect(() => {
-    if (viewMode !== "달력 보기") return;
-    const segmentElements = [...document.querySelectorAll<HTMLElement>("[data-calendar-segment-key]")];
-    const personalStackElements = [...document.querySelectorAll<HTMLElement>("[data-calendar-personal-stack]")];
-    const updateHeights = () => {
-      const next = Object.fromEntries(segmentElements.map((element) => [element.dataset.calendarSegmentKey ?? "", Math.ceil(element.getBoundingClientRect().height)]));
-      setCalendarSegmentHeights((current) => {
-        const keys = Object.keys(next);
-        if (keys.length === Object.keys(current).length && keys.every((key) => current[key] === next[key])) return current;
-        return next;
-      });
-      const nextPersonalStacks = Object.fromEntries(personalStackElements.map((element) => [element.dataset.calendarPersonalStack ?? "", Math.ceil(element.getBoundingClientRect().height)]));
-      setCalendarPersonalStackHeights((current) => {
-        const keys = Object.keys(nextPersonalStacks);
-        if (keys.length === Object.keys(current).length && keys.every((key) => current[key] === nextPersonalStacks[key])) return current;
-        return nextPersonalStacks;
-      });
-    };
-    const observer = new ResizeObserver(updateHeights);
-    [...segmentElements, ...personalStackElements].forEach((element) => observer.observe(element));
-    updateHeights();
-    return () => observer.disconnect();
-  }, [calendarMeasurementKey, personalNoteMeasurementKey, viewMode]);
+  const calendarWeeks = splitMonthIntoWeeks(calendarDays);
   const selectedDateTaskItems = (showCompanySchedule ? calendarVisibleItems : [])
     .filter((item) =>
       isTaskCalendarItem(item) &&
@@ -1147,29 +1033,22 @@ export default function CalendarPage() {
             ))}
 
             <div className="col-span-7 space-y-1.5 sm:space-y-2">
-              {calendarWeekLayouts.map((week) => {
-                const maxPersonalNoteCount = showPersonalSchedule ? Math.max(0, ...week.days.map((date) => date ? personalNotesByDate.get(date)?.length ?? 0 : 0)) : 0;
-                const baseWeekLayout = getMonthWeekLayout({ companyLaneCount: week.laneCount, personalItemCount: maxPersonalNoteCount, showCompany: showCompanySchedule, showPersonalCards: showPersonalSchedule });
-                const stackLayout = calculateVariableStack(week.segments.map((segment) => {
-                  const segmentKey = getCalendarSegmentKey(segment.item.id, segment.weekIndex);
-                  return { id: segmentKey, startColumn: segment.startColumn, span: segment.span, laneIndex: segment.laneIndex, height: calendarSegmentHeights[segmentKey] ?? (segment.item.id.startsWith("task-note-") ? 29 : 28) };
-                }));
-                const measuredCompanyHeight = showCompanySchedule ? stackLayout.height : 0;
-                const measuredPersonalHeight = showPersonalSchedule ? Math.max(0, ...week.days.map((date) => date ? calendarPersonalStackHeights[date] ?? 0 : 0)) : 0;
-                const personalAreaHeight = measuredPersonalHeight || baseWeekLayout.personalAreaHeight;
-                const personalAreaTop = MONTH_WEEK_LAYOUT.dateHeaderHeight + measuredCompanyHeight + (personalAreaHeight > 0 ? MONTH_WEEK_LAYOUT.sectionGap : 0);
-                const weekLayout = { ...baseWeekLayout, companyAreaHeight: measuredCompanyHeight, personalAreaHeight, personalAreaTop, requiredWeekHeight: Math.max(MONTH_WEEK_LAYOUT.minHeight, personalAreaTop + personalAreaHeight + MONTH_WEEK_LAYOUT.bottomPadding) };
+              {calendarWeeks.map((days) => {
+                const weekKey = days.join("-");
+                const companySlots = allocateCalendarCompanySlots(showCompanySchedule ? calendarVisibleItems : [], days, getItemRange);
+                const weekGridLayout = getCalendarWeekGridLayout(companySlots.slotCount);
+                const weekRowCount = weekGridLayout.rowCount;
 
                 return (
                   <div
-                    key={`week-${week.days.join("-")}`}
-                    className="relative"
-                    style={{ height: weekLayout.requiredWeekHeight }}
+                    key={`week-${weekKey}`}
+                    className={`grid min-h-[168px] items-stretch gap-x-1.5 gap-y-1 sm:gap-x-2 ${CALENDAR_WEEK_COLUMNS_CLASS}`}
+                    style={{ gridTemplateRows: weekGridLayout.gridTemplateRows }}
                   >
-                    <div className={`grid h-full gap-1.5 sm:gap-2 ${CALENDAR_WEEK_COLUMNS_CLASS}`}>
-                      {week.days.map((date, dayIndex) => {
+                      {days.map((date, dayIndex) => {
                         const isSunday = dayIndex === 0;
                         const isSaturday = dayIndex === 6;
+                        const datePersonalNotes = date && showPersonalSchedule ? personalNotesByDate.get(date) ?? [] : [];
                         const weekendCellClass = isSunday ? "border-red-100 bg-red-50/40 hover:bg-red-50/60" : isSaturday ? "border-blue-100 bg-blue-50/40 hover:bg-blue-50/60" : "border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50";
                         const dateNumberClass = date === selectedDate ? "text-blue-900" : date === today ? "text-amber-900" : isSunday ? "text-red-600" : isSaturday ? "text-blue-600" : "text-slate-700";
                         return <div
@@ -1188,8 +1067,8 @@ export default function CalendarPage() {
                           }}
                           onDragOver={(event) => { if (!calendarReadOnly && date && event.dataTransfer.types.includes("application/x-personal-note")) event.preventDefault(); }}
                           onDrop={(event) => { if (calendarReadOnly || !date) return; const noteId = event.dataTransfer.getData("application/x-personal-note"); const note = personalNotes.find((item) => item.id === noteId); if (note) { event.preventDefault(); void movePersonalNote(note, date); } }}
-                          style={{ "--calendar-personal-top": `${weekLayout.personalAreaTop}px` } as CSSProperties}
-                          className={`relative h-full rounded-2xl border p-2.5 outline-none transition-all duration-150 [&>div.mt-9]:absolute [&>div.mt-9]:inset-x-2 [&>div.mt-9]:top-[var(--calendar-personal-top)] [&>div.mt-9]:mt-0 ${showCompanySchedule ? "[&>button.top-10]:hidden" : ""} ${
+                          style={{ gridColumn: dayIndex + 1, gridRow: `1 / span ${weekRowCount}` } as CSSProperties}
+                          className={`relative grid min-h-[168px] min-w-0 [grid-template-rows:subgrid] rounded-2xl border outline-none transition-all duration-150 ${
                             date === selectedDate
                               ? "border-blue-200 bg-blue-50 shadow-sm ring-2 ring-blue-100"
                               : date === today
@@ -1198,7 +1077,7 @@ export default function CalendarPage() {
                           } ${date ? "cursor-pointer focus-visible:ring-2 focus-visible:ring-blue-100" : isSunday ? "border-red-100 bg-red-50/25" : isSaturday ? "border-blue-100 bg-blue-50/25" : "border-slate-100 bg-slate-50/60"}`}
                         >
                           {date && (
-                            <div className={`flex items-center justify-between gap-2 text-sm font-semibold ${dateNumberClass}`}>
+                            <div className={`flex items-center justify-between gap-2 px-2.5 pt-2.5 text-sm font-semibold ${dateNumberClass}`} style={{ gridRow: 1 }}>
                               <span>{Number(date.slice(-2))}</span>
                               {date === today && (
                                 <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-700">
@@ -1207,50 +1086,11 @@ export default function CalendarPage() {
                               )}
                             </div>
                           )}
-                          {date && showPersonalSchedule && (personalNotesByDate.get(date)?.length ?? 0) > 0 && <button type="button" aria-label={`${date} 내 일정 보기`} onClick={(event) => { event.stopPropagation(); setSelectedDate(date); }} className="absolute right-2 top-10 z-20 rounded-full bg-violet-600 px-2 py-0.5 text-[10px] font-semibold text-white shadow-sm">📝 {personalNotesByDate.get(date)?.length}{(personalNotesByDate.get(date) ?? []).some((note) => note.sharing && note.sharing.permission !== "owner") ? " · 👥" : ""}</button>}
-                          {date && showPersonalSchedule && <div data-calendar-personal-stack={date} className="mt-9 space-y-1">{(personalNotesByDate.get(date) ?? []).map((note) => { const isSharedWithMe = Boolean(note.sharing && note.sharing.permission !== "owner"); const isSharedByMe = note.sharing?.permission === "owner" && note.sharing.memberCount > 0; const authorName = note.sharing?.ownerName ?? currentAssignee ?? "-"; const commentBadge = getPersonalNoteCommentBadge(note); return <div key={note.id} draggable={note.sharing?.permission !== "view"} onDragStart={(event) => { event.stopPropagation(); event.dataTransfer.setData("application/x-personal-note", note.id); event.dataTransfer.effectAllowed = "move"; }} className={`rounded-md border px-1.5 py-1 text-[10px] transition ${note.is_completed ? COMPLETED_PERSONAL_SCHEDULE_STYLES.card : "border-slate-200 bg-white text-slate-600"} ${note.sharing?.permission === "view" ? "cursor-default" : "cursor-grab"}`}><button type="button" onClick={(event) => { event.stopPropagation(); setSelectedPersonalNoteId(note.id); }} className="block w-full min-w-0 text-left outline-none focus-visible:ring-2 focus-visible:ring-violet-200"><p className={`min-w-0 whitespace-normal break-words font-semibold [overflow-wrap:anywhere] ${note.is_completed ? COMPLETED_PERSONAL_SCHEDULE_STYLES.title : "text-slate-700"}`}>{note.title || note.content}</p><p className={`min-w-0 whitespace-normal break-words text-[9px] [overflow-wrap:anywhere] ${note.is_completed ? COMPLETED_PERSONAL_SCHEDULE_STYLES.meta : "text-slate-400"}`}>{note.due_date} · 👤 {authorName}</p><div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-1">{note.is_completed && <span className="inline-flex shrink-0 items-center gap-0.5 rounded-full bg-emerald-100 px-1.5 py-0.5 text-[9px] font-semibold text-emerald-700"><Check size={9}/>완료</span>}{commentBadge && <span className="shrink-0 text-[9px] text-slate-500">💬 {commentBadge}</span>}{isSharedByMe && <span className="shrink-0 rounded-full bg-blue-100 px-1.5 py-0.5 text-[9px] font-semibold text-blue-700">공유중</span>}{isSharedWithMe && <span className="shrink-0 rounded-full bg-violet-100 px-1.5 py-0.5 text-[9px] font-semibold text-violet-700">공유받음</span>}</div></button></div>; })}</div>}
+                          <div className="min-w-0 px-2.5 pb-2.5" style={{ gridRow: weekRowCount }}>{date && datePersonalNotes.length > 0 && <div className="mt-2 flex items-center justify-end"><button type="button" aria-label={`${date} 내 일정 보기`} onClick={(event) => { event.stopPropagation(); setSelectedDate(date); }} className="z-20 rounded-full bg-violet-600 px-2 py-0.5 text-[10px] font-semibold text-white shadow-sm">📝 {datePersonalNotes.length}{datePersonalNotes.some((note) => note.sharing && note.sharing.permission !== "owner") ? " · 👥" : ""}</button></div>}{date && showPersonalSchedule && <div data-calendar-personal-stack={date} className={`${datePersonalNotes.length > 0 ? "mt-1" : ""} space-y-1`}>{datePersonalNotes.map((note) => { const isSharedWithMe = Boolean(note.sharing && note.sharing.permission !== "owner"); const isSharedByMe = note.sharing?.permission === "owner" && note.sharing.memberCount > 0; const authorName = note.sharing?.ownerName ?? currentAssignee ?? "-"; const commentBadge = getPersonalNoteCommentBadge(note); return <div key={note.id} draggable={note.sharing?.permission !== "view"} onDragStart={(event) => { event.stopPropagation(); event.dataTransfer.setData("application/x-personal-note", note.id); event.dataTransfer.effectAllowed = "move"; }} className={`rounded-md border px-1.5 py-1 text-[10px] transition ${note.is_completed ? COMPLETED_PERSONAL_SCHEDULE_STYLES.card : "border-slate-200 bg-white text-slate-600"} ${note.sharing?.permission === "view" ? "cursor-default" : "cursor-grab"}`}><button type="button" onClick={(event) => { event.stopPropagation(); setSelectedPersonalNoteId(note.id); }} className="block w-full min-w-0 text-left outline-none focus-visible:ring-2 focus-visible:ring-violet-200"><p className={`min-w-0 whitespace-normal break-words font-semibold [overflow-wrap:anywhere] ${note.is_completed ? COMPLETED_PERSONAL_SCHEDULE_STYLES.title : "text-slate-700"}`}>{note.title || note.content}</p><p className={`min-w-0 whitespace-normal break-words text-[9px] [overflow-wrap:anywhere] ${note.is_completed ? COMPLETED_PERSONAL_SCHEDULE_STYLES.meta : "text-slate-400"}`}>{note.due_date} · 👤 {authorName}</p><div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-1">{note.is_completed && <span className="inline-flex shrink-0 items-center gap-0.5 rounded-full bg-emerald-100 px-1.5 py-0.5 text-[9px] font-semibold text-emerald-700"><Check size={9}/>완료</span>}{commentBadge && <span className="shrink-0 text-[9px] text-slate-500">💬 {commentBadge}</span>}{isSharedByMe && <span className="shrink-0 rounded-full bg-blue-100 px-1.5 py-0.5 text-[9px] font-semibold text-blue-700">공유중</span>}{isSharedWithMe && <span className="shrink-0 rounded-full bg-violet-100 px-1.5 py-0.5 text-[9px] font-semibold text-violet-700">공유받음</span>}</div></button></div>; })}</div>}</div>
                          </div>;
-                      })}
-                    </div>
-
-                    <div className={`pointer-events-none absolute inset-x-0 top-11 z-10 grid items-start gap-x-1.5 sm:gap-x-2 ${CALENDAR_WEEK_COLUMNS_CLASS}`} style={{ height: measuredCompanyHeight }}>
-                      {week.segments.map((segment) => {
-                        const { item } = segment;
-                        const isReminderBar = item.id.startsWith("task-note-");
-                        const isStandardBar = !isReminderBar;
-                        const metadata = isTaskCalendarItem(item) && !isReminderBar ? getCalendarTaskMetadata({ assemblyVendorName: item.assemblyVendorName, processTypeName: item.processType?.name, taskType: item.taskType }) : [];
-                        const roundedClass = `${
-                          segment.isRangeStart ? "rounded-l-lg" : "rounded-l-none"
-                        } ${segment.isRangeEnd ? "rounded-r-lg" : "rounded-r-none"}`;
-                        const segmentKey = getCalendarSegmentKey(item.id, segment.weekIndex);
-                        const positionStyle = {
-                          gridColumn: `${segment.startColumn} / span ${segment.span}`,
-                          gridRow: 1,
-                          transform: `translateY(${stackLayout.offsets.get(segmentKey) ?? 0}px)`,
-                          visibility: calendarSegmentHeights[segmentKey] === undefined ? "hidden" as const : "visible" as const,
-                        };
-
-                        return (
-                          <button
-                            type="button"
-                            key={segmentKey}
-                            data-calendar-segment-key={segmentKey}
-                            title={`${metadata.map((entry) => `${entry.kind === "assembly" ? "조립업체" : entry.kind === "process" ? "대공정" : "업무유형"}: ${entry.label}`).join("\n")}${metadata.length ? "\n" : ""}${item.displayTitle ?? item.title} · ${item.projectName ?? "-"} · ${item.taskStartDate ?? getItemRange(item).start} ~ ${item.taskEndDate ?? getItemRange(item).end}${item.memo ? `\n${item.memo.isImportant ? "중요 메모" : "메모"}: ${item.memo.note}${item.memo.checkDate ? `\n확인일: ${item.memo.checkDate}` : ""}` : ""}`}
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              if (isProjectCalendarItem(item) && item.href) window.location.href = item.href;
-                              else openTaskDetailModal(item);
-                            }}
-                            className={`pointer-events-auto min-w-0 border px-1.5 text-left text-xs font-semibold leading-4 shadow-sm transition-colors hover:brightness-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-200 ${isStandardBar ? "min-h-7 py-0.5" : "h-[29px] truncate"} ${roundedClass} ${getTaskDueClassName(
-                              item
-                            )}`}
-                            style={positionStyle}
-                          >
-                            <span className={`flex min-w-0 gap-0.5 text-left ${isStandardBar ? "flex-col items-start" : "items-center"}`}>{metadata.length > 0 && <span className="flex max-w-full flex-wrap items-center gap-1">{metadata.map((entry) => <CalendarMetadataBadge key={entry.kind} kind={entry.kind} label={entry.label}/>)}</span>}<span className="flex min-w-0 w-full items-start gap-1"><span className={`min-w-0 flex-1 ${isStandardBar ? "whitespace-normal break-words text-[11px] [overflow-wrap:anywhere]" : "truncate"}`}>{isStandardBar ? item.displayTitle ?? item.title : item.title}</span>{item.memo && <span className="shrink-0" aria-label={item.memo.isImportant ? "중요 메모 있음" : "메모 있음"}>{item.memo.isImportant ? "⚠" : "📝"}</span>}</span></span>
-                          </button>
-                        );
-                      })}
-                    </div>
+                       })}
+                      {companySlots.segments.map((segment) => { const { item } = segment; const isReminderBar = item.id.startsWith("task-note-"); const isStandardBar = !isReminderBar; const metadata = isTaskCalendarItem(item) && !isReminderBar ? getCalendarTaskMetadata({ assemblyVendorName: item.assemblyVendorName, processTypeName: item.processType?.name, taskType: item.taskType }) : []; const roundedClass = `${segment.isRangeStart ? "rounded-l-lg" : "rounded-l-sm"} ${segment.isRangeEnd ? "rounded-r-lg" : "rounded-r-sm"}`; return <button type="button" key={`${item.id}-${weekKey}`} data-calendar-company-week-segment={`${item.id}:${weekKey}`} data-calendar-company-slot={segment.slot} title={`${metadata.map((entry) => `${entry.kind === "assembly" ? "조립업체" : entry.kind === "process" ? "대공정" : "업무유형"}: ${entry.label}`).join("\n")}${metadata.length ? "\n" : ""}${item.displayTitle ?? item.title} · ${item.projectName ?? "-"} · ${item.taskStartDate ?? getItemRange(item).start} ~ ${item.taskEndDate ?? getItemRange(item).end}${item.memo ? `\n${item.memo.isImportant ? "중요 메모" : "메모"}: ${item.memo.note}${item.memo.checkDate ? `\n확인일: ${item.memo.checkDate}` : ""}` : ""}`} onClick={(event) => { event.stopPropagation(); if (isProjectCalendarItem(item) && item.href) window.location.href = item.href; else openTaskDetailModal(item); }} style={getCalendarCompanyGridPosition(segment)} className={`z-10 mx-px min-w-0 self-stretch border px-1.5 text-left text-xs font-semibold leading-4 shadow-sm transition-colors hover:brightness-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-200 ${isStandardBar ? "min-h-7 py-0.5" : "h-[29px] truncate"} ${roundedClass} ${getTaskDueClassName(item)}`}><span className={`flex min-w-0 gap-0.5 text-left ${isStandardBar ? "flex-col items-start" : "items-center"}`}>{metadata.length > 0 && <span className="flex max-w-full flex-wrap items-center gap-1">{metadata.map((entry) => <CalendarMetadataBadge key={entry.kind} kind={entry.kind} label={entry.label}/>)}</span>}<span className="flex min-w-0 w-full items-start gap-1"><span className={`min-w-0 flex-1 ${isStandardBar ? "whitespace-normal break-words text-[11px] [overflow-wrap:anywhere]" : "truncate"}`}>{isStandardBar ? item.displayTitle ?? item.title : item.title}</span>{item.memo && <span className="shrink-0" aria-label={item.memo.isImportant ? "중요 메모 있음" : "메모 있음"}>{item.memo.isImportant ? "⚠" : "📝"}</span>}</span></span></button>; })}
+                      {days.slice(0, -1).map((date, dayIndex) => <div key={`divider-${weekKey}-${dayIndex}`} aria-hidden="true" data-calendar-date-divider={date ?? dayIndex} className={CALENDAR_DATE_DIVIDER_CLASS} style={{ gridColumn: dayIndex + 1, gridRow: `1 / span ${weekRowCount}` }}/>) }
                   </div>
                 );
               })}

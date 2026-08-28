@@ -18,7 +18,7 @@ export const MONTH_WEEK_LAYOUT = {
   personalCardGap: 4,
   sectionGap: 12,
   bottomPadding: 12,
-  minHeight: 140,
+  minHeight: 168,
 } as const;
 
 export function getCompanyAreaHeight(laneCount: number) { return Math.max(0, laneCount) * MONTH_WEEK_LAYOUT.companyLaneHeight; }
