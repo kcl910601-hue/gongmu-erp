@@ -1050,7 +1050,7 @@ export default function CalendarPage() {
                         const isSaturday = dayIndex === 6;
                         const datePersonalNotes = date && showPersonalSchedule ? personalNotesByDate.get(date) ?? [] : [];
                         const weekendCellClass = isSunday ? "border-red-100 bg-red-50/40 hover:bg-red-50/60" : isSaturday ? "border-blue-100 bg-blue-50/40 hover:bg-blue-50/60" : "border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50";
-                        const dateNumberClass = date === selectedDate ? "text-blue-900" : date === today ? "text-amber-900" : isSunday ? "text-red-600" : isSaturday ? "text-blue-600" : "text-slate-700";
+                        const dateNumberClass = date === today ? "text-slate-950" : date === selectedDate ? "text-blue-900" : isSunday ? "text-red-600" : isSaturday ? "text-blue-600" : "text-slate-700";
                         return <div
                           key={date || `empty-${dayIndex}`}
                           onClick={() => {
@@ -1069,18 +1069,18 @@ export default function CalendarPage() {
                           onDrop={(event) => { if (calendarReadOnly || !date) return; const noteId = event.dataTransfer.getData("application/x-personal-note"); const note = personalNotes.find((item) => item.id === noteId); if (note) { event.preventDefault(); void movePersonalNote(note, date); } }}
                           style={{ gridColumn: dayIndex + 1, gridRow: `1 / span ${weekRowCount}` } as CSSProperties}
                           className={`relative grid min-h-[168px] min-w-0 [grid-template-rows:subgrid] rounded-2xl border outline-none transition-all duration-150 ${
-                            date === selectedDate
-                              ? "border-blue-200 bg-blue-50 shadow-sm ring-2 ring-blue-100"
-                              : date === today
-                                ? "border-amber-200 bg-amber-50"
+                            date === today
+                              ? `border-slate-300 bg-slate-50/70 ${date === selectedDate ? "shadow-sm ring-2 ring-slate-300" : ""}`
+                              : date === selectedDate
+                                ? "border-blue-200 bg-blue-50 shadow-sm ring-2 ring-blue-100"
                                 : `${weekendCellClass} hover:shadow-sm`
                           } ${date ? "cursor-pointer focus-visible:ring-2 focus-visible:ring-blue-100" : isSunday ? "border-red-100 bg-red-50/25" : isSaturday ? "border-blue-100 bg-blue-50/25" : "border-slate-100 bg-slate-50/60"}`}
                         >
                           {date && (
                             <div className={`flex items-center justify-between gap-2 px-2.5 pt-2.5 text-sm font-semibold ${dateNumberClass}`} style={{ gridRow: 1 }}>
-                              <span>{Number(date.slice(-2))}</span>
+                              <span className={date === today ? "inline-flex h-6 min-w-6 items-center justify-center rounded-full border border-slate-400 bg-white px-1 font-bold text-slate-950 shadow-sm" : ""}>{Number(date.slice(-2))}</span>
                               {date === today && (
-                                <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-700">
+                                <span className="rounded-full border border-slate-200 bg-white/80 px-2 py-0.5 text-[11px] font-semibold text-slate-600">
                                   오늘
                                 </span>
                               )}
