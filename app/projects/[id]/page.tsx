@@ -1,6 +1,6 @@
 ﻿"use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import { Check, ChevronDown, ChevronRight, Copy, GripVertical, Loader2, NotebookPen, Pencil, Plus, Star, Trash2, X } from "lucide-react";
 import { supabase } from "@/lib/supabase";
@@ -120,6 +120,7 @@ type Employee = {
 };
 
 const statusList = ["pending", "in_progress", "completed"];
+const getSectionOpenKey = (vendorId: number, sectionId: number) => `${vendorId}:${sectionId}`;
 const taskNotePreviewTimeFormatter = new Intl.DateTimeFormat("ko-KR", {
   month: "2-digit",
   day: "2-digit",
@@ -137,7 +138,8 @@ export default function ProjectDetail() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [sections, setSections] = useState<ProjectSection[]>([]);
   const [processTypes, setProcessTypes] = useState<ProcessType[]>([]);
-  const [openSectionIds, setOpenSectionIds] = useState<Set<number>>(new Set());
+  const [openSectionIds, setOpenSectionIds] = useState<Set<string>>(new Set());
+  const initializedSectionOpenProjectIdRef = useRef<string | null>(null);
   const [openVendorIds, setOpenVendorIds] = useState<Set<number>>(new Set());
   const [selectedTaskSectionId, setSelectedTaskSectionId] = useState<number | null>(null);
   const [selectedTaskVendorId, setSelectedTaskVendorId] = useState<number | null>(null);
@@ -337,7 +339,22 @@ export default function ProjectDetail() {
     }
     setSalespersonOptions(entryOptionResult.data.salespeople);
     setAssemblyVendorOptions(entryOptionResult.data.assemblyVendors);
-    setOpenSectionIds((current) => current.size > 0 ? current : new Set(sortedSections[0] ? [sortedSections[0].id] : []));
+    if (initializedSectionOpenProjectIdRef.current !== projectId) {
+      const initialOpenSectionIds = new Set<string>();
+      vendorResult.data.forEach((vendor) => {
+        sortedSections.forEach((section) => {
+          const sectionTasks = loadedTasks.filter((task) =>
+            task.project_section_id === section.id
+            && task.project_assembly_vendor_id === vendor.id
+          );
+          if (getComputedSectionStatus(sectionTasks) !== "completed") {
+            initialOpenSectionIds.add(getSectionOpenKey(vendor.id, section.id));
+          }
+        });
+      });
+      setOpenSectionIds(initialOpenSectionIds);
+      initializedSectionOpenProjectIdRef.current = projectId;
+    }
 
     setEmployees(entryOptionResult.data.taskManagers.map((employee) => ({
       id: employee.id,
@@ -1124,7 +1141,7 @@ export default function ProjectDetail() {
       quantity: "",
     });
     setShowTaskModal(false);
-    setOpenSectionIds((current) => new Set(current).add(selectedTaskSectionId));
+    setOpenSectionIds((current) => new Set(current).add(getSectionOpenKey(selectedTaskVendorId, selectedTaskSectionId)));
     setSelectedTaskVendorId(null);
     setSelectedTaskSectionId(null);
     setIsSavingTask(false);
@@ -1616,7 +1633,12 @@ export default function ProjectDetail() {
         targetId: result.data.section_id,
         metadata: { sectionId: result.data.section_id, processType: value.process_type, sourceSectionId: sectionDialog.source?.id ?? null },
       });
-      setOpenSectionIds((current) => new Set(current).add(result.data!.section_id));
+      setOpenSectionIds((current) => {
+        const next = new Set(current);
+        const targetVendorIds = value.targetAssemblyVendorIds ?? assemblyVendors.map((vendor) => vendor.id);
+        targetVendorIds.forEach((vendorId) => next.add(getSectionOpenKey(vendorId, result.data!.section_id)));
+        return next;
+      });
     } else if (sectionDialog.target && sectionDialog.vendor) {
       const target = sectionDialog.target;
       const vendor = sectionDialog.vendor;
@@ -2310,7 +2332,8 @@ export default function ProjectDetail() {
           const sectionProgress = calculateSectionProgress(sectionTasks);
           const computedStatus = getComputedSectionStatus(sectionTasks);
           const processType = processTypes.find((item) => item.code === section.process_type);
-          const isOpen = openSectionIds.has(section.id);
+          const sectionOpenKey = getSectionOpenKey(vendor.id, section.id);
+          const isOpen = openSectionIds.has(sectionOpenKey);
           const vendorTaskManager = sectionTasks.find((task) => task.assignee?.trim())?.assignee ?? "-";
           const vendorStartDates = sectionTasks.flatMap((task) => task.start_date ? [task.start_date] : []).sort();
           const vendorDueDates = sectionTasks.flatMap((task) => task.due_date ? [task.due_date] : []).sort();
@@ -2319,7 +2342,7 @@ export default function ProjectDetail() {
           return (
           <section key={section.id} className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
             <div className="flex flex-col gap-2.5 bg-slate-50 p-3 xl:flex-row xl:items-center xl:justify-between">
-              <button type="button" className="flex min-w-0 flex-1 items-center gap-3 text-left" onClick={() => setOpenSectionIds((current) => { const next = new Set(current); if (next.has(section.id)) next.delete(section.id); else next.add(section.id); return next; })}>
+              <button type="button" className="flex w-full min-w-0 flex-1 items-center gap-3 text-left xl:w-auto xl:flex-none" onClick={() => setOpenSectionIds((current) => { const next = new Set(current); if (next.has(sectionOpenKey)) next.delete(sectionOpenKey); else next.add(sectionOpenKey); return next; })}>
                 {isOpen ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
                 <span className="h-3 w-3 rounded-full" style={{ backgroundColor: processType?.color ?? "#64748b" }} />
                 <span className="font-bold text-slate-950">{processType?.name ?? section.process_type}</span>
@@ -2338,7 +2361,7 @@ export default function ProjectDetail() {
               </div>
             </div>
             {isOpen && <div className="border-t border-slate-200 p-3">
-              <div className="mb-3 flex items-center justify-between text-xs text-slate-500"><span>대기 {sectionProgress.pending} · 진행 {sectionProgress.inProgress} · 완료 {sectionProgress.completed} · 지연 {sectionProgress.delayed}</span><Button size="sm" variant="primary" onClick={() => { setSelectedTaskVendorId(vendor.id); setSelectedTaskSectionId(section.id); setShowTaskModal(true); setOpenSectionIds((current) => new Set(current).add(section.id)); }}><Plus size={14} /> Task</Button></div>
+              <div className="mb-3 flex items-center justify-between text-xs text-slate-500"><span>대기 {sectionProgress.pending} · 진행 {sectionProgress.inProgress} · 완료 {sectionProgress.completed} · 지연 {sectionProgress.delayed}</span><Button size="sm" variant="primary" onClick={() => { setSelectedTaskVendorId(vendor.id); setSelectedTaskSectionId(section.id); setShowTaskModal(true); setOpenSectionIds((current) => new Set(current).add(sectionOpenKey)); }}><Plus size={14} /> Task</Button></div>
         <div className="max-h-[65vh] overflow-auto">
           <table className="w-full min-w-[1280px] table-fixed text-sm">
             <thead className="sticky top-0 z-20 bg-slate-50">
