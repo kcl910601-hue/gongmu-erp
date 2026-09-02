@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
-import { Check, ChevronDown, ChevronRight, Copy, GripVertical, NotebookPen, Pencil, Plus, Star, Trash2, X } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, Copy, GripVertical, Loader2, NotebookPen, Pencil, Plus, Star, Trash2, X } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { addActivity } from "@/lib/activity";
 import {
@@ -60,6 +60,7 @@ import { normalizeTaskName, validateTaskName } from "@/lib/task-name";
 import { TASKS_CHANGED_EVENT } from "@/lib/collaboration-events";
 import { hasPermission, isCalendarOnlyStaff } from "@/lib/permissions";
 import { getProjectCompletionFingerprint, type ProjectCompletionCheckResult } from "@/lib/project-completion";
+import { PROJECT_STATUS_OPTIONS, getProjectStatusSelectValue, type CanonicalProjectStatus } from "@/lib/project-status-policy";
 import {
   getProjectStatusLabel,
   getTaskStatusLabel,
@@ -167,6 +168,8 @@ export default function ProjectDetail() {
   const [taskNameDraft, setTaskNameDraft] = useState("");
   const [savingTaskNameId, setSavingTaskNameId] = useState<number | null>(null);
   const [canEditTaskName, setCanEditTaskName] = useState(false);
+  const [canUpdateProject, setCanUpdateProject] = useState(false);
+  const [isUpdatingProjectStatus, setIsUpdatingProjectStatus] = useState(false);
   const [taskNoteSummaries, setTaskNoteSummaries] = useState<Map<number, TaskNoteSummary>>(new Map());
   const [noteTask, setNoteTask] = useState<Task | null>(null);
   const [isRecentActivityOpen, setIsRecentActivityOpen] = useState(false);
@@ -365,7 +368,10 @@ export default function ProjectDetail() {
   useEffect(() => {
     let active = true;
     void getCurrentEmployee().then((employee) => {
-      if (active) setCanEditTaskName(Boolean(employee) && !isCalendarOnlyStaff(employee) && hasPermission(employee?.role, "task_update"));
+      if (!active) return;
+      const canUseProjectDetail = Boolean(employee) && !isCalendarOnlyStaff(employee);
+      setCanEditTaskName(canUseProjectDetail && hasPermission(employee?.role, "task_update"));
+      setCanUpdateProject(canUseProjectDetail && hasPermission(employee?.role, "project_update"));
     });
     return () => { active = false; };
   }, []);
@@ -765,71 +771,57 @@ export default function ProjectDetail() {
     setIsUpdating(false);
   }
 
-  async function updateProjectStatus(nextTasks: Task[]) {
-    if (!project) return;
+  async function updateProjectStatusExplicitly(nextStatus: CanonicalProjectStatus) {
+    if (!project || !canUpdateProject || isUpdatingProjectStatus || isCompletingProject) return;
+    if (normalizeProjectStatus(project.status) === nextStatus) return;
 
-    let nextProjectStatus = "pending";
-
-    if (nextTasks.length > 0) {
-      const isAllCompleted = nextTasks.every((task) =>
-        isTaskCompleted(task.status)
-      );
-      const hasActiveOrCompleted = nextTasks.some(
-        (task) => isTaskInProgress(task.status) || isTaskCompleted(task.status)
-      );
-
-      if (isAllCompleted) nextProjectStatus = "completed";
-      else if (hasActiveOrCompleted) nextProjectStatus = "in_progress";
-    }
-
-    if (normalizeProjectStatus(project.status) === nextProjectStatus) return;
-
-    if (nextProjectStatus === "completed") {
-      const response = await fetch(`/api/projects/${project.id}/completion-check`);
-      const payload = await response.json() as { completionCheck?: ProjectCompletionCheckResult; error?: string };
-      if (!response.ok || !payload.completionCheck) { toast.error(payload.error ?? "프로젝트 완료 전 점검에 실패했습니다."); return; }
-      setCompletionCheck(payload.completionCheck);
+    if (nextStatus === "completed") {
+      setIsUpdatingProjectStatus(true);
+      try {
+        const response = await fetch(`/api/projects/${project.id}/completion-check`);
+        const payload = await response.json() as { completionCheck?: ProjectCompletionCheckResult; error?: string };
+        if (!response.ok || !payload.completionCheck) {
+          toast.error(payload.error ?? "프로젝트 완료 전 점검에 실패했습니다.");
+          return;
+        }
+        setCompletionCheck(payload.completionCheck);
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "프로젝트 완료 전 점검에 실패했습니다.");
+      } finally {
+        setIsUpdatingProjectStatus(false);
+      }
       return;
     }
 
-    let error: { message: string } | null = null;
+    setIsUpdatingProjectStatus(true);
     try {
       const result = await withShortEditingLock("project", project.id, () => supabase
         .from("projects")
-        .update({ status: nextProjectStatus })
+        .update({ status: nextStatus })
         .eq("id", project.id));
-      error = result.error;
-    } catch (cause) {
-      error = { message: cause instanceof Error ? cause.message : "프로젝트 상태를 변경하지 못했습니다." };
+      if (result.error) throw result.error;
+
+      const beforeStatus = normalizeProjectStatus(project.status);
+      const changes = createAuditChanges(
+        { status: beforeStatus },
+        { status: nextStatus },
+        PROJECT_AUDIT_FIELDS,
+      );
+      setProject({ ...project, status: nextStatus });
+      await addActivity({
+        type: "project_update",
+        title: "프로젝트 상태 변경",
+        description: `${getProjectStatusLabel(beforeStatus)} → ${getProjectStatusLabel(nextStatus)}`,
+        projectId: project.id,
+        targetType: "project",
+        targetId: project.id,
+        metadata: { changes },
+      });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "프로젝트 상태를 변경하지 못했습니다.");
+    } finally {
+      setIsUpdatingProjectStatus(false);
     }
-
-    if (error) {
-      alert(error.message);
-      return;
-    }
-
-    setProject({
-      ...project,
-      status: nextProjectStatus,
-    });
-
-    const changes = createAuditChanges(
-      project as unknown as Record<string, unknown>,
-      { ...project, status: nextProjectStatus } as unknown as Record<
-        string,
-        unknown
-      >,
-      PROJECT_AUDIT_FIELDS
-    );
-    await addActivity({
-      type: "project_update",
-      title: `프로젝트 수정 · ${changes.length}개 항목 변경`,
-      description: `${project.project_name} 프로젝트 상태가 변경되었습니다.`,
-      projectId: project.id,
-      targetType: "project",
-      targetId: project.id,
-      metadata: { changes },
-    });
   }
 
   async function completeProject() {
@@ -973,7 +965,6 @@ export default function ProjectDetail() {
 
     if (savedTasks) {
       setTasks(savedTasks);
-      await updateProjectStatus(savedTasks);
     }
 
     await addActivity({
@@ -1111,8 +1102,6 @@ export default function ProjectDetail() {
         });
       }
     }
-
-    await updateProjectStatus(nextTasks);
 
     setTasks(nextTasks);
     recordTaskChange(data as Task);
@@ -1499,8 +1488,6 @@ export default function ProjectDetail() {
       }
     }
 
-    await updateProjectStatus(nextTasks);
-
     setTasks(nextTasks);
     recordTaskChange(updatedTask);
     setIsUpdating(false);
@@ -1840,12 +1827,45 @@ export default function ProjectDetail() {
               <Badge variant="default" className="text-sm font-medium">
                 {project.project_code || "코드 없음"}
               </Badge>
-              <Badge
-                variant={getProjectStatusBadgeVariant(project.status)}
-                className="text-sm font-medium"
-              >
-                {getProjectStatusLabel(project.status)}
-              </Badge>
+              {canUpdateProject ? (
+                <label className="inline-flex items-center gap-1.5">
+                  <span className="text-xs font-medium text-slate-500">상태</span>
+                  <span className="relative inline-flex items-center">
+                    <select
+                      aria-label="프로젝트 상태"
+                      value={getProjectStatusSelectValue(project.status)}
+                      onChange={(event) => void updateProjectStatusExplicitly(event.target.value as CanonicalProjectStatus)}
+                      disabled={isUpdatingProjectStatus || isCompletingProject}
+                      className={`h-8 appearance-none rounded-full border py-1 pl-3 pr-8 text-sm font-medium outline-none transition focus:ring-2 focus:ring-blue-100 disabled:cursor-wait disabled:opacity-70 ${
+                        getProjectStatusBadgeVariant(project.status) === "success"
+                          ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                          : getProjectStatusBadgeVariant(project.status) === "info"
+                            ? "border-blue-200 bg-blue-50 text-blue-700"
+                            : getProjectStatusBadgeVariant(project.status) === "warning"
+                              ? "border-amber-200 bg-amber-50 text-amber-700"
+                              : "border-slate-200 bg-slate-50 text-slate-700"
+                      }`}
+                    >
+                      {getProjectStatusSelectValue(project.status) === "" && (
+                        <option value="" disabled>{getProjectStatusLabel(project.status)}</option>
+                      )}
+                      {PROJECT_STATUS_OPTIONS.map((option) => (
+                        <option key={option.value} value={option.value}>{option.label}</option>
+                      ))}
+                    </select>
+                    {isUpdatingProjectStatus || isCompletingProject
+                      ? <Loader2 size={14} className="pointer-events-none absolute right-2.5 animate-spin" />
+                      : <ChevronDown size={14} className="pointer-events-none absolute right-2.5" />}
+                  </span>
+                </label>
+              ) : (
+                <Badge
+                  variant={getProjectStatusBadgeVariant(project.status)}
+                  className="text-sm font-medium"
+                >
+                  {getProjectStatusLabel(project.status)}
+                </Badge>
+              )}
               <button
                 type="button"
                 onClick={toggleFavoriteProject}

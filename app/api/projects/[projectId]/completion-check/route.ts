@@ -3,6 +3,8 @@ import { getLmeContext } from "@/lib/lme-server";
 import { hasPermission, isCalendarOnlyStaff } from "@/lib/permissions";
 import { getProjectCompletionCheck } from "@/lib/project-completion-server";
 import { decideProjectCompletion, getProjectCompletionSummary } from "@/lib/project-completion";
+import { createAuditChanges, PROJECT_AUDIT_FIELDS } from "@/lib/audit";
+import { getProjectStatusLabel, normalizeProjectStatus } from "@/lib/status";
 
 async function getContext(params: Promise<{ projectId: string }>) {
   const { projectId: raw } = await params;
@@ -36,8 +38,12 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ pr
   const decision = decideProjectCompletion(result.data, body.completionAcknowledged === true, typeof body.completionFingerprint === "string" ? body.completionFingerprint : null);
   if (decision === "changed") return Response.json({ code: "PROJECT_COMPLETION_CHECK_CHANGED", error: "점검 결과가 변경되었습니다. 최신 결과를 다시 확인해 주세요.", completionCheck: result.data }, { status: 409 });
   if (decision === "acknowledgement_required") return Response.json({ code: "PROJECT_COMPLETION_WARNINGS", error: "완료 전 확인이 필요한 항목이 있습니다.", completionCheck: result.data }, { status: 409 });
-  const update = await current.supabase.from("projects").update({ status: "completed" }).eq("id", current.projectId).neq("status", "completed").select("id").maybeSingle();
+  const update = await current.supabase.from("projects").update({ status: "completed" }).eq("id", current.projectId).or("status.is.null,status.neq.completed").select("id").maybeSingle();
   if (update.error) return Response.json({ error: update.error.message }, { status: 500 });
-  if (update.data) await logActivityWithClient(current.supabase, { type: "project_update", title: "프로젝트 상태 변경", description: `${result.data.projectName} 상태를 완료로 변경했습니다.`, projectId: current.projectId, targetType: "project", targetId: current.projectId, employeeId: employee.id, employeeName: employee.name, employeeEmail: employee.email, metadata: { before: null, after: "completed", completion_check_summary: getProjectCompletionSummary(result.data) } });
+  if (update.data) {
+    const beforeStatus = normalizeProjectStatus(result.projectStatus);
+    const changes = createAuditChanges({ status: beforeStatus }, { status: "completed" }, PROJECT_AUDIT_FIELDS);
+    await logActivityWithClient(current.supabase, { type: "project_update", title: "프로젝트 상태 변경", description: `${getProjectStatusLabel(beforeStatus)} → 완료`, projectId: current.projectId, targetType: "project", targetId: current.projectId, employeeId: employee.id, employeeName: employee.name, employeeEmail: employee.email, metadata: { changes, completion_check_summary: getProjectCompletionSummary(result.data) } });
+  }
   return Response.json({ completed: true, completionCheck: result.data });
 }
