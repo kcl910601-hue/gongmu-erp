@@ -15,9 +15,9 @@ export function getCalendarTaskMetadata(input: {
   taskType?: string | null;
 }) {
   const values: Array<[CalendarTaskMetadataKind, string]> = [
-    ["assembly", clean(input.assemblyVendorName)],
-    ["process", clean(input.processTypeName)],
     ["taskType", clean(input.taskType)],
+    ["process", clean(input.processTypeName)],
+    ["assembly", clean(input.assemblyVendorName)],
   ];
   return values.flatMap(([kind, label]) => label ? [{ kind, label }] : []);
 }
