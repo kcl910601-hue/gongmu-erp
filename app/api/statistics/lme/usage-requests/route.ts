@@ -8,7 +8,14 @@ export async function GET(request: Request) {
   if (projectIdValue && !Number.isSafeInteger(projectId)) return Response.json({ error: "프로젝트를 확인해주세요." }, { status: 400 });
   const { data, error } = await supabase.rpc("get_material_usage_requests_v2", { p_project_id: projectId });
   if (error) return Response.json({ error: error.message }, { status: 500 });
-  return Response.json({ requests: data ?? [], canManage: employee.role === "admin" });
+  const rows = (data ?? []) as Array<Record<string, unknown> & { project_id: number | null }>;
+  const projectIds = [...new Set(rows.flatMap(row => row.project_id === null ? [] : [row.project_id]))];
+  const { data: projects, error: projectError } = projectIds.length > 0
+    ? await supabase.from("projects").select("id,project_code,project_name").in("id", projectIds)
+    : { data: [], error: null };
+  if (projectError) return Response.json({ error: projectError.message }, { status: 500 });
+  const projectMap = new Map((projects ?? []).map(project => [project.id, project]));
+  return Response.json({ requests: rows.map(row => ({ ...row, project_code: row.project_id === null ? null : projectMap.get(row.project_id)?.project_code ?? null, project_name: row.project_id === null ? null : projectMap.get(row.project_id)?.project_name ?? null })), canManage: employee.role === "admin" });
 }
 
 export async function POST(request: Request) {

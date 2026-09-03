@@ -1,6 +1,6 @@
 import { getLmeContext } from "@/lib/lme-server";
 import type { MaterialContractAllocation } from "@/lib/material-contract-allocations";
-import { calculateMaterialAllocationAmountKrw, summarizeProjectMaterialAllocationCosts } from "@/lib/project-material-allocation-cost";
+import { calculateMaterialAllocationAmountKrw, summarizeProjectMaterialAllocationCosts, summarizeProjectMaterialOrderStatus } from "@/lib/project-material-allocation-cost";
 
 export async function GET(_request: Request, { params }: { params: Promise<{ projectId: string }> }) {
   const { projectId: rawProjectId } = await params;
@@ -54,7 +54,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ pro
   const summary = summarizeProjectMaterialAllocationCosts(allocations);
   const usageRequests = await supabase.rpc("get_material_usage_requests_v2", { p_project_id: projectId });
   if (usageRequests.error) return Response.json({ error: usageRequests.error.message }, { status: 500 });
-  const unallocatedTons = (usageRequests.data ?? []).reduce((sum: number, row: { unallocated_tons: number | string; status: string }) => sum + (row.status === "active" ? Number(row.unallocated_tons) : 0), 0);
+  const orderStatus = summarizeProjectMaterialOrderStatus(usageRequests.data ?? [], allocations);
   const groupRows = await supabase.from("material_usage_groups").select("id,category,sequence,name,planned_date,status,is_active").eq("project_id", projectId).eq("is_active", true).order("category").order("sequence");
   if (groupRows.error) return Response.json({ error: groupRows.error.message }, { status: 500 });
   const groupSummaries = (groupRows.data ?? []).map((group) => {
@@ -63,5 +63,5 @@ export async function GET(_request: Request, { params }: { params: Promise<{ pro
     const allocatedTons = requests.reduce((sum: number, row: { allocated_tons: number | string }) => sum + Number(row.allocated_tons), 0);
     return { ...group, requestCount: requests.length, requestedTons, allocatedTons, unallocatedTons: Math.max(requestedTons - allocatedTons, 0) };
   });
-  return Response.json({ allocations, summary, unallocatedTons, groupSummaries, canManage: employee.role === "admin", calculationBasis: { unit: "KRW/kg", formula: "quantity_tons × 1000 × contract_price_krw_per_kg", pricePolicy: "current_immutable_contract_price" } });
+  return Response.json({ allocations, summary, orderStatus, groupSummaries, canManage: employee.role === "admin", calculationBasis: { unit: "KRW/kg", formula: "quantity_tons × 1000 × contract_price_krw_per_kg", pricePolicy: "current_immutable_contract_price" } });
 }
