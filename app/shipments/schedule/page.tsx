@@ -5,7 +5,7 @@ import { FileDown, Search } from "lucide-react";
 import { ShipmentSchedulePreview } from "@/components/shipments/ShipmentSchedulePreview";
 import { Button } from "@/components/ui/Button";
 import { supabase } from "@/lib/supabase";
-import { printShipmentSchedulePdf, type ShipmentScheduleItem, type ShipmentScheduleOptions } from "@/lib/shipment-schedule-pdf";
+import { getShipmentMonthRange, printShipmentSchedulePdf, validateShipmentScheduleRange, type ShipmentScheduleItem, type ShipmentScheduleOptions, type ShipmentScheduleRange } from "@/lib/shipment-schedule-pdf";
 import { resolveTaskDisplayQuantity } from "@/lib/task-form-rules";
 
 type VendorRelation = {
@@ -65,7 +65,11 @@ function localDateString(date: Date) {
 
 export default function ShipmentSchedulePage() {
   const now = new Date();
-  const [month, setMonth] = useState(`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`);
+  const initialMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  const initialRange = getShipmentMonthRange(initialMonth)!;
+  const [rangeMode, setRangeMode] = useState<"month" | "custom">("month");
+  const [month, setMonth] = useState(initialMonth);
+  const [customRange, setCustomRange] = useState<ShipmentScheduleRange>(initialRange);
   const [vendors, setVendors] = useState<VendorOption[]>([]);
   const [selectedVendorId, setSelectedVendorId] = useState("");
   const [options, setOptions] = useState<ShipmentScheduleOptions>({ showCalendar: true, showDetails: true, includeCheckbox: true });
@@ -140,9 +144,10 @@ export default function ShipmentSchedulePage() {
 
   async function fetchScheduleItems() {
     if (!selectedVendor) throw new Error("조립업체를 선택해 주세요.");
-    const [year, monthNumber] = month.split("-").map(Number);
-    const monthStart = `${month}-01`;
-    const nextMonthStart = localDateString(new Date(year, monthNumber, 1));
+    const range = rangeMode === "month" ? getShipmentMonthRange(month) : customRange;
+    if (!range) throw new Error("출력월을 선택해 주세요.");
+    const rangeError = validateShipmentScheduleRange(range);
+    if (rangeError) throw new Error(rangeError);
     const assignments = Array.isArray(selectedVendor.assignments)
       ? selectedVendor.assignments
       : [];
@@ -154,7 +159,7 @@ export default function ShipmentSchedulePage() {
     console.info("[shipment-schedule] query conditions:", JSON.stringify({
       taskType: "contains 출고",
       status: "no filter",
-      dueDate: { gte: monthStart, lt: nextMonthStart },
+      dueDate: { gte: range.start, lte: range.end },
       projectAssemblyVendorIds: relationIds,
       excludesNullProjectAssemblyVendorId: true,
     }));
@@ -167,8 +172,8 @@ export default function ShipmentSchedulePage() {
         .from("tasks")
         .select("id, task_name, task_type, status, due_date, quantity, project_assembly_vendor_id")
         .ilike("task_type", "%출고%")
-        .gte("due_date", monthStart)
-        .lt("due_date", nextMonthStart)
+        .gte("due_date", range.start)
+        .lte("due_date", range.end)
         .order("due_date", { ascending: true }),
     ]);
     if (projectsResult.error) throw new Error(`현장 정보를 불러오지 못했습니다: ${projectsResult.error.message}`);
@@ -262,17 +267,18 @@ export default function ShipmentSchedulePage() {
     try {
       const items = await fetchScheduleItems();
       setPreviewItems(items);
-      printShipmentSchedulePdf({ month, vendorName: selectedVendor?.name || "조립업체", printedAt, items, options });
+      printShipmentSchedulePdf({ month, range: rangeMode === "custom" ? customRange : undefined, vendorName: selectedVendor?.name || "조립업체", printedAt, items, options });
     } catch (error) { setErrorMessage(error instanceof Error ? error.message : "PDF를 생성하지 못했습니다."); }
     finally { setIsLoading(false); }
   }
 
   return (
     <main className="space-y-6 p-6">
-      <div><h1 className="text-2xl font-bold text-slate-900">출고 일정표 출력(PDF)</h1><p className="mt-1 text-sm text-slate-500">조립업체별 월간 출고 Task와 배정 수량을 일정표로 출력합니다.</p></div>
+      <div><h1 className="text-2xl font-bold text-slate-900">출고 일정표 출력(PDF)</h1><p className="mt-1 text-sm text-slate-500">조립업체별 출고 Task와 배정 수량을 월 또는 지정 기간 일정표로 출력합니다.</p></div>
       <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <fieldset className="mb-5"><legend className="text-sm font-semibold text-slate-700">출력 범위</legend><div className="mt-2 flex gap-5">{([['month', '월 단위'], ['custom', '기간 지정']] as const).map(([value, label]) => <label key={value} className="flex items-center gap-2 text-sm text-slate-700"><input type="radio" name="shipment-schedule-range" value={value} checked={rangeMode === value} onChange={() => { setRangeMode(value); setErrorMessage(""); setPreviewItems(null); }} className="h-4 w-4 border-slate-300" />{label}</label>)}</div></fieldset>
         <div className="grid gap-4 md:grid-cols-2">
-          <label className="text-sm font-medium text-slate-700">출력월<input type="month" value={month} onChange={(event) => { setMonth(event.target.value); setPreviewItems(null); }} className="mt-1 block h-10 w-full rounded-xl border border-slate-300 px-3" /></label>
+          {rangeMode === "month" ? <label className="text-sm font-medium text-slate-700">출력월<input type="month" value={month} onChange={(event) => { setMonth(event.target.value); setErrorMessage(""); setPreviewItems(null); }} className="mt-1 block h-10 w-full rounded-xl border border-slate-300 px-3" /></label> : <div className="grid grid-cols-[1fr_auto_1fr] items-end gap-2"><label className="text-sm font-medium text-slate-700">시작일<input type="date" value={customRange.start} onChange={(event) => { setCustomRange((current) => ({ ...current, start: event.target.value })); setErrorMessage(""); setPreviewItems(null); }} className="mt-1 block h-10 w-full rounded-xl border border-slate-300 px-3" /></label><span className="pb-2.5 text-slate-400">~</span><label className="text-sm font-medium text-slate-700">종료일<input type="date" value={customRange.end} onChange={(event) => { setCustomRange((current) => ({ ...current, end: event.target.value })); setErrorMessage(""); setPreviewItems(null); }} className="mt-1 block h-10 w-full rounded-xl border border-slate-300 px-3" /></label></div>}
           <label className="text-sm font-medium text-slate-700">조립업체<select value={selectedVendorId} onChange={(event) => { setSelectedVendorId(event.target.value); setPreviewItems(null); }} disabled={isLoadingVendors} className="mt-1 block h-10 w-full rounded-xl border border-slate-300 bg-white px-3"><option value="">조립업체 선택</option>{(Array.isArray(vendors) ? vendors : []).map((vendor) => <option key={vendor.organizationId} value={vendor.organizationId}>{vendor.name}</option>)}</select></label>
         </div>
         <fieldset className="mt-5"><legend className="text-sm font-semibold text-slate-700">출력 옵션</legend><div className="mt-2 flex flex-wrap gap-5">{([
@@ -281,7 +287,7 @@ export default function ShipmentSchedulePage() {
         {errorMessage && <p role="alert" className="mt-4 rounded-xl bg-red-50 p-3 text-sm text-red-700">{errorMessage}</p>}
         <div className="mt-5 flex gap-2"><Button variant="outline" onClick={handlePreview} disabled={isLoading || !month || !selectedVendor}><Search className="mr-2 h-4 w-4" />미리보기</Button><Button variant="primary" onClick={handlePdf} disabled={isLoading || !month || !selectedVendor || (!options.showCalendar && !options.showDetails)}><FileDown className="mr-2 h-4 w-4" />PDF 생성</Button></div>
       </section>
-      {previewItems !== null && <section><div className="mb-2 flex items-center justify-between"><h2 className="text-lg font-semibold text-slate-900">미리보기</h2><span className="text-sm text-slate-500">출고 {previewItems.length}건</span></div><div className="overflow-x-auto rounded-2xl border border-slate-200 bg-slate-100 p-4"><ShipmentSchedulePreview month={month} vendorName={selectedVendor?.name || "조립업체"} printedAt={printedAt} items={previewItems} options={options} /></div></section>}
+      {previewItems !== null && <section><div className="mb-2 flex items-center justify-between"><h2 className="text-lg font-semibold text-slate-900">미리보기</h2><span className="text-sm text-slate-500">출고 {previewItems.length}건</span></div><div className="overflow-x-auto rounded-2xl border border-slate-200 bg-slate-100 p-4"><ShipmentSchedulePreview month={month} range={rangeMode === "custom" ? customRange : undefined} vendorName={selectedVendor?.name || "조립업체"} printedAt={printedAt} items={previewItems} options={options} /></div></section>}
     </main>
   );
 }
