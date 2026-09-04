@@ -16,13 +16,16 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
   const { id } = await params;
   const { supabase, employee } = await getLmeContext();
   if (!employee) return Response.json({ error: "승인된 사용자만 조회할 수 있습니다." }, { status: 403 });
-  const { data, error } = await supabase.from("activity_logs")
-    .select("created_at,activity_type,title,description,employee_name,metadata")
-    .eq("target_type", "material_usage_request")
-    .contains("metadata", { usage_request_id: id })
-    .order("created_at", { ascending: false });
+  const selection = "created_at,activity_type,title,description,employee_name,metadata";
+  const [requestActivity, allocationActivity] = await Promise.all([
+    supabase.from("activity_logs").select(selection).contains("metadata", { usage_request_id: id }),
+    supabase.from("activity_logs").select(selection).contains("metadata", { after: { usage_request_id: id } }),
+  ]);
+  const error = requestActivity.error ?? allocationActivity.error;
   if (error) return Response.json({ error: error.message }, { status: 500 });
-  const history = (data ?? []).map((row) => {
+  const data = [...(requestActivity.data ?? []), ...(allocationActivity.data ?? [])]
+    .sort((a, b) => b.created_at.localeCompare(a.created_at));
+  const history = data.map((row) => {
     if (row.activity_type !== "material_usage_request_created") return row;
     const metadata = row.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata) ? row.metadata as Record<string, unknown> : {};
     const quantityTons = Number(metadata.quantity_tons);
