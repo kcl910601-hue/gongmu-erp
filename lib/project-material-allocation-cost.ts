@@ -4,7 +4,7 @@ export type ProjectMaterialCostRow = {
   allocation_type: string;
   status: ProjectMaterialCostStatus;
   quantity_tons: number | string;
-  contract_price_krw_per_kg: number | string;
+  applied_unit_price_krw_per_kg: number | string;
 };
 
 export type ProjectMaterialCostSummary = {
@@ -21,6 +21,7 @@ export type ProjectMaterialOrderStatus = {
   confirmedTons: number;
   allocatedTons: number;
   unallocatedTons: number;
+  excessTons: number;
   allocationRate: number;
 };
 
@@ -71,10 +72,11 @@ export function summarizeProjectMaterialOrderStatus(
   }
 
   const requestedTons = normalizeTons(activeRequests.reduce((sum, request) => sum + Number(request.quantity_tons), 0));
-  const unallocatedTons = normalizeTons(activeRequests.reduce((sum, request) => sum + Number(request.unallocated_tons), 0));
   plannedTons = normalizeTons(plannedTons);
   confirmedTons = normalizeTons(confirmedTons);
   const allocatedTons = normalizeTons(plannedTons + confirmedTons);
+  const unallocatedTons = normalizeTons(Math.max(requestedTons - allocatedTons, 0));
+  const excessTons = normalizeTons(Math.max(allocatedTons - requestedTons, 0));
 
   return {
     requestedTons,
@@ -82,7 +84,8 @@ export function summarizeProjectMaterialOrderStatus(
     confirmedTons,
     allocatedTons,
     unallocatedTons,
-    allocationRate: requestedTons > 0 ? Math.min(100, Math.round((allocatedTons / requestedTons) * 10_000) / 100) : 0,
+    excessTons,
+    allocationRate: requestedTons > 0 ? Math.round((allocatedTons / requestedTons) * 10_000) / 100 : 0,
   };
 }
 
@@ -95,7 +98,7 @@ export function summarizeProjectMaterialAllocationCosts(rows: readonly ProjectMa
   for (const row of rows) {
     if (row.allocation_type !== "project" || row.status === "cancelled") continue;
     const tons = Number(row.quantity_tons);
-    const amount = calculateMaterialAllocationAmountKrw(row.quantity_tons, row.contract_price_krw_per_kg);
+    const amount = calculateMaterialAllocationAmountKrw(row.quantity_tons, row.applied_unit_price_krw_per_kg);
     if (!Number.isFinite(tons) || amount === null) continue;
     if (row.status === "planned") { plannedTons += tons; plannedCostKrw += amount; }
     else { confirmedTons += tons; confirmedCostKrw += amount; }

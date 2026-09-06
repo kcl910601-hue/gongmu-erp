@@ -1,4 +1,5 @@
 import { getLmeContext } from "@/lib/lme-server";
+import { formatMaterialUsageRequestAllocationHistory } from "@/lib/material-contract-allocations";
 
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -16,18 +17,17 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
   const { id } = await params;
   const { supabase, employee } = await getLmeContext();
   if (!employee) return Response.json({ error: "승인된 사용자만 조회할 수 있습니다." }, { status: 403 });
-  const selection = "created_at,activity_type,title,description,employee_name,metadata";
-  const [requestActivity, allocationActivity] = await Promise.all([
-    supabase.from("activity_logs").select(selection).contains("metadata", { usage_request_id: id }),
-    supabase.from("activity_logs").select(selection).contains("metadata", { after: { usage_request_id: id } }),
-  ]);
-  const error = requestActivity.error ?? allocationActivity.error;
+  const { data, error } = await supabase.rpc("get_material_usage_request_history", {
+    p_usage_request_id: id,
+  });
   if (error) return Response.json({ error: error.message }, { status: 500 });
-  const data = [...(requestActivity.data ?? []), ...(allocationActivity.data ?? [])]
-    .sort((a, b) => b.created_at.localeCompare(a.created_at));
-  const history = data.map((row) => {
-    if (row.activity_type !== "material_usage_request_created") return row;
+  const rows = (data ?? []) as Array<{ created_at: string; activity_type: string; title: string; description: string | null; employee_name: string | null; metadata: unknown }>;
+  const history = rows.map((row) => {
     const metadata = row.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata) ? row.metadata as Record<string, unknown> : {};
+    if (row.activity_type === "material_allocation_created") {
+      return { ...row, description: formatMaterialUsageRequestAllocationHistory(metadata) };
+    }
+    if (row.activity_type !== "material_usage_request_created") return row;
     const quantityTons = Number(metadata.quantity_tons);
     const quantityLabel = Number.isFinite(quantityTons) ? `${new Intl.NumberFormat("ko-KR", { maximumFractionDigits: 1 }).format(quantityTons * 1_000)}kg` : row.description;
     return { ...row, title: "알루미늄 발주 등록", description: quantityLabel };

@@ -31,7 +31,8 @@ export async function GET(_request: Request, { params }: { params: Promise<{ pro
     const supplier = Array.isArray(contract?.supplier) ? contract.supplier[0] : contract?.supplier;
     const material = Array.isArray(contract?.material) ? contract.material[0] : contract?.material;
     const quantityTons = Number(row.quantity_tons);
-    const unitPrice = Number(contract?.contract_price_krw_per_kg ?? 0);
+    const sourceType = row.source_type === "direct_price" ? "direct_price" : "contract";
+    const unitPrice = Number(row.applied_unit_price_krw_per_kg);
     return {
       ...row,
       contract: undefined,
@@ -43,8 +44,11 @@ export async function GET(_request: Request, { params }: { params: Promise<{ pro
       created_by_name: creatorNames.get(row.created_by) ?? null,
       purchase_order_no: usageRequest?.purchase_order_no ?? row.purchase_order_no,
       memo: usageRequest?.memo ?? row.memo,
-      contract_name: contract?.contract_name ?? "-",
-      material_code: contract?.material_code ?? "-",
+      source_type: sourceType,
+      direct_unit_price_krw_per_kg: row.direct_unit_price_krw_per_kg === null ? null : Number(row.direct_unit_price_krw_per_kg),
+      applied_unit_price_krw_per_kg: unitPrice,
+      contract_name: sourceType === "direct_price" ? "직접단가" : contract?.contract_name ?? "-",
+      material_code: contract?.material_code ?? "AL",
       material_name: material?.name ?? null,
       contract_price_krw_per_kg: unitPrice,
       amount_krw: calculateMaterialAllocationAmountKrw(quantityTons, unitPrice),
@@ -63,5 +67,5 @@ export async function GET(_request: Request, { params }: { params: Promise<{ pro
     const allocatedTons = requests.reduce((sum: number, row: { allocated_tons: number | string }) => sum + Number(row.allocated_tons), 0);
     return { ...group, requestCount: requests.length, requestedTons, allocatedTons, unallocatedTons: Math.max(requestedTons - allocatedTons, 0) };
   });
-  return Response.json({ allocations, summary, orderStatus, groupSummaries, canManage: employee.role === "admin", calculationBasis: { unit: "KRW/kg", formula: "quantity_tons × 1000 × contract_price_krw_per_kg", pricePolicy: "current_immutable_contract_price" } });
+  return Response.json({ allocations, summary, orderStatus, groupSummaries, canManage: employee.role === "admin", calculationBasis: { unit: "KRW/kg", formula: "quantity_tons × 1000 × applied_unit_price_krw_per_kg", pricePolicy: "immutable_allocation_snapshot" } });
 }

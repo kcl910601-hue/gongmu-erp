@@ -1,6 +1,8 @@
 export const MATERIAL_CONTRACT_ALLOCATION_STATUSES = ["planned", "confirmed", "cancelled"] as const;
 
 export type MaterialContractAllocationStatus = typeof MATERIAL_CONTRACT_ALLOCATION_STATUSES[number];
+export const MATERIAL_ALLOCATION_SOURCE_TYPES = ["contract", "direct_price"] as const;
+export type MaterialAllocationSourceType = typeof MATERIAL_ALLOCATION_SOURCE_TYPES[number];
 export const MATERIAL_ALLOCATION_TYPES = ["project", "factory", "as", "sample", "etc"] as const;
 export type MaterialAllocationType = typeof MATERIAL_ALLOCATION_TYPES[number];
 export const MATERIAL_ALLOCATION_TYPE_LABELS: Record<MaterialAllocationType, string> = {
@@ -8,6 +10,25 @@ export const MATERIAL_ALLOCATION_TYPE_LABELS: Record<MaterialAllocationType, str
 };
 export function isMaterialAllocationType(value: unknown): value is MaterialAllocationType {
   return typeof value === "string" && MATERIAL_ALLOCATION_TYPES.includes(value as MaterialAllocationType);
+}
+
+export function formatMaterialUsageRequestAllocationHistory(metadata: unknown) {
+  const root = metadata && typeof metadata === "object" && !Array.isArray(metadata)
+    ? metadata as Record<string, unknown>
+    : {};
+  const after = root.after && typeof root.after === "object" && !Array.isArray(root.after)
+    ? root.after as Record<string, unknown>
+    : {};
+  const quantityTons = Number(after.quantity_tons);
+  const appliedUnitPrice = Number(after.applied_unit_price_krw_per_kg);
+  const source = after.source_type === "direct_price" ? "직접단가" : "계약";
+  const quantityLabel = Number.isFinite(quantityTons)
+    ? `${new Intl.NumberFormat("ko-KR", { maximumFractionDigits: 1 }).format(quantityTons * 1_000)}kg`
+    : "배정량 확인 필요";
+  const priceLabel = Number.isFinite(appliedUnitPrice)
+    ? `${new Intl.NumberFormat("ko-KR", { maximumFractionDigits: 4 }).format(appliedUnitPrice)}원/kg`
+    : "단가 확인 필요";
+  return `${source} · ${quantityLabel} · ${priceLabel}`;
 }
 
 export type ContractAllocationSummary = {
@@ -27,7 +48,10 @@ export type ContractAllocationRow = {
 
 export type MaterialContractAllocation = {
   id: string;
-  contract_id: string;
+  contract_id: string | null;
+  source_type: MaterialAllocationSourceType;
+  direct_unit_price_krw_per_kg: number | null;
+  applied_unit_price_krw_per_kg: number;
   allocation_type: MaterialAllocationType;
   project_id: number | null;
   destination_name: string | null;

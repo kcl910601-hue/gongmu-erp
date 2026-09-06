@@ -22,11 +22,17 @@ export async function POST(request: Request) {
   const { supabase, employee } = await getLmeContext();
   if (!employee || employee.role !== "admin") return Response.json({ error: "관리자 권한이 필요합니다." }, { status: 403 });
   const body = await request.json() as Record<string, unknown>;
-  if (typeof body.usageRequestId !== "string" || typeof body.contractId !== "string") return Response.json({ error: "사용요청과 계약을 확인해주세요." }, { status: 400 });
+  if (typeof body.usageRequestId !== "string") return Response.json({ error: "사용요청을 확인해주세요." }, { status: 400 });
+  const sourceType = body.sourceType === "direct_price" ? "direct_price" : "contract";
+  if (sourceType === "contract" && typeof body.contractId !== "string") return Response.json({ error: "계약을 확인해주세요." }, { status: 400 });
   const quantity = Number(body.quantityTons); const expected = body.expectedAvailableTons === undefined ? null : Number(body.expectedAvailableTons);
+  const directUnitPrice = Number(body.directUnitPriceKrwPerKg);
   const status = body.status === "confirmed" ? "confirmed" : "planned";
-  if (!Number.isFinite(quantity) || quantity <= 0 || (expected !== null && !Number.isFinite(expected))) return Response.json({ error: "배정량을 확인해주세요." }, { status: 400 });
-  const { data, error } = await supabase.rpc("allocate_material_usage_request", { p_usage_request_id: body.usageRequestId, p_contract_id: body.contractId, p_quantity_tons: quantity, p_status: status, p_expected_available: expected });
+  if (!Number.isFinite(quantity) || quantity <= 0 || Math.round(quantity * 10_000) !== quantity * 10_000 || (expected !== null && !Number.isFinite(expected))) return Response.json({ error: "배정량을 확인해주세요." }, { status: 400 });
+  if (sourceType === "direct_price" && (!Number.isFinite(directUnitPrice) || directUnitPrice <= 0)) return Response.json({ error: "직접단가를 확인해주세요." }, { status: 400 });
+  const { data, error } = sourceType === "direct_price"
+    ? await supabase.rpc("allocate_material_usage_request_direct_price", { p_usage_request_id: body.usageRequestId, p_quantity_tons: quantity, p_direct_unit_price_krw_per_kg: directUnitPrice, p_status: status })
+    : await supabase.rpc("allocate_material_usage_request", { p_usage_request_id: body.usageRequestId, p_contract_id: body.contractId as string, p_quantity_tons: quantity, p_status: status, p_expected_available: expected });
   if (error) return Response.json({ error: error.message }, { status: error.code === "42501" ? 403 : error.code === "40001" ? 409 : 400 });
   return Response.json({ allocation: data }, { status: 201 });
 }
