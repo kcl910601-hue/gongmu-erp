@@ -1,10 +1,24 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildContractAllocationSummaryMap, calculateContractAllocationSummary, type ContractAllocationRow } from "./material-contract-allocations.ts";
+import { buildContractAllocationSummaryMap, calculateContractAllocationSummary, isValidAllocationQuantity, parseMaterialAllocationQuantityKg, type ContractAllocationRow } from "./material-contract-allocations.ts";
 import { parseMaterialContractAllocationInput } from "./material-contract-allocation-input.ts";
 
 test("zero allocations preserves the full contract quantity", () => {
   assert.deepEqual(calculateContractAllocationSummary(100, []), { contractQuantityTons: 100, plannedTons: 0, confirmedTons: 0, cancelledTons: 0, remainingTons: 100, availableTons: 100 });
+});
+
+test("kg 입력을 0.1kg 단위로 검증하고 ton 소수점 4자리로 변환한다", () => {
+  assert.deepEqual(parseMaterialAllocationQuantityKg("10000"), { quantityKg: 10000, quantityTons: 10 });
+  assert.deepEqual(parseMaterialAllocationQuantityKg("10350"), { quantityKg: 10350, quantityTons: 10.35 });
+  assert.deepEqual(parseMaterialAllocationQuantityKg("10350.1"), { quantityKg: 10350.1, quantityTons: 10.3501 });
+  assert.deepEqual(parseMaterialAllocationQuantityKg("350"), { quantityKg: 350, quantityTons: 0.35 });
+  assert.equal(parseMaterialAllocationQuantityKg("10350.12"), null);
+});
+
+test("부동소수점 오차가 있는 정상 ton 배정량을 허용한다", () => {
+  assert.equal(isValidAllocationQuantity(0.0003), true);
+  assert.equal(isValidAllocationQuantity(10.3501), true);
+  assert.equal(isValidAllocationQuantity(1.00001), false);
 });
 
 test("statuses are aggregated and cancelled rows do not reduce balances", () => {

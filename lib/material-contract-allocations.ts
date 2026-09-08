@@ -71,7 +71,16 @@ export type MaterialContractAllocation = {
 
 export function isValidAllocationQuantity(value: unknown) {
   const quantity = typeof value === "number" ? value : Number(value);
-  return Number.isFinite(quantity) && quantity > 0 && Math.round(quantity * QUANTITY_PRECISION) === quantity * QUANTITY_PRECISION;
+  const scaledQuantity = quantity * QUANTITY_PRECISION;
+  return Number.isFinite(quantity) && quantity > 0 && Math.abs(Math.round(scaledQuantity) - scaledQuantity) < 1e-8;
+}
+
+export function parseMaterialAllocationQuantityKg(value: unknown) {
+  const input = typeof value === "string" ? value.trim() : String(value ?? "");
+  if (!/^\d+(?:\.\d)?$/.test(input)) return null;
+  const quantityKg = Number(input);
+  if (!Number.isFinite(quantityKg) || quantityKg <= 0) return null;
+  return { quantityKg, quantityTons: Number((quantityKg / 1_000).toFixed(4)) };
 }
 
 const QUANTITY_PRECISION = 10_000;

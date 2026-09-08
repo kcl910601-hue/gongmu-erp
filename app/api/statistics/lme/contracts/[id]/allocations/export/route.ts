@@ -20,7 +20,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
   const rows = result.data.map((allocation) => [
     allocation.allocation_date,
     MATERIAL_ALLOCATION_TYPE_LABELS[allocation.allocation_type],
-    allocation.allocation_type === "project" ? allocation.project_name : allocation.allocation_type === "factory" ? "공장 재고" : allocation.destination_name,
+    allocation.allocation_type === "project" ? allocation.project_name : allocation.allocation_type === "factory" ? allocation.destination_name ?? "공장 재고" : allocation.destination_name,
     allocation.allocation_type === "project" ? allocation.project_code : "",
     allocation.status === "planned" ? "예정" : allocation.status === "confirmed" ? "확정" : "취소",
     allocation.quantity_tons,

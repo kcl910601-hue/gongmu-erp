@@ -195,8 +195,8 @@
                           {MATERIAL_ALLOCATION_TYPE_LABELS[allocation.allocation_type]}
                         </span>
                       </td>
-                      <td className="truncate px-3 py-2 align-middle font-semibold"title={allocation.allocation_type==="project"?allocation.project_name:allocation.allocation_type==="factory"?"공장 재고":allocation.destination_name??""}>
-                        {allocation.allocation_type==="project"?allocation.project_name:allocation.allocation_type==="factory"?"공장 재고":allocation.destination_name}
+                      <td className="truncate px-3 py-2 align-middle font-semibold"title={allocation.allocation_type==="project"?allocation.project_name:allocation.allocation_type==="factory"?allocation.destination_name??"공장 재고":allocation.destination_name??""}>
+                        {allocation.allocation_type==="project"?allocation.project_name:allocation.allocation_type==="factory"?allocation.destination_name??"공장 재고":allocation.destination_name}
                       </td>
                       <td className="whitespace-nowrap px-3 py-2 align-middle">
                         {allocation.allocation_type==="project"?allocation.project_code??"-":"-"}
