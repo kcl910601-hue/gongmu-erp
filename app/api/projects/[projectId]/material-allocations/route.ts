@@ -67,5 +67,5 @@ export async function GET(_request: Request, { params }: { params: Promise<{ pro
     const allocatedTons = requests.reduce((sum: number, row: { allocated_tons: number | string }) => sum + Number(row.allocated_tons), 0);
     return { ...group, requestCount: requests.length, requestedTons, allocatedTons, unallocatedTons: Math.max(requestedTons - allocatedTons, 0) };
   });
-  return Response.json({ allocations, summary, orderStatus, groupSummaries, canManage: employee.role === "admin", calculationBasis: { unit: "KRW/kg", formula: "quantity_tons × 1000 × applied_unit_price_krw_per_kg", pricePolicy: "immutable_allocation_snapshot" } });
+  return Response.json({ allocations, usageRequests: usageRequests.data ?? [], summary, orderStatus, groupSummaries, canManage: employee.role === "admin", calculationBasis: { unit: "KRW/kg", formula: "quantity_tons × 1000 × applied_unit_price_krw_per_kg", pricePolicy: "immutable_allocation_snapshot" } });
 }

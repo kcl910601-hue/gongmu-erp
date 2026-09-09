@@ -10,6 +10,7 @@ import type { ProjectMaterialCostSummary } from "@/lib/project-material-allocati
 import { toast } from "@/lib/toast";
 import { MATERIAL_USAGE_GROUP_STATUS_LABELS, type MaterialUsageGroupStatus } from "@/lib/material-usage-groups";
 import { MATERIAL_USAGE_REQUESTS_CHANGED_EVENT } from "@/lib/collaboration-events";
+import type { MaterialUsageRequest } from "@/lib/material-usage-requests";
 import type { ProjectMaterialOrderStatus } from "@/lib/project-material-allocation-cost";
 
 type ProjectTarget = { id: number; project_code: string | null; project_name: string; client_name: string | null; site_address: string | null };
@@ -23,6 +24,7 @@ const formatKg = (tons: number) => `${kilogramFormatter.format(tons * 1_000)} kg
 
 export function ProjectMaterialAllocationsSection({ project }: { project: ProjectTarget }) {
   const [allocations, setAllocations] = useState<ProjectAllocation[]>([]);
+  const [usageRequests, setUsageRequests] = useState<MaterialUsageRequest[]>([]);
   const [requestOpen, setRequestOpen] = useState(false);
   const [canManage, setCanManage] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -33,8 +35,9 @@ export function ProjectMaterialAllocationsSection({ project }: { project: Projec
 
   const load = useCallback(async () => {
     const allocationResponse = await fetch(`/api/projects/${project.id}/material-allocations`, { cache: "no-store" });
-    const allocationResult = await allocationResponse.json() as { allocations?: ProjectAllocation[]; summary?: ProjectMaterialCostSummary; orderStatus?: ProjectMaterialOrderStatus; groupSummaries?:GroupSummary[]; canManage?: boolean; error?: string };
+    const allocationResult = await allocationResponse.json() as { allocations?: ProjectAllocation[]; usageRequests?: MaterialUsageRequest[]; summary?: ProjectMaterialCostSummary; orderStatus?: ProjectMaterialOrderStatus; groupSummaries?:GroupSummary[]; canManage?: boolean; error?: string };
     if (!allocationResponse.ok) throw new Error(allocationResult.error ?? "원자재 사용 이력을 불러오지 못했습니다.");
+    setUsageRequests(allocationResult.usageRequests ?? []);
     setAllocations(allocationResult.allocations ?? []); setSummary(allocationResult.summary ?? emptySummary); setOrderStatus(allocationResult.orderStatus ?? emptyOrderStatus); setGroupSummaries(allocationResult.groupSummaries??[]); setCanManage(allocationResult.canManage === true);
   }, [project.id]);
 
@@ -50,8 +53,31 @@ export function ProjectMaterialAllocationsSection({ project }: { project: Projec
       {orderStatus.excessTons>0&&<div className="mt-3 inline-flex rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-bold text-amber-700">초과 +{formatKg(orderStatus.excessTons)}</div>}
       {orderStatus.unallocatedTons>0&&<p className="mt-3 text-xs font-medium text-amber-700">미배정 알루미늄 {formatKg(orderStatus.unallocatedTons)}가 있어 계약 배정 원가가 아직 최종 확정되지 않았습니다.</p>}
       <div className="mt-3 grid gap-3 sm:grid-cols-2">{[["배정 예정 원가",`${formatNumber(summary.plannedCostKrw)}원`],["배정 확정 원가",`${formatNumber(summary.confirmedCostKrw)}원`]].map(([label,value])=><div key={label} className="rounded-xl border border-slate-200 p-3"><p className="text-xs font-semibold text-slate-500">{label}</p><p className="mt-1 text-base font-bold text-slate-900">{value}</p></div>)}</div>
+      <div className="mt-5">
+        <h3 className="text-sm font-bold">발주 내역</h3>
+        <div className="mt-2 overflow-x-auto rounded-xl border">
+          <table className="w-full min-w-[900px] text-left text-xs">
+            <thead className="bg-slate-100"><tr>{["사용일", "원자재", "사용 구분", "발주번호", "발주량", "배정량", "미배정", "상태", "메모"].map(label => <th key={label} className="whitespace-nowrap px-3 py-2">{label}</th>)}</tr></thead>
+            <tbody>
+              {usageRequests.map(request => <tr key={request.id} className={`border-t ${request.status === "cancelled" ? "bg-slate-50 text-slate-400" : ""}`}>
+                <td className="whitespace-nowrap px-3 py-2">{request.usage_date}</td>
+                <td className="px-3 py-2">{request.material_code}</td>
+                <td className="px-3 py-2">{request.group_name ?? "-"}</td>
+                <td className="break-words px-3 py-2">{request.purchase_order_no ?? "-"}</td>
+                <td className="whitespace-nowrap px-3 py-2 text-right tabular-nums">{formatKg(Number(request.quantity_tons))}</td>
+                <td className="whitespace-nowrap px-3 py-2 text-right tabular-nums">{formatKg(Number(request.allocated_tons))}</td>
+                <td className="whitespace-nowrap px-3 py-2 text-right tabular-nums">{formatKg(Number(request.unallocated_tons))}</td>
+                <td className="whitespace-nowrap px-3 py-2">{request.status === "cancelled" ? "취소" : request.allocation_state === "fully_allocated" ? "배정완료" : request.allocation_state === "partially_allocated" ? "부분배정" : "미배정"}</td>
+                <td className="min-w-48 whitespace-pre-wrap break-words px-3 py-2">{request.memo ?? "-"}</td>
+              </tr>)}
+              {usageRequests.length === 0 && <tr><td colSpan={9} className="px-4 py-8 text-center text-slate-400">등록된 발주 내역이 없습니다.</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <h3 className="mt-5 text-sm font-bold">배정 이력</h3>
       <div className="mt-4 flex justify-end"><select aria-label="원자재 배정 상태 필터" value={statusFilter} onChange={(event)=>setStatusFilter(event.target.value as "all"|"planned"|"confirmed")} className="rounded-xl border px-3 py-2 text-xs"><option value="all">전체</option><option value="planned">예정</option><option value="confirmed">확정</option></select></div>
-      <div className="mt-3 overflow-x-auto rounded-xl border"><table className="min-w-[1150px] w-full text-left text-xs"><thead className="bg-slate-100"><tr>{["배정일","소스","공급업체","계약명","원자재","상태","배정량","적용단가","금액","발주번호","메모"].map((label)=><th key={label} className="whitespace-nowrap px-3 py-2">{label}</th>)}</tr></thead><tbody>{visibleAllocations.map((allocation)=><tr key={allocation.id} className={`border-t ${allocation.status==="cancelled"?"bg-slate-50 text-slate-400":""}`}><td className="whitespace-nowrap px-3 py-2">{allocation.allocation_date}</td><td className="whitespace-nowrap px-3 py-2"><span className="rounded-full bg-slate-100 px-2 py-1 font-semibold">{allocation.source_type==="direct_price"?"직접단가":"계약"}</span></td><td className="whitespace-nowrap px-3 py-2">{allocation.source_type==="direct_price"?"-":allocation.supplier_name}</td><td className="px-3 py-2 font-semibold">{allocation.contract_name}</td><td className="whitespace-nowrap px-3 py-2">{allocation.material_code}{allocation.material_name?` · ${allocation.material_name}`:""}</td><td className="whitespace-nowrap px-3 py-2">{statusLabel[allocation.status]}</td><td className="whitespace-nowrap px-3 py-2 text-right tabular-nums">{formatKg(allocation.quantity_tons)}</td><td className="whitespace-nowrap px-3 py-2 text-right tabular-nums">{formatNumber(allocation.applied_unit_price_krw_per_kg)}원/kg</td><td className="whitespace-nowrap px-3 py-2 text-right font-semibold tabular-nums">{allocation.amount_krw===null?"계산 불가":`${formatNumber(allocation.amount_krw)}원`}</td><td className="max-w-48 truncate px-3 py-2" title={allocation.purchase_order_no??""}>{allocation.purchase_order_no??"-"}</td><td className="max-w-52 truncate px-3 py-2" title={allocation.memo??""}>{allocation.memo??"-"}</td></tr>)}{visibleAllocations.length===0&&<tr><td colSpan={11} className="px-4 py-10 text-center text-slate-400">조건에 맞는 원자재 사용 이력이 없습니다.</td></tr>}</tbody></table></div>
+      <div className="mt-3 overflow-x-auto rounded-xl border"><table className="min-w-[1150px] w-full text-left text-xs"><thead className="bg-slate-100"><tr>{["배정일","소스","공급업체","계약명","원자재","상태","배정량","적용단가","금액","발주번호","메모"].map((label)=><th key={label} className="whitespace-nowrap px-3 py-2">{label}</th>)}</tr></thead><tbody>{visibleAllocations.map((allocation)=><tr key={allocation.id} className={`border-t ${allocation.status==="cancelled"?"bg-slate-50 text-slate-400":""}`}><td className="whitespace-nowrap px-3 py-2">{allocation.allocation_date}</td><td className="whitespace-nowrap px-3 py-2"><span className="rounded-full bg-slate-100 px-2 py-1 font-semibold">{allocation.source_type==="direct_price"?"직접단가":"계약"}</span></td><td className="whitespace-nowrap px-3 py-2">{allocation.source_type==="direct_price"?"-":allocation.supplier_name}</td><td className="px-3 py-2 font-semibold">{allocation.contract_name}</td><td className="whitespace-nowrap px-3 py-2">{allocation.material_code}{allocation.material_name?` · ${allocation.material_name}`:""}</td><td className="whitespace-nowrap px-3 py-2">{statusLabel[allocation.status]}</td><td className="whitespace-nowrap px-3 py-2 text-right tabular-nums">{formatKg(allocation.quantity_tons)}</td><td className="whitespace-nowrap px-3 py-2 text-right tabular-nums">{formatNumber(allocation.applied_unit_price_krw_per_kg)}원/kg</td><td className="whitespace-nowrap px-3 py-2 text-right font-semibold tabular-nums">{allocation.amount_krw===null?"계산 불가":`${formatNumber(allocation.amount_krw)}원`}</td><td className="max-w-48 truncate px-3 py-2" title={allocation.purchase_order_no??""}>{allocation.purchase_order_no??"-"}</td><td className="max-w-52 truncate px-3 py-2" title={allocation.memo??""}>{allocation.memo??"-"}</td></tr>)}{visibleAllocations.length===0&&<tr><td colSpan={11} className="px-4 py-10 text-center text-slate-400">조건에 맞는 배정 이력이 없습니다.</td></tr>}</tbody></table></div>
     </>}
     <ProjectMaterialRequestDialog projectId={project.id} open={requestOpen} onClose={()=>setRequestOpen(false)} onSaved={load}/>
   </section>;

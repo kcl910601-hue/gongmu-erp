@@ -49,7 +49,7 @@ export async function PATCH(request: Request) {
   const usageDate = typeof body.usageDate === "string" ? body.usageDate : "";
   const purchaseOrderNo = typeof body.purchaseOrderNo === "string" ? body.purchaseOrderNo : null;
   const memo = typeof body.memo === "string" ? body.memo : null;
-  if (!Number.isFinite(quantity) || quantity <= 0 || Math.round(quantity * 10_000) !== quantity * 10_000 || !/^\d{4}-\d{2}-\d{2}$/.test(usageDate)) return Response.json({ error: "사용요청 입력값을 확인해주세요." }, { status: 400 });
+  if (!isValidAllocationQuantity(quantity) || !/^\d{4}-\d{2}-\d{2}$/.test(usageDate)) return Response.json({ error: "사용요청 입력값을 확인해주세요." }, { status: 400 });
   const { data, error } = await supabase.rpc("update_material_usage_request", { p_usage_request_id: body.usageRequestId, p_quantity_tons: quantity, p_purchase_order_no: purchaseOrderNo, p_usage_date: usageDate, p_memo: memo });
   if (error) return Response.json({ error: error.message }, { status: error.code === "42501" ? 403 : 400 });
   if (body.materialUsageGroupId === null || typeof body.materialUsageGroupId === "string") { const groupResult = await supabase.rpc("set_material_usage_request_group", { p_usage_request_id: body.usageRequestId, p_group_id: body.materialUsageGroupId }); if (groupResult.error) return Response.json({ error: groupResult.error.message }, { status: groupResult.error.code === "42501" ? 403 : 400 }); }
