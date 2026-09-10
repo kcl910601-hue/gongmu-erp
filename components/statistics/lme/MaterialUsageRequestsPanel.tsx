@@ -155,7 +155,7 @@
             {history.length===0&&<Empty/>}
           </div>
         </Modal>}
-    </section>;}function GroupCard({group,rows,canManage,onEditGroup,actions}:{group:MaterialUsageGroup|null;rows:MaterialUsageRequest[];canManage:boolean;onEditGroup:(group:MaterialUsageGroup)=>void;actions:(row:MaterialUsageRequest)=>ReactNode;}){const requested=rows.filter(row=>row.status==="active").reduce((sum,row)=>sum+row.quantity_tons,0);const allocated=rows.filter(row=>row.status==="active").reduce((sum,row)=>sum+row.allocated_tons,0);const unallocated=Math.max(requested-allocated,0);return<article className="rounded-2xl border p-4">
+    </section>;}function GroupCard({group,rows,canManage,onEditGroup,actions}:{group:MaterialUsageGroup|null;rows:MaterialUsageRequest[];canManage:boolean;onEditGroup:(group:MaterialUsageGroup)=>void;actions:(row:MaterialUsageRequest)=>ReactNode;}){const requested=rows.filter(row=>row.status==="active").reduce((sum,row)=>sum+row.quantity_tons,0);const allocated=rows.filter(row=>row.status==="active").reduce((sum,row)=>sum+row.allocated_tons,0);const unallocated=rows.filter(row=>row.status==="active").reduce((sum,row)=>sum+Math.max(row.unallocated_tons,0),0);return<article className="rounded-2xl border p-4">
       <header className="flex flex-wrap items-start justify-between gap-2">
         <div>
           <div className="flex flex-wrap items-center gap-2">

@@ -60,6 +60,7 @@ export function summarizeProjectMaterialOrderStatus(
 ): ProjectMaterialOrderStatus {
   const activeRequests = requests.filter((request) => request.status === "active" && request.material_code === materialCode);
   const requestIds = new Set(activeRequests.map((request) => request.id));
+  const allocatedByRequest = new Map<string, number>();
   let plannedTons = 0;
   let confirmedTons = 0;
 
@@ -67,6 +68,7 @@ export function summarizeProjectMaterialOrderStatus(
     if (!allocation.usage_request_id || !requestIds.has(allocation.usage_request_id) || allocation.status === "cancelled") continue;
     const quantityTons = Number(allocation.quantity_tons);
     if (!Number.isFinite(quantityTons) || quantityTons <= 0) continue;
+    allocatedByRequest.set(allocation.usage_request_id, (allocatedByRequest.get(allocation.usage_request_id) ?? 0) + quantityTons);
     if (allocation.status === "planned") plannedTons += quantityTons;
     else confirmedTons += quantityTons;
   }
@@ -75,8 +77,10 @@ export function summarizeProjectMaterialOrderStatus(
   plannedTons = normalizeTons(plannedTons);
   confirmedTons = normalizeTons(confirmedTons);
   const allocatedTons = normalizeTons(plannedTons + confirmedTons);
-  const unallocatedTons = normalizeTons(Math.max(requestedTons - allocatedTons, 0));
-  const excessTons = normalizeTons(Math.max(allocatedTons - requestedTons, 0));
+  const unallocatedTons = normalizeTons(activeRequests.reduce((sum, request) =>
+    sum + Math.max(Number(request.quantity_tons) - (allocatedByRequest.get(request.id) ?? 0), 0), 0));
+  const excessTons = normalizeTons(activeRequests.reduce((sum, request) =>
+    sum + Math.max((allocatedByRequest.get(request.id) ?? 0) - Number(request.quantity_tons), 0), 0));
 
   return {
     requestedTons,
