@@ -26,7 +26,7 @@ export { PERSONAL_NOTES_CHANGED_EVENT };
 export const NOTE_EDITOR_OPEN_EVENT = "note-editor:open";
 
 export type NoteEditorPreset = "memo" | "todo" | "sticky";
-export type NoteEditorOpenOptions = { noteType?: NoteEditorPreset; dueDate?: string | null; note?: PersonalNote };
+export type NoteEditorOpenOptions = { noteType?: NoteEditorPreset; dueDate?: string | null; note?: PersonalNote; source?: "calendar" };
 export type CalendarSourceFilter = "all" | "company" | "my" | "my_own" | "shared_with_me";
 
 export const COMPLETED_PERSONAL_SCHEDULE_STYLES = {
@@ -91,7 +91,7 @@ export function isOverduePersonalTodo(note: Pick<PersonalNote, "note_type" | "is
 }
 
 export function openNoteEditor(input: NoteEditorPreset | NoteEditorOpenOptions = "memo") {
-  const detail = typeof input === "string" ? { preset: input } : { preset: input.note?.note_type ?? input.noteType ?? "memo", dueDate: input.note?.due_date ?? input.dueDate ?? null, note: input.note };
+  const detail = typeof input === "string" ? { preset: input } : { preset: input.note?.note_type ?? input.noteType ?? "memo", dueDate: input.note?.due_date ?? input.dueDate ?? null, note: input.note, source: input.source };
   window.dispatchEvent(new CustomEvent(NOTE_EDITOR_OPEN_EVENT, { detail }));
 }
 

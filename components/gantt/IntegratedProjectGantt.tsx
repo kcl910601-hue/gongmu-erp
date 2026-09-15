@@ -628,6 +628,8 @@ export function IntegratedProjectGantt({
   const headerScrollRef = useRef<HTMLDivElement | null>(null);
   const timelineContentRef = useRef<HTMLDivElement | null>(null);
   const hasInitialTodayScrollRef = useRef(false);
+  const [todayScrollRequest, setTodayScrollRequest] = useState(0);
+  const handledTodayScrollRequestRef = useRef(0);
   const hasInitializedMonthLayoutRef = useRef(false);
   const columnFocusRef = useRef<HTMLDivElement | null>(null);
   const cellFocusRef = useRef<HTMLDivElement | null>(null);
@@ -2295,40 +2297,42 @@ export function IntegratedProjectGantt({
   }, [rows]);
 
   const scrollToToday = useCallback(() => {
-    if (!scrollRef.current) return;
     const todayMonth = today.slice(0, 7);
     if (collapsedMonths.has(todayMonth)) {
-      setCollapsedMonths((current) => {
-        const next = new Set(current);
-        next.delete(todayMonth);
-        savePresentationState({ collapsedMonths: Array.from(next) });
-        return next;
-      });
-      window.requestAnimationFrame(() => window.requestAnimationFrame(scrollToToday));
-      return;
+      const next = new Set(collapsedMonths);
+      next.delete(todayMonth);
+      setCollapsedMonths(next);
+      savePresentationState({ collapsedMonths: Array.from(next) });
     }
-    const todayLeft = dateLeftByValue.get(today);
-    if (todayLeft === undefined) return;
-    const targetLeft = todayLeft - scrollRef.current.clientWidth / 2 + dayWidth / 2;
-
-    scrollRef.current.scrollLeft = Math.max(targetLeft, 0);
-  }, [collapsedMonths, dateLeftByValue, dayWidth, savePresentationState, today]);
+    setTodayScrollRequest((current) => current + 1);
+  }, [collapsedMonths, savePresentationState, today]);
 
   useEffect(() => {
+    const hasPendingRequest = todayScrollRequest !== handledTodayScrollRequestRef.current;
     if (
-      hasInitialTodayScrollRef.current ||
+      (hasInitialTodayScrollRef.current && !hasPendingRequest) ||
       !isInitialMonthLayoutReady ||
-      visibleDateDays.length === 0 ||
+      collapsedMonths.has(today.slice(0, 7)) ||
       rows.length === 0
-    ) {
-      return;
-    }
+    ) return;
+    const todayLeft = dateLeftByValue.get(today);
+    if (todayLeft === undefined) return;
     const frame = window.requestAnimationFrame(() => {
-      scrollToToday();
+      const scroll = scrollRef.current;
+      if (!scroll || scroll.clientWidth === 0) return;
+      const targetLeft = Math.max(0, Math.min(
+        todayLeft - scroll.clientWidth / 2 + dayWidth / 2,
+        scroll.scrollWidth - scroll.clientWidth
+      ));
+      // Apply the committed month layout to all three synchronized viewports.
+      for (const viewport of [scroll, topScrollRef.current, headerScrollRef.current]) {
+        viewport?.scrollTo({ left: targetLeft, behavior: "instant" });
+      }
       hasInitialTodayScrollRef.current = true;
+      handledTodayScrollRequestRef.current = todayScrollRequest;
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [isInitialMonthLayoutReady, rows.length, scrollToToday, visibleDateDays.length]);
+  }, [collapsedMonths, dateLeftByValue, dayWidth, isInitialMonthLayoutReady, rows.length, today, todayScrollRequest]);
 
   function clearMeetingFocus(force = false) {
     if (focusLockedRef.current && !force) return;
@@ -2986,7 +2990,7 @@ export function IntegratedProjectGantt({
                   });
                 }
               }}
-              className="min-w-0 flex-1 overflow-x-auto scroll-smooth [scrollbar-width:thin]"
+              className="min-w-0 flex-1 overflow-x-auto [scrollbar-width:thin]"
             >
               <div
                 ref={timelineContentRef}
