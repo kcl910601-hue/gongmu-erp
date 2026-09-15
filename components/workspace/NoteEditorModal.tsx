@@ -143,7 +143,7 @@ export default function NoteEditorModal() {
       <fieldset disabled={isSaving || Boolean(createdNoteId)} className="min-w-0 border-0 p-0 disabled:opacity-70">
       {calendarEntry ? <>
       <div className="mt-5 space-y-5">
-        <label className="block text-sm font-semibold text-slate-700">일정 제목<input autoFocus maxLength={200} value={title} onChange={(event) => setTitle(event.target.value)} placeholder="예: ○○현장 도면 확인" className="mt-2 h-11 w-full rounded-xl border border-slate-200 px-3 text-base outline-none focus:border-blue-400"/></label>
+        <label className="block text-sm font-semibold text-slate-700">일정 제목<input autoFocus maxLength={200} value={title} onChange={(event) => setTitle(event.target.value)} placeholder="(AS) ㅇㅇㅇㅇ 현장 " className="mt-2 h-11 w-full rounded-xl border border-slate-200 px-3 text-base outline-none focus:border-blue-400"/></label>
         <fieldset><legend className="text-sm font-semibold text-slate-700">날짜</legend><div className="mt-2 flex flex-wrap items-center gap-2">
           <input aria-label="일정 날짜" type="date" value={dateMode === "today" ? localDate() : dateMode === "tomorrow" ? localDate(1) : dateMode === "custom" ? customDate : ""} onChange={(event) => { setDateMode("custom"); setCustomDate(event.target.value); }} className="h-10 rounded-xl border border-slate-200 px-3 text-sm"/>
           {(["today", "tomorrow", "none"] as const).map((mode) => <button key={mode} type="button" onClick={() => setDateMode(mode)} aria-pressed={dateMode === mode} className={`rounded-xl px-3 py-2 text-sm ${dateMode === mode ? "bg-blue-600 text-white" : "bg-slate-100 text-slate-600"}`}>{({today:"오늘",tomorrow:"내일",none:"날짜 없음"})[mode]}</button>)}
