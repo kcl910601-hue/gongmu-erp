@@ -1,9 +1,14 @@
 import { getLmeContext } from "@/lib/lme-server";
+import { saveContractEntry } from "@/lib/project-contracts-server";
 
 export async function PATCH(request: Request, { params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params; const { supabase, user, employee } = await getLmeContext(); if (!user || !employee || employee.role !== "admin") return Response.json({ error: "관리자 권한이 필요합니다." }, { status: 403 }); const body = await request.json() as Record<string, unknown>;
-  const title = typeof body.contract_title === "string" ? body.contract_title.trim() : ""; const effective = typeof body.effective_date === "string" ? body.effective_date : ""; const document = typeof body.document_number === "string" && body.document_number.trim() ? body.document_number.trim() : null; const memo = typeof body.memo === "string" && body.memo.trim() ? body.memo.trim() : null; const status = body.status === "confirmed" || body.status === "void" ? body.status : null;
-  if (!title || title.length > 200 || !/^\d{4}-\d{2}-\d{2}$/.test(effective) || (document?.length ?? 0) > 100 || (memo?.length ?? 0) > 2000 || !status) return Response.json({ error: "운영정보를 확인해주세요." }, { status: 400 });
-  const { data: current, error: currentError } = await supabase.from("project_contract_entries").select("status").eq("id", id).maybeSingle(); if (currentError) return Response.json({ error: currentError.message }, { status: 500 }); if (!current) return Response.json({ error: "계약 이력을 찾을 수 없습니다." }, { status: 404 }); if (current.status === "void" && status !== "void") return Response.json({ error: "무효 계약은 유효 상태로 복원할 수 없습니다." }, { status: 409 });
-  const { data, error } = await supabase.from("project_contract_entries").update({ contract_title: title, effective_date: effective, document_number: document, memo, status, updated_by: user.id }).eq("id", id).select("*").single(); if (error) return Response.json({ error: error.message }, { status: error.code === "23514" || error.code === "55000" ? 409 : 500 }); return Response.json({ entry: data });
+  const { id } = await params;
+  const { supabase, employee } = await getLmeContext();
+  if (!employee || employee.role !== "admin") return Response.json({ error: "관리자 권한이 필요합니다." }, { status: 403 });
+  const body: unknown = await request.json().catch(() => null);
+  if (!body || typeof body !== "object" || Array.isArray(body)) return Response.json({ error: "입력값을 확인해주세요." }, { status: 400 });
+  const { data: current, error } = await supabase.from("project_contract_entries").select("project_id").eq("id", id).maybeSingle();
+  if (error) return Response.json({ error: error.message }, { status: 400 });
+  if (!current) return Response.json({ error: "계약 이력을 찾을 수 없습니다." }, { status: 404 });
+  return saveContractEntry(supabase, Number(current.project_id), id, body as Record<string, unknown>);
 }

@@ -2,6 +2,21 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { calculateVat, summarizeProjectContracts, type ProjectContractEntry, type ProjectContractEntryType } from "@/lib/project-contracts";
 
 const entryTypes = new Set<ProjectContractEntryType>(["original", "increase", "decrease"]);
+
+export async function saveContractEntry(supabase: SupabaseClient, projectId: number, id: string | null, body: Record<string, unknown>) {
+  const { preview, revision, ...input } = body;
+  if (!Number.isSafeInteger(projectId) || projectId <= 0) return Response.json({ error: "프로젝트를 확인해주세요." }, { status: 400 });
+  if (preview !== true && (typeof revision !== "string" || !revision)) return Response.json({ error: "변경내용을 먼저 확인해주세요." }, { status: 409 });
+  const { data, error } = await supabase.rpc("save_project_contract_entry", {
+    p_project_id: projectId, p_id: id, p_entry: input,
+    p_apply: preview !== true, p_revision: typeof revision === "string" ? revision : null,
+  });
+  if (error) {
+    const missingMigration = error.code === "PGRST202" || error.code === "42883";
+    return Response.json({ error: missingMigration ? "계약 입력·수정 기능의 DB 마이그레이션을 먼저 적용해주세요." : error.message }, { status: missingMigration ? 503 : error.code === "42501" ? 403 : error.code === "40001" || error.code === "23505" ? 409 : 400 });
+  }
+  return Response.json({ preview: data, saved: preview !== true });
+}
 function integerAmount(value: unknown) { const number = Number(value); return Number.isSafeInteger(number) && number >= 0 ? number : null; }
 export function parseContractEntry(body: Record<string, unknown>) {
   const projectId = Number(body.project_id); const entryType = typeof body.entry_type === "string" && entryTypes.has(body.entry_type as ProjectContractEntryType) ? body.entry_type as ProjectContractEntryType : null;

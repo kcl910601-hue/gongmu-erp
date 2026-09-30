@@ -7,6 +7,32 @@ export type ProjectContractEntry = {
   supply_amount_krw: number; vat_amount_krw: number; total_amount_krw: number;
   status: ProjectContractEntryStatus; memo: string | null; created_by: string;
   created_by_name?: string | null; created_at: string; updated_by: string | null; updated_at: string;
+  amount_input_mode?: "delta" | "total";
+  input_supply_amount_krw?: number | null;
+  input_vat_amount_krw?: number | null;
+};
+
+export type ContractPreview = {
+  revision: string;
+  before_supply: number;
+  before_vat: number;
+  after_supply: number;
+  after_vat: number;
+  changes: {
+    id: string; title: string; is_target: boolean; mode: "delta" | "total";
+    before_delta: number | null; after_delta: number;
+    before_vat_delta: number | null; after_vat_delta: number;
+    resulting_supply: number; resulting_vat: number;
+  }[];
+};
+
+export type ContractHistory = {
+  id: number; employee_name: string | null; created_at: string; title: string;
+  metadata: {
+    before_supply: number; after_supply: number;
+    changes: ContractPreview["changes"];
+    before: ProjectContractEntry[]; after: ProjectContractEntry[];
+  };
 };
 
 export type ProjectContractSummary = {

@@ -6,5 +6,8 @@ export async function GET(_request: Request, { params }: { params: Promise<{ pro
   const [projectResult, entryResult] = await Promise.all([supabase.from("projects").select("id, project_code, project_name, client_name, salesperson, task_manager, status, process_type, site_address, start_date, end_date").eq("id", projectId).maybeSingle(), supabase.from("project_contract_entries").select("*").eq("project_id", projectId).order("contract_date", { ascending: false }).order("created_at", { ascending: false })]);
   if (projectResult.error || entryResult.error) return Response.json({ error: projectResult.error?.message ?? entryResult.error?.message }, { status: 500 }); if (!projectResult.data) return Response.json({ error: "프로젝트를 찾을 수 없습니다." }, { status: 404 });
   const entries = (entryResult.data ?? []) as ProjectContractEntry[]; const latest = entries.find((entry) => entry.status === "confirmed") ?? null;
-  return Response.json({ project: projectResult.data, summary: summarizeProjectContracts(entries), entries, latest_confirmed_entry: latest });
+  const historyResult = await supabase.from("activity_logs").select("id, employee_name, created_at, title, metadata")
+    .eq("project_id", projectId).eq("target_type", "project_contract_entry").order("created_at", { ascending: false });
+  if (historyResult.error) return Response.json({ error: historyResult.error.message }, { status: 500 });
+  return Response.json({ project: projectResult.data, summary: summarizeProjectContracts(entries), entries, latest_confirmed_entry: latest, history: historyResult.data ?? [] });
 }
