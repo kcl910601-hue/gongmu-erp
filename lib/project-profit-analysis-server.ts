@@ -13,7 +13,7 @@ export function buildProfitRecord(project: Record<string, unknown>, contractEntr
 
 export async function queryProfitSourceData(supabase: SupabaseClient, projects: Record<string, unknown>[]) {
   const ids = projects.map((project) => Number(project.id)); if (!ids.length) return { data: [], error: null };
-  const [contracts, costs] = await Promise.all([supabase.from("project_contract_entries").select("*").in("project_id", ids), supabase.from("project_material_usages").select("id, project_id, material_code, pricing_basis, cost_reference_date, expected_quantity_kg, applied_unit_price_krw_per_kg, expected_cost_krw").in("project_id", ids)]);
+  const [contracts, costs] = await Promise.all([supabase.from("project_contract_entries").select("*").in("project_id", ids), supabase.from("project_effective_material_costs").select("id, project_id, material_code, pricing_basis, cost_reference_date, expected_quantity_kg, applied_unit_price_krw_per_kg, expected_cost_krw").in("project_id", ids)]);
   if (contracts.error || costs.error) return { data: null, error: contracts.error ?? costs.error };
   const contractMap = groupRows((contracts.data ?? []) as ProjectContractEntry[]); const costMap = groupRows((costs.data ?? []) as MaterialCostRow[]);
   return { data: projects.map((project) => buildProfitRecord(project, contractMap.get(Number(project.id)) ?? [], costMap.get(Number(project.id)) ?? [])), error: null };

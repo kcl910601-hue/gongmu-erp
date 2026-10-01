@@ -38,9 +38,9 @@ export async function GET(
       .maybeSingle(),
     supabase.from("project_contract_entries").select("*").eq("project_id", id),
     supabase
-      .from("project_material_usages")
+      .from("project_effective_material_costs")
       .select(
-        "id,project_id,material_code,pricing_basis,cost_reference_date,expected_quantity_kg,applied_unit_price_krw_per_kg,expected_cost_krw,material:lme_materials(name)",
+        "id,project_id,material_code,pricing_basis,cost_reference_date,expected_quantity_kg,applied_unit_price_krw_per_kg,expected_cost_krw,material_name",
       )
       .eq("project_id", id),
     supabase.from("project_cost_entries").select("*").eq("project_id", id),
@@ -107,11 +107,10 @@ export async function GET(
     ),
     total = record.analysis.expected_total_cost_krw,
     materialBreakdown = rawMaterials.map((r) => {
-      const material = Array.isArray(r.material) ? r.material[0] : r.material;
       return {
         id: r.id,
         material_code: r.material_code,
-        material_name: material?.name ?? null,
+        material_name: r.material_name ?? null,
         expected_quantity_kg: r.expected_quantity_kg,
         pricing_basis: r.pricing_basis,
         applied_unit_price_krw_per_kg: r.applied_unit_price_krw_per_kg,
@@ -164,7 +163,7 @@ export async function GET(
     analysis: record.analysis,
     calculation_basis: {
       revenue: "confirmed 계약 이력의 최종 공급가액",
-      material: "AL: project_material_usages 예상원가 snapshot",
+      material: "AL: 현장별 선택 기준(예상원가 또는 현재 유효 LME 배정 원가)",
       glass: "유리: 유효 계산서의 유효 프로젝트 배분 공급가액",
       coating: "도장: 유효 계산서의 유효 프로젝트 배분 공급가액",
       accessory: "부자재: 유효 프로젝트 소진내역의 Snapshot 총원가",

@@ -1,8 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Plus, Search } from "lucide-react";
 import { MaterialUsageDialog } from "@/components/statistics/cost-analysis/MaterialUsageDialog";
+import { LmeCostBasisSection } from "@/components/statistics/cost-analysis/LmeCostBasisSection";
 import { ProjectAccessoryUsageSection } from "@/components/statistics/cost-analysis/ProjectAccessoryUsageSection";
 import {
   ProjectGlassCostSection,
@@ -18,6 +19,7 @@ import {
   ACCESSORIES_CHANGED_EVENT,
   COATING_COSTS_CHANGED_EVENT,
   GLASS_COSTS_CHANGED_EVENT,
+  MATERIAL_USAGE_REQUESTS_CHANGED_EVENT,
 } from "@/lib/collaboration-events";
 import type { AccessoryItem, ProjectAccessoryUsage } from "@/lib/accessories";
 import {
@@ -41,7 +43,10 @@ export default function CostAnalysisPage() {
     [],
   );
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  const selectedIdRef = useRef(selectedId);
+  useEffect(() => { selectedIdRef.current = selectedId; }, [selectedId]);
   const [usages, setUsages] = useState<ProjectMaterialUsage[]>([]);
+  const [allocationBasis, setAllocationBasis] = useState(false);
   const [glassRows, setGlassRows] = useState<ProjectGlassCostRow[]>([]);
   const [glassTotal, setGlassTotal] = useState(0);
   const [coatingRows, setCoatingRows] = useState<ProjectCoatingCostRow[]>([]);
@@ -103,8 +108,10 @@ export default function CostAnalysisPage() {
     const payload = await response.json();
     if (!response.ok)
       throw new Error(payload.error ?? "예상 원가를 불러오지 못했습니다.");
+    if (selectedIdRef.current !== selectedId) return;
     setUsages(payload.usages ?? []);
     setSummary(payload.summary);
+    setAllocationBasis(payload.basis?.basis === "allocation");
   }, [selectedId]);
   const loadGlassCosts = useCallback(async () => {
     if (!selectedId) {
@@ -145,6 +152,7 @@ export default function CostAnalysisPage() {
         if (!cancelled) {
           setUsages(payload.usages ?? []);
           setSummary(payload.summary);
+          setAllocationBasis(payload.basis?.basis === "allocation");
         }
       })
       .catch((reason: unknown) => {
@@ -229,10 +237,10 @@ export default function CostAnalysisPage() {
   const cards = [
     ["등록된 원자재 항목", `${summary.itemCount.toLocaleString("ko-KR")}건`],
     [
-      "총 예상 사용량",
+      allocationBasis ? "현재 원가 반영 물량" : "총 예상 사용량",
       `${summary.expectedQuantityKg.toLocaleString("ko-KR", { maximumFractionDigits: 3 })} kg`,
     ],
-    ["AL 예상원가", formatKrw(summary.expectedCostKrw)],
+    [allocationBasis ? "현재 원자재 원가 (LME 기준)" : "AL 예상원가", formatKrw(summary.expectedCostKrw)],
     ["도장 실제원가", formatKrw(coatingTotal)],
     ["유리 실제원가", formatKrw(glassTotal)],
     ["부자재 실제원가", formatKrw(accessoryTotal)],
@@ -342,6 +350,7 @@ export default function CostAnalysisPage() {
                   </article>
                 ))}
               </div>
+              <LmeCostBasisSection key={selected.id} projectId={selected.id} canManage={isAdmin} onChanged={loadUsages} />
               <ProjectCoatingCostSection
                 project={{
                   id: selected.id,
@@ -375,6 +384,7 @@ export default function CostAnalysisPage() {
               <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
                 <div className="border-b px-4 py-3">
                   <h2 className="text-sm font-semibold">예상 원자재 목록</h2>
+                  {allocationBasis && <p className="mt-1 text-xs text-slate-500">AL 예상 내역은 비교용으로 보존됩니다. 현재 집계에는 LME 배정 원가를 사용합니다.</p>}
                 </div>
                 <div className="overflow-x-auto">
                   <table className="min-w-[1050px] w-full text-left text-xs">
@@ -494,7 +504,10 @@ export default function CostAnalysisPage() {
           materials={materials}
           usage={editing}
           onClose={() => setDialogOpen(false)}
-          onSaved={loadUsages}
+          onSaved={async () => {
+            await loadUsages();
+            window.dispatchEvent(new Event(MATERIAL_USAGE_REQUESTS_CHANGED_EVENT));
+          }}
         />
       )}{" "}
       {detail && (

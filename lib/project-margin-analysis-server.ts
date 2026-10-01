@@ -236,7 +236,7 @@ export async function queryMarginData(
   const [contracts, materials, costs, categories, glass, coating, accessories] = await Promise.all([
     supabase.from("project_contract_entries").select("*").in("project_id", ids),
     supabase
-      .from("project_material_usages")
+      .from("project_effective_material_costs")
       .select(
         "id,project_id,material_code,pricing_basis,cost_reference_date,expected_quantity_kg,applied_unit_price_krw_per_kg,expected_cost_krw",
       )
