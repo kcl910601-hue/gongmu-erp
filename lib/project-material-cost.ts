@@ -1,7 +1,9 @@
+import type { ProjectMaterialCostStatus } from "@/lib/project-material-cost-status";
 export type PricingBasis = "contract" | "market";
 export type QuantityUnit = "kg" | "ton";
 
 export type ProjectCostProject = {
+  material_cost_status?: ProjectMaterialCostStatus;
   id: number;
   project_code: string | null;
   project_name: string;

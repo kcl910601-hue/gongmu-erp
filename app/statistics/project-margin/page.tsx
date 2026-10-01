@@ -1,4 +1,6 @@
 "use client";
+import { MaterialCostStatus } from "@/components/statistics/MaterialCostStatus";
+import type { ProjectMaterialCostStatus } from "@/lib/project-material-cost-status";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { Search } from "lucide-react";
@@ -13,6 +15,7 @@ import {
   type ProjectMarginAnalysis,
 } from "@/lib/project-margin-analysis";
 type Row = {
+  material_cost_status: ProjectMaterialCostStatus;
   id: number;
   project_code: string | null;
   project_name: string;
@@ -75,6 +78,7 @@ type Kpi = {
   loss_project_count: number;
 };
 type Detail = {
+  material_cost_status: ProjectMaterialCostStatus;
   canManage: boolean;
   project: Row;
   contract_summary: Row["contract_summary"];
@@ -379,7 +383,7 @@ export default function ProjectMarginPage() {
             {rows.map((r) => (
               <tr key={r.id} className="border-t">
                 <td className="px-3 py-2">{r.project_code ?? "-"}</td>
-                <td className="px-3 py-2 font-semibold">{r.project_name}</td>
+                <td className="px-3 py-2 font-semibold">{r.project_name}<MaterialCostStatus status={r.material_cost_status} /></td>
                 <td className="px-3 py-2">{r.client_name ?? "-"}</td>
                 <td className="px-3 py-2">{r.salesperson ?? "-"}</td>
                 <td className="px-3 py-2">{r.task_manager ?? "-"}</td>
@@ -484,6 +488,7 @@ export default function ProjectMarginPage() {
                 </article>
               ))}
             </div>
+            <MaterialCostStatus status={detail.material_cost_status} detailed />
             <div className="mt-4 grid gap-3 lg:grid-cols-3">
               <section className="rounded-xl border p-4 text-sm">
                 <h3 className="font-semibold">매출 기준</h3>

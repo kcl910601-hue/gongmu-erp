@@ -1,3 +1,4 @@
+import { queryProjectMaterialCostStatuses } from "@/lib/project-material-cost-status-server";
 import { getLmeContext } from "@/lib/lme-server";
 
 export async function GET(request: Request) {
@@ -8,5 +9,7 @@ export async function GET(request: Request) {
   if (search) query = query.or(`project_name.ilike.%${search.replace(/[,%()]/g, "")}%,project_code.ilike.%${search.replace(/[,%()]/g, "")}%`);
   const { data, error } = await query.order("start_date", { ascending: false, nullsFirst: false }).order("id", { ascending: false }).limit(200);
   if (error) return Response.json({ error: error.message }, { status: 500 });
-  return Response.json({ projects: data ?? [] });
+  const statuses = await queryProjectMaterialCostStatuses(supabase, (data ?? []).map(row => row.id));
+  if (statuses.error) return Response.json({ error: statuses.error.message }, { status: 500 });
+  return Response.json({ projects: (data ?? []).map(row => ({ ...row, material_cost_status: statuses.data.get(row.id) })) });
 }

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Plus, Search } from "lucide-react";
+import { MaterialCostStatus } from "@/components/statistics/MaterialCostStatus";
 import { MaterialUsageDialog } from "@/components/statistics/cost-analysis/MaterialUsageDialog";
 import { LmeCostBasisSection } from "@/components/statistics/cost-analysis/LmeCostBasisSection";
 import { ProjectAccessoryUsageSection } from "@/components/statistics/cost-analysis/ProjectAccessoryUsageSection";
@@ -102,13 +103,17 @@ export default function CostAnalysisPage() {
       setUsages([]);
       return;
     }
-    const response = await fetch(
-      `/api/statistics/cost-analysis/projects/${selectedId}/materials`,
-    );
+    const [response, projectsResponse] = await Promise.all([
+      fetch(`/api/statistics/cost-analysis/projects/${selectedId}/materials`),
+      fetch("/api/statistics/cost-analysis/projects", { cache: "no-store" }),
+    ]);
+    const projectsPayload = await projectsResponse.json();
+    if (!projectsResponse.ok) throw new Error(projectsPayload.error ?? "연결 상태를 불러오지 못했습니다.");
     const payload = await response.json();
     if (!response.ok)
       throw new Error(payload.error ?? "예상 원가를 불러오지 못했습니다.");
     if (selectedIdRef.current !== selectedId) return;
+    setProjects(projectsPayload.projects ?? []);
     setUsages(payload.usages ?? []);
     setSummary(payload.summary);
     setAllocationBasis(payload.basis?.basis === "allocation");
@@ -290,6 +295,7 @@ export default function CostAnalysisPage() {
                   {project.project_code ?? "코드 없음"} ·{" "}
                   {project.client_name ?? "발주처 없음"}
                 </span>
+                <MaterialCostStatus status={project.material_cost_status} />
               </button>
             ))}
             {filtered.length === 0 && (

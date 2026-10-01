@@ -1,3 +1,4 @@
+import { queryProjectMaterialCostStatuses } from "@/lib/project-material-cost-status-server";
 import { getLmeContext } from "@/lib/lme-server";
 import {
   buildMarginRecord,
@@ -140,7 +141,10 @@ export async function GET(
       share_of_total_cost:
         total && total > 0 ? (item.supply_amount_krw / total) * 100 : null,
     }));
+  const statuses = await queryProjectMaterialCostStatuses(supabase, [id]);
+  if (statuses.error) return Response.json({ error: statuses.error.message }, { status: 500 });
   return Response.json({
+    material_cost_status: statuses.data.get(id),
     canManage: employee.role === "admin",
     project: p.data,
     contract_summary: record.contract_summary,
