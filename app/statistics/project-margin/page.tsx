@@ -1,5 +1,10 @@
 "use client";
-import { MaterialCostStatus } from "@/components/statistics/MaterialCostStatus";
+import { ProjectProgressCostStatus, type ProgressCostTask } from "@/components/statistics/project-margin/ProjectProgressCostStatus";
+import { AlPriceExposure } from "@/components/statistics/project-margin/AlPriceExposure";
+import { ContractCostChangeAnalysis, type ContractChangeEntry } from "@/components/statistics/project-margin/ContractCostChangeAnalysis";
+import { CompletionMarginForecast } from "@/components/statistics/project-margin/CompletionMarginForecast";
+import { AlCostComparison, type AlCostComparisonData } from "@/components/statistics/project-margin/AlCostComparison";
+import { ProjectCostReflectionStatus } from "@/components/statistics/project-margin/ProjectCostReflectionStatus";
 import type { ProjectMaterialCostStatus } from "@/lib/project-material-cost-status";
 import Link from "next/link";
 import { useEffect, useState } from "react";
@@ -41,6 +46,9 @@ type Row = {
     contract_basis_cost_krw: number;
     market_basis_cost_krw: number;
   };
+  glass_cost_summary: { allocation_count: number };
+  coating_cost_summary: { allocation_count: number };
+  accessory_cost_summary: { usage_count: number };
   additional_cost_summary: {
     total_supply_amount_krw: number;
     confirmed_cost_count: number;
@@ -78,6 +86,9 @@ type Kpi = {
   loss_project_count: number;
 };
 type Detail = {
+  progress_tasks: ProgressCostTask[];
+  contract_change_entries: ContractChangeEntry[];
+  al_cost_comparison: AlCostComparisonData;
   material_cost_status: ProjectMaterialCostStatus;
   canManage: boolean;
   project: Row;
@@ -371,6 +382,7 @@ export default function ProjectMarginPage() {
                 "예상 마진율",
                 "분석 상태",
                 "계산 상태",
+                "원가 반영 상태",
                 "상세",
               ].map((x) => (
                 <th key={x} className="px-3 py-2">
@@ -383,7 +395,7 @@ export default function ProjectMarginPage() {
             {rows.map((r) => (
               <tr key={r.id} className="border-t">
                 <td className="px-3 py-2">{r.project_code ?? "-"}</td>
-                <td className="px-3 py-2 font-semibold">{r.project_name}<MaterialCostStatus status={r.material_cost_status} /></td>
+                <td className="px-3 py-2 font-semibold">{r.project_name}</td>
                 <td className="px-3 py-2">{r.client_name ?? "-"}</td>
                 <td className="px-3 py-2">{r.salesperson ?? "-"}</td>
                 <td className="px-3 py-2">{r.task_manager ?? "-"}</td>
@@ -427,6 +439,16 @@ export default function ProjectMarginPage() {
                 </td>
                 <td className="px-3 py-2">
                   {MARGIN_CALCULATION_LABEL[r.analysis.calculation_status]}
+                </td>
+                <td className="px-3 py-2">
+                  <ProjectCostReflectionStatus
+                    materialStatus={r.material_cost_status}
+                    materialCount={r.material_cost_summary.material_usage_count}
+                    coatingCount={r.coating_cost_summary.allocation_count}
+                    glassCount={r.glass_cost_summary.allocation_count}
+                    accessoryCount={r.accessory_cost_summary.usage_count}
+                    additionalCount={r.additional_cost_summary.confirmed_cost_count}
+                  />
                 </td>
                 <td className="px-3 py-2">
                   <Button
@@ -488,7 +510,20 @@ export default function ProjectMarginPage() {
                 </article>
               ))}
             </div>
-            <MaterialCostStatus status={detail.material_cost_status} detailed />
+            <ProjectCostReflectionStatus
+              materialStatus={detail.material_cost_status}
+              materialCount={detail.material_cost_summary.material_usage_count}
+              coatingCount={detail.coating_cost_summary.allocation_count}
+              glassCount={detail.glass_cost_summary.allocation_count}
+              accessoryCount={detail.accessory_cost_summary.usage_count}
+              additionalCount={detail.additional_cost_summary.confirmed_cost_count}
+              detailed
+            />
+            <AlCostComparison data={detail.al_cost_comparison} status={detail.material_cost_status} />
+            <AlPriceExposure key={detail.project.id} status={detail.material_cost_status} revenue={detail.analysis.final_supply_amount_krw} />
+            <CompletionMarginForecast key={detail.project.id} analysis={detail.analysis} materialStatus={detail.material_cost_status} />
+            <ContractCostChangeAnalysis key={detail.project.id} summary={detail.contract_summary} entries={detail.contract_change_entries} analysis={detail.analysis} />
+            <ProjectProgressCostStatus projectId={detail.project.id} tasks={detail.progress_tasks} costs={detail.cost_composition} totalCost={detail.analysis.expected_total_cost_krw} />
             <div className="mt-4 grid gap-3 lg:grid-cols-3">
               <section className="rounded-xl border p-4 text-sm">
                 <h3 className="font-semibold">매출 기준</h3>

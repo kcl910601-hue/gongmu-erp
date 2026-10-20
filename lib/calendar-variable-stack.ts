@@ -36,7 +36,7 @@ export type CalendarCompanyWeekSegment<T> = {
   isRangeEnd: boolean;
 };
 
-export function allocateCalendarCompanySlots<T extends { id: string }>(items: T[], weekDays: Array<string | null>, getRange: (item: T) => { start: string; end: string }) {
+export function allocateCalendarCompanySlots<T extends { id: string }>(items: T[], weekDays: Array<string | null>, getRange: (item: T) => { start: string; end: string }, getPriority: (item: T) => number = () => 0) {
   const visibleDays = weekDays.filter((date): date is string => date !== null);
   const weekStart = visibleDays[0];
   const weekEnd = visibleDays[visibleDays.length - 1];
@@ -54,13 +54,19 @@ export function allocateCalendarCompanySlots<T extends { id: string }>(items: T[
   }).sort((left, right) => {
     const leftProject = left.item.id.startsWith("project-") ? 0 : 1;
     const rightProject = right.item.id.startsWith("project-") ? 0 : 1;
-    return leftProject - rightProject || left.startColumn - right.startColumn || right.span - left.span || left.item.id.localeCompare(right.item.id);
+    return leftProject - rightProject || getPriority(left.item) - getPriority(right.item) || left.startColumn - right.startColumn || right.span - left.span || left.item.id.localeCompare(right.item.id);
   });
 
   const occupiedBySlot: Array<Set<number>> = [];
   const segments: Array<CalendarCompanyWeekSegment<T>> = [];
   for (const candidate of candidates) {
-    let slot = occupiedBySlot.findIndex((occupied) => {
+    // Keep overlapping lower-priority bars below higher-priority bars, even when
+    // an earlier occupied lane becomes free partway through the week.
+    const minimumSlot = segments.reduce((minimum, segment) =>
+      segment.startColumn <= candidate.endColumn && segment.endColumn >= candidate.startColumn && getPriority(segment.item) < getPriority(candidate.item)
+        ? Math.max(minimum, segment.slot + 1) : minimum, 0);
+    let slot = occupiedBySlot.findIndex((occupied, index) => {
+      if (index < minimumSlot) return false;
       for (let column = candidate.startColumn; column <= candidate.endColumn; column += 1) if (occupied.has(column)) return false;
       return true;
     });

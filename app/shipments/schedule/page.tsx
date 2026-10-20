@@ -2,11 +2,13 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { FileDown, Search } from "lucide-react";
-import { ShipmentSchedulePreview } from "@/components/shipments/ShipmentSchedulePreview";
+import { ShipmentScheduleEditor } from "@/components/shipments/ShipmentScheduleEditor";
 import { Button } from "@/components/ui/Button";
 import { supabase } from "@/lib/supabase";
-import { getShipmentMonthRange, printShipmentSchedulePdf, validateShipmentScheduleRange, type ShipmentScheduleItem, type ShipmentScheduleOptions, type ShipmentScheduleRange } from "@/lib/shipment-schedule-pdf";
+import { filterShipmentScheduleItems, getShipmentMonthRange, printShipmentSchedulePdf, validateShipmentScheduleRange, type ShipmentScheduleDocument, type ShipmentScheduleItem, type ShipmentScheduleOptions, type ShipmentScheduleRange } from "@/lib/shipment-schedule-pdf";
+import { formatTaskNoteForExport } from "@/lib/task-notes";
 import { resolveTaskDisplayQuantity } from "@/lib/task-form-rules";
+import { buildCalendarProcessTypeMap, resolveCalendarProcessType } from "@/lib/calendar-process-type";
 
 type VendorRelation = {
   id: number;
@@ -20,7 +22,9 @@ type TaskRow = {
   id: number;
   task_name: string | null;
   task_type: string | null;
+  project_section_id: number | null;
   status: string | null;
+  start_date: string | null;
   due_date: string | null;
   quantity: number | null;
   project_assembly_vendor_id: number | null;
@@ -29,6 +33,8 @@ type TaskRow = {
 type ProjectRow = {
   id: number;
   project_name: string | null;
+  client_name: string | null;
+  process_type: string | null;
   quantity: number | null;
   quantity_unit: string | null;
   memo: string | null;
@@ -63,6 +69,12 @@ function localDateString(date: Date) {
   return `${year}-${month}-${day}`;
 }
 
+function resolveShipmentDate(task: Pick<TaskRow, "start_date" | "due_date">) {
+  const start = task.start_date?.slice(0, 10) || "";
+  const due = task.due_date?.slice(0, 10) || "";
+  return start > due ? start : due;
+}
+
 export default function ShipmentSchedulePage() {
   const now = new Date();
   const initialMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
@@ -71,20 +83,40 @@ export default function ShipmentSchedulePage() {
   const [month, setMonth] = useState(initialMonth);
   const [customRange, setCustomRange] = useState<ShipmentScheduleRange>(initialRange);
   const [vendors, setVendors] = useState<VendorOption[]>([]);
-  const [selectedVendorId, setSelectedVendorId] = useState("");
-  const [options, setOptions] = useState<ShipmentScheduleOptions>({ showCalendar: true, showDetails: true, includeCheckbox: true });
-  const [previewItems, setPreviewItems] = useState<ShipmentScheduleItem[] | null>(null);
+  const [selectedVendorIds, setSelectedVendorIds] = useState<number[]>([]);
+  const [options, setOptions] = useState<ShipmentScheduleOptions>({ showCalendar: true, showDetails: true, includeCheckbox: true, showQuantity: true, showStatus: true, paperSize: "A4", weekly: false, separateDetails: false });
+  const [drafts, setDrafts] = useState<{ vendorId: number; vendorName: string; items: ShipmentScheduleItem[]; original: ShipmentScheduleItem[] }[] | null>(null);
+  const [dirty, setDirty] = useState(false);
+  const [previewVersion, setPreviewVersion] = useState(0);
+  const [filters, setFilters] = useState({ incompleteOnly: false, project: "", process: "" });
   const [isLoadingVendors, setIsLoadingVendors] = useState(true);
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
 
-  const selectedVendor = useMemo(
-    () => (Array.isArray(vendors) ? vendors : []).find(
-      (vendor) => vendor.organizationId === Number(selectedVendorId)
-    ) ?? null,
-    [selectedVendorId, vendors]
-  );
+  const selectedVendors = useMemo(() => vendors.filter((vendor) => selectedVendorIds.includes(vendor.organizationId)), [selectedVendorIds, vendors]);
   const printedAt = localDateString(new Date());
+  const allDraftItems = (drafts ?? []).flatMap((draft) => [...draft.original, ...draft.items]);
+  const projectNames = [...new Set(allDraftItems.map((item) => item.projectName))].sort((a, b) => a.localeCompare(b, "ko"));
+  const processNames = [...new Set(allDraftItems.map((item) => item.processName).filter((name): name is string => Boolean(name)))].sort((a, b) => a.localeCompare(b, "ko"));
+
+  useEffect(() => {
+    if (!dirty) return;
+    const beforeUnload = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ""; };
+    window.addEventListener("beforeunload", beforeUnload);
+    return () => window.removeEventListener("beforeunload", beforeUnload);
+  }, [dirty]);
+
+  function confirmDiscard() {
+    return !dirty || window.confirm("출력용 편집 내용이 사라집니다. 계속하시겠습니까?");
+  }
+
+  function changeContext(change: () => void) {
+    if (!confirmDiscard()) return;
+    change();
+    setDrafts(null); setDirty(false); setErrorMessage("");
+    setFilters((current) => ({ ...current, project: "", process: "" }));
+    setPreviewVersion((current) => current + 1);
+  }
 
   useEffect(() => {
     let active = true;
@@ -142,7 +174,7 @@ export default function ShipmentSchedulePage() {
     return () => { active = false; };
   }, []);
 
-  async function fetchScheduleItems() {
+  async function fetchScheduleItems(selectedVendor: VendorOption): Promise<ShipmentScheduleItem[]> {
     if (!selectedVendor) throw new Error("조립업체를 선택해 주세요.");
     const range = rangeMode === "month" ? getShipmentMonthRange(month) : customRange;
     if (!range) throw new Error("출력월을 선택해 주세요.");
@@ -159,21 +191,22 @@ export default function ShipmentSchedulePage() {
     console.info("[shipment-schedule] query conditions:", JSON.stringify({
       taskType: "contains 출고",
       status: "no filter",
-      dueDate: { gte: range.start, lte: range.end },
+      shipmentDate: { basis: "later of start_date and due_date", gte: range.start, lte: range.end },
       projectAssemblyVendorIds: relationIds,
       excludesNullProjectAssemblyVendorId: true,
     }));
     const [projectsResult, tasksResult] = await Promise.all([
       supabase
         .from("projects")
-        .select("id, project_name, quantity, quantity_unit, memo")
+        .select("id, project_name, client_name, process_type, quantity, quantity_unit, memo")
         .in("id", projectIds),
       supabase
         .from("tasks")
-        .select("id, task_name, task_type, status, due_date, quantity, project_assembly_vendor_id")
+        .select("id, task_name, task_type, project_section_id, status, start_date, due_date, quantity, project_assembly_vendor_id")
         .ilike("task_type", "%출고%")
-        .gte("due_date", range.start)
-        .lte("due_date", range.end)
+        .in("project_assembly_vendor_id", relationIds)
+        // At least one date is in range, and the other cannot be later than its end.
+        .or(`and(start_date.gte.${range.start},start_date.lte.${range.end},or(due_date.is.null,due_date.lte.${range.end})),and(due_date.gte.${range.start},due_date.lte.${range.end},or(start_date.is.null,start_date.lte.${range.end}))`)
         .order("due_date", { ascending: true }),
     ]);
     if (projectsResult.error) throw new Error(`현장 정보를 불러오지 못했습니다: ${projectsResult.error.message}`);
@@ -196,9 +229,10 @@ export default function ShipmentSchedulePage() {
       project_assembly_vendor_id: task.project_assembly_vendor_id,
     })));
     const relationIdSet = new Set(relationIds);
-    const tasks = monthlyShipmentTasks.filter(
+    const tasks = monthlyShipmentTasks.map((task) => ({ ...task, shipmentDate: resolveShipmentDate(task) })).filter(
       (task) => task.project_assembly_vendor_id !== null
         && relationIdSet.has(Number(task.project_assembly_vendor_id))
+        && task.shipmentDate >= range.start && task.shipmentDate <= range.end
     );
     console.info("[shipment-schedule] projects:", JSON.stringify({
       requested: projectIds.length,
@@ -231,14 +265,42 @@ export default function ShipmentSchedulePage() {
       assignments.map((assignment) => [assignment.id, assignment])
     );
 
+    const sectionIds = [...new Set(tasks.map((task) => task.project_section_id).filter((id): id is number => typeof id === "number"))];
+    const [sectionResult, processTypeResult] = await Promise.all([
+      sectionIds.length ? supabase.from("project_sections").select("id, process_type").in("id", sectionIds) : Promise.resolve({ data: [], error: null }),
+      supabase.from("process_types").select("code, name"),
+    ]);
+    if (sectionResult.error) throw new Error(`공정 정보를 불러오지 못했습니다: ${sectionResult.error.message}`);
+    if (processTypeResult.error) throw new Error(`공정명을 불러오지 못했습니다: ${processTypeResult.error.message}`);
+    const sectionProcessById = new Map((sectionResult.data ?? []).map((section) => [Number(section.id), typeof section.process_type === "string" ? section.process_type : null]));
+    const processTypesByCode = buildCalendarProcessTypeMap(processTypeResult.data ?? []);
+
+    const notesResult = tasks.length ? await supabase.from("task_notes")
+      .select("id, task_id, note, is_important, check_date, created_at")
+      .in("task_id", tasks.map((task) => task.id)).order("created_at", { ascending: false }) : { data: [], error: null };
+    if (notesResult.error) throw new Error(`업무 메모를 불러오지 못했습니다: ${notesResult.error.message}`);
+    const notesByTask = new Map<number, { id: string; text: string }[]>();
+    for (const note of notesResult.data ?? []) {
+      const taskId = Number(note.task_id);
+      const notes = notesByTask.get(taskId) ?? [];
+      notes.push({ id: String(note.id), text: formatTaskNoteForExport({ note: note.note, isImportant: note.is_important, checkDate: note.check_date }) });
+      notesByTask.set(taskId, notes);
+    }
+
     const calendarItemCandidates = tasks.map((task) => {
       const assignment = assignmentsById.get(Number(task.project_assembly_vendor_id));
       const project = assignment ? projectsById.get(assignment.projectId) : undefined;
+      const processType = resolveCalendarProcessType(task.project_section_id ? sectionProcessById.get(task.project_section_id) : null, project?.process_type, processTypesByCode);
       return {
         id: Number(task.id),
-        shipmentDate: task.due_date?.slice(0, 10) ?? "",
+        status: task.status,
+        processName: processType?.name || "",
+        notes: notesByTask.get(Number(task.id)) ?? [],
+        shipmentDate: task.shipmentDate,
         projectName: project?.project_name || "현장명 없음",
+        clientName: project?.client_name?.trim() || null,
         taskName: task.task_name || "출고",
+        shipmentLabel: [task.task_type || "출고", processType?.name].filter(Boolean).join(" "),
         quantity: resolveTaskDisplayQuantity(task.task_name, task.quantity, project?.quantity),
         quantityUnit: project?.quantity_unit ?? null,
         memo: project?.memo ?? null,
@@ -257,37 +319,59 @@ export default function ShipmentSchedulePage() {
   }
 
   async function handlePreview() {
+    if (!confirmDiscard()) return;
     setIsLoading(true); setErrorMessage("");
-    try { setPreviewItems(await fetchScheduleItems()); } catch (error) { setErrorMessage(error instanceof Error ? error.message : "미리보기를 생성하지 못했습니다."); }
+    try {
+      if (!selectedVendors.length) throw new Error("조립업체를 선택해 주세요.");
+      const next = await Promise.all(selectedVendors.map(async (vendor) => {
+        const items = await fetchScheduleItems(vendor);
+        return { vendorId: vendor.organizationId, vendorName: vendor.name, items, original: items };
+      }));
+      setDrafts(next); setDirty(false); setPreviewVersion((current) => current + 1);
+      setFilters((current) => ({ ...current, project: "", process: "" }));
+    } catch (error) { setErrorMessage(error instanceof Error ? error.message : "미리보기를 생성하지 못했습니다."); }
     finally { setIsLoading(false); }
   }
 
-  async function handlePdf() {
-    setIsLoading(true); setErrorMessage("");
+  function makeDocument(draft: NonNullable<typeof drafts>[number]): ShipmentScheduleDocument {
+    return { month, range: rangeMode === "custom" ? customRange : undefined, vendorName: draft.vendorName, printedAt, items: filterShipmentScheduleItems(draft.items, filters), options };
+  }
+
+  function handlePdf() {
+    setErrorMessage("");
+    if (document.querySelector("[data-schedule-editor]")) { setErrorMessage("편집 중인 일정을 적용하거나 취소한 뒤 PDF를 생성해 주세요."); return; }
+    if (!drafts?.length) { setErrorMessage("미리보기를 먼저 생성해 주세요."); return; }
     try {
-      const items = await fetchScheduleItems();
-      setPreviewItems(items);
-      printShipmentSchedulePdf({ month, range: rangeMode === "custom" ? customRange : undefined, vendorName: selectedVendor?.name || "조립업체", printedAt, items, options });
+      const documents = drafts.map(makeDocument);
+      printShipmentSchedulePdf(documents[0], documents.slice(1));
     } catch (error) { setErrorMessage(error instanceof Error ? error.message : "PDF를 생성하지 못했습니다."); }
-    finally { setIsLoading(false); }
   }
 
   return (
     <main className="space-y-6 p-6">
-      <div><h1 className="text-2xl font-bold text-slate-900">출고 일정표 출력(PDF)</h1><p className="mt-1 text-sm text-slate-500">조립업체별 출고 Task와 배정 수량을 월 또는 지정 기간 일정표로 출력합니다.</p></div>
-      <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-        <fieldset className="mb-5"><legend className="text-sm font-semibold text-slate-700">출력 범위</legend><div className="mt-2 flex gap-5">{([['month', '월 단위'], ['custom', '기간 지정']] as const).map(([value, label]) => <label key={value} className="flex items-center gap-2 text-sm text-slate-700"><input type="radio" name="shipment-schedule-range" value={value} checked={rangeMode === value} onChange={() => { setRangeMode(value); setErrorMessage(""); setPreviewItems(null); }} className="h-4 w-4 border-slate-300" />{label}</label>)}</div></fieldset>
-        <div className="grid gap-4 md:grid-cols-2">
-          {rangeMode === "month" ? <label className="text-sm font-medium text-slate-700">출력월<input type="month" value={month} onChange={(event) => { setMonth(event.target.value); setErrorMessage(""); setPreviewItems(null); }} className="mt-1 block h-10 w-full rounded-xl border border-slate-300 px-3" /></label> : <div className="grid grid-cols-[1fr_auto_1fr] items-end gap-2"><label className="text-sm font-medium text-slate-700">시작일<input type="date" value={customRange.start} onChange={(event) => { setCustomRange((current) => ({ ...current, start: event.target.value })); setErrorMessage(""); setPreviewItems(null); }} className="mt-1 block h-10 w-full rounded-xl border border-slate-300 px-3" /></label><span className="pb-2.5 text-slate-400">~</span><label className="text-sm font-medium text-slate-700">종료일<input type="date" value={customRange.end} onChange={(event) => { setCustomRange((current) => ({ ...current, end: event.target.value })); setErrorMessage(""); setPreviewItems(null); }} className="mt-1 block h-10 w-full rounded-xl border border-slate-300 px-3" /></label></div>}
-          <label className="text-sm font-medium text-slate-700">조립업체<select value={selectedVendorId} onChange={(event) => { setSelectedVendorId(event.target.value); setPreviewItems(null); }} disabled={isLoadingVendors} className="mt-1 block h-10 w-full rounded-xl border border-slate-300 bg-white px-3"><option value="">조립업체 선택</option>{(Array.isArray(vendors) ? vendors : []).map((vendor) => <option key={vendor.organizationId} value={vendor.organizationId}>{vendor.name}</option>)}</select></label>
-        </div>
-        <fieldset className="mt-5"><legend className="text-sm font-semibold text-slate-700">출력 옵션</legend><div className="mt-2 flex flex-wrap gap-5">{([
-          ["showCalendar", "달력형"], ["showDetails", "상세목록 포함"], ["includeCheckbox", "체크박스 포함"],
-        ] as const).map(([key, label]) => <label key={key} className="flex items-center gap-2 text-sm text-slate-700"><input type="checkbox" checked={options[key]} disabled={key === "includeCheckbox" && !options.showDetails} onChange={(event) => setOptions((current) => ({ ...current, [key]: event.target.checked }))} className="h-4 w-4 rounded border-slate-300" />{label}</label>)}</div></fieldset>
+      <div><h1 className="text-2xl font-bold text-slate-900">출고 일정표 출력(PDF)</h1><p className="mt-1 text-sm text-slate-500">조립업체별 출고 일정과 수량을 미리보기에서 편집한 후 출력합니다.</p></div>
+      <fieldset disabled={isLoading} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <fieldset className="mb-5"><legend className="text-sm font-semibold text-slate-700">출력 범위</legend><div className="mt-2 flex gap-5">{([["month", "월 단위"], ["custom", "기간 지정"]] as const).map(([value, label]) => <label key={value} className="flex items-center gap-2 text-sm"><input type="radio" name="shipment-schedule-range" checked={rangeMode === value} onChange={() => changeContext(() => setRangeMode(value))} />{label}</label>)}</div></fieldset>
+        {rangeMode === "month" ? <label className="block max-w-sm text-sm font-medium">출력월<input type="month" value={month} onChange={(event) => changeContext(() => setMonth(event.target.value))} className="mt-1 block h-10 w-full rounded-xl border border-slate-300 px-3" /></label> : <div className="flex flex-wrap gap-3">{([["start", "시작일"], ["end", "종료일"]] as const).map(([key, label]) => <label key={key} className="text-sm font-medium">{label}<input type="date" value={customRange[key]} onChange={(event) => changeContext(() => setCustomRange((current) => ({ ...current, [key]: event.target.value })))} className="mt-1 block h-10 rounded-xl border border-slate-300 px-3" /></label>)}</div>}
+        <fieldset disabled={isLoadingVendors} className="mt-4"><legend className="text-sm font-semibold">조립업체 · 여러 업체 선택 가능</legend><div className="mt-2 flex max-h-40 flex-wrap gap-x-5 gap-y-3 overflow-y-auto">{vendors.map((vendor) => <label key={vendor.organizationId} className="flex items-center gap-2 text-sm"><input type="checkbox" checked={selectedVendorIds.includes(vendor.organizationId)} onChange={(event) => changeContext(() => setSelectedVendorIds((current) => event.target.checked ? [...current, vendor.organizationId] : current.filter((id) => id !== vendor.organizationId)))} />{vendor.name}</label>)}</div>{!isLoadingVendors && !vendors.length && <p className="mt-2 text-sm text-slate-500">출력 가능한 조립업체가 없습니다.</p>}</fieldset>
+        <fieldset className="mt-5"><legend className="text-sm font-semibold">출력 옵션</legend><div className="mt-2 flex flex-wrap gap-5">{([
+          ["showCalendar", "달력형"], ["showDetails", "상세목록 포함"], ["includeCheckbox", "체크박스 포함"], ["showQuantity", "달력 수량"], ["showStatus", "상태 표시"], ["weekly", "주간 확대"], ["separateDetails", "상세목록 별도 페이지"],
+        ] as const).map(([key, label]) => <label key={key} className="flex items-center gap-2 text-sm"><input type="checkbox" checked={Boolean(options[key])} disabled={(key === "includeCheckbox" && !options.showDetails) || ((key === "showQuantity" || key === "weekly") && !options.showCalendar)} onChange={(event) => setOptions((current) => ({ ...current, [key]: event.target.checked }))} />{label}</label>)}<label className="flex items-center gap-2 text-sm">용지<select value={options.paperSize} onChange={(event) => setOptions((current) => ({ ...current, paperSize: event.target.value === "A3" ? "A3" : "A4" }))} className="rounded border border-slate-300 p-1"><option value="A4">A4 가로</option><option value="A3">A3 가로</option></select></label></div></fieldset>
+        <div className="mt-5 flex flex-wrap items-center gap-4"><label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={filters.incompleteOnly} onChange={(event) => setFilters((current) => ({ ...current, incompleteOnly: event.target.checked }))} />미완료만 출력</label><label className="text-sm">현장 <select aria-label="현장 필터" value={filters.project} onChange={(event) => setFilters((current) => ({ ...current, project: event.target.value }))} className="rounded border border-slate-300 p-2"><option value="">전체 현장</option>{projectNames.map((name) => <option key={name}>{name}</option>)}</select></label><label className="text-sm">공정 <select aria-label="공정 필터" value={filters.process} onChange={(event) => setFilters((current) => ({ ...current, process: event.target.value }))} className="rounded border border-slate-300 p-2"><option value="">전체 공정</option>{processNames.map((name) => <option key={name}>{name}</option>)}</select></label></div>
         {errorMessage && <p role="alert" className="mt-4 rounded-xl bg-red-50 p-3 text-sm text-red-700">{errorMessage}</p>}
-        <div className="mt-5 flex gap-2"><Button variant="outline" onClick={handlePreview} disabled={isLoading || !month || !selectedVendor}><Search className="mr-2 h-4 w-4" />미리보기</Button><Button variant="primary" onClick={handlePdf} disabled={isLoading || !month || !selectedVendor || (!options.showCalendar && !options.showDetails)}><FileDown className="mr-2 h-4 w-4" />PDF 생성</Button></div>
-      </section>
-      {previewItems !== null && <section><div className="mb-2 flex items-center justify-between"><h2 className="text-lg font-semibold text-slate-900">미리보기</h2><span className="text-sm text-slate-500">출고 {previewItems.length}건</span></div><div className="overflow-x-auto rounded-2xl border border-slate-200 bg-slate-100 p-4"><ShipmentSchedulePreview month={month} range={rangeMode === "custom" ? customRange : undefined} vendorName={selectedVendor?.name || "조립업체"} printedAt={printedAt} items={previewItems} options={options} /></div></section>}
+        <div className="mt-5 flex flex-wrap gap-2"><Button variant="outline" onClick={handlePreview} disabled={isLoading || !selectedVendors.length}><Search className="mr-2 h-4 w-4" />{isLoading ? "불러오는 중…" : drafts ? "원본 다시 조회" : "미리보기"}</Button><Button variant="primary" onClick={handlePdf} disabled={isLoading || !drafts?.length || (!options.showCalendar && !options.showDetails)}><FileDown className="mr-2 h-4 w-4" />PDF 생성</Button></div>
+      </fieldset>
+      {drafts && <>
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-blue-200 bg-blue-50 p-4"><div><p className="text-sm font-semibold text-blue-900">출력용 편집 — 원본 프로젝트에 반영되지 않습니다.</p><p className="mt-1 text-xs text-slate-600">추가·수정·제외 내역은 현재 화면에서만 유지됩니다. 필터에 맞는 일정만 출력되며, 새로고침하거나 화면을 떠나면 편집 내용이 사라집니다.</p></div><Button variant="outline" disabled={isLoading} onClick={() => {
+          if (!confirmDiscard()) return;
+          setDrafts((current) => current?.map((draft) => ({ ...draft, items: draft.original })) ?? null);
+          setDirty(false); setPreviewVersion((current) => current + 1);
+        }}>원본으로 초기화</Button></div>
+        <fieldset disabled={isLoading} className="space-y-6">{drafts.map((draft) => <ShipmentScheduleEditor key={previewVersion + ":" + draft.vendorId} document={makeDocument(draft)} allItems={draft.items} onEditing={() => setDirty(true)} onChange={(items) => {
+          setDrafts((current) => current?.map((candidate) => candidate.vendorId === draft.vendorId ? { ...candidate, items } : candidate) ?? null);
+          setDirty(true);
+        }} />)}</fieldset>
+      </>}
     </main>
   );
 }

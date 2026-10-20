@@ -1,4 +1,4 @@
-"use client";import{useMemo,useState}from"react";import{History,Plus,Settings2}from"lucide-react";import{Button}from"@/components/ui/Button";import{ErrorState}from"@/components/ui/ErrorState";import{Skeleton}from"@/components/ui/Skeleton";import{ContractEntryDialog}from"@/components/statistics/lme/ContractEntryDialog";import{ContractHistoryDialog}from"@/components/statistics/lme/ContractHistoryDialog";import{ContractOperationDialog}from"@/components/statistics/lme/ContractOperationDialog";import{useRawMaterialContracts,type ContractSupplier}from"@/hooks/useRawMaterialContracts";import{formatNumber}from"@/lib/lme";import{CONTRACT_STATUS_PRESENTATION,isContractEndingSoon,type RawMaterialContract}from"@/lib/raw-material-contracts";const kg=(tons:number)=>`${formatNumber(tons*1000,1)} kg`;export function RawMaterialContractsPanel({isAdmin}:{isAdmin:boolean;}){const data=useRawMaterialContracts();const[entryOpen,setEntryOpen]=useState(false);const[operation,setOperation]=useState<RawMaterialContract|null>(null);const[historySupplier,setHistorySupplier]=useState<ContractSupplier|null>(null);const activeCount=data.contracts.filter(item=>item.status==="active").length;const endingSoon=data.contracts.filter(item=>isContractEndingSoon(item)).length;const available=useMemo(()=>data.contracts.filter(item=>item.status==="active").reduce((sum,item)=>sum+item.allocation_summary.availableTons,0),[data.contracts]);return<div className="space-y-4">
+"use client";import{useMemo,useState}from"react";import{History,Plus,Settings2}from"lucide-react";import{Button}from"@/components/ui/Button";import{ErrorState}from"@/components/ui/ErrorState";import{Skeleton}from"@/components/ui/Skeleton";import{ContractEntryDialog}from"@/components/statistics/lme/ContractEntryDialog";import{ContractHistoryDialog}from"@/components/statistics/lme/ContractHistoryDialog";import{ContractOperationDialog}from"@/components/statistics/lme/ContractOperationDialog";import{useRawMaterialContracts,type ContractSupplier}from"@/hooks/useRawMaterialContracts";import{formatNumber}from"@/lib/lme";import{CONTRACT_STATUS_PRESENTATION,isContractEndingSoon,type RawMaterialContract}from"@/lib/raw-material-contracts";const kg=(tons:number)=>`${formatNumber(tons*1000,1)} kg`;export function RawMaterialContractsPanel({isAdmin}:{isAdmin:boolean;}){const data=useRawMaterialContracts();const[entryOpen,setEntryOpen]=useState(false);const[operation,setOperation]=useState<RawMaterialContract|null>(null);const[historySupplier,setHistorySupplier]=useState<ContractSupplier|null>(null);const activeCount=data.contracts.filter(item=>item.status==="active").length;const endingSoon=data.contracts.filter(item=>isContractEndingSoon(item)).length;const available=useMemo(()=>data.contracts.filter(item=>item.status==="active"||item.status==="scheduled").reduce((sum,item)=>sum+item.allocation_summary.availableTons,0),[data.contracts]);return<div className="space-y-4">
       <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
         <div>
           <h2 className="text-lg font-bold">원자재 공급계약</h2>
@@ -13,7 +13,7 @@
           </Button>}
       </div>
       <div className="grid gap-3 sm:grid-cols-3">
-        {[["진행중 계약",`${activeCount}건`],["30일 이내 종료 예정",`${endingSoon}건`],["진행중 계약 가용량",kg(available)]].map(([label,value])=><div key={label}className="rounded-2xl border bg-white p-4 shadow-sm">
+        {[["진행중 계약",`${activeCount}건`],["30일 이내 종료 예정",`${endingSoon}건`],["계약 가용량",kg(available)]].map(([label,value])=><div key={label}className="rounded-2xl border bg-white p-4 shadow-sm">
             <p className="text-xs font-semibold text-slate-500">{label}</p>
             <p className="mt-1 text-xl font-bold">{value}</p>
           </div>)}
@@ -46,7 +46,7 @@
             <table className="min-w-[1550px] w-full text-left text-xs">
               <thead className="bg-slate-100">
                 <tr>
-                  {["AL업체","계약명","Material","연도","계약기간","계약단가","인가공비","계약량","확정 배정","예정 배정","총 점유","가용량","상태","메모","관리"].map(label=><th key={label}className="px-3 py-2">
+                  {["AL업체","계약명","Material","연도","계약기간","계약단가","인가공비","계약량","확정 배정","예정 배정","총 점유","가용량","초과량","상태","메모","관리"].map(label=><th key={label}className="px-3 py-2">
                       {label}
                     </th>)}
                 </tr>
@@ -85,7 +85,10 @@
                         {kg(occupied)}
                       </td>
                       <td className="px-3 py-2 font-semibold text-blue-700">
-                        {kg(item.allocation_summary.availableTons)}
+                        {kg(Math.max(item.allocation_summary.availableTons,0))}
+                      </td>
+                      <td className={`px-3 py-2 font-semibold ${item.allocation_summary.availableTons<0?"text-red-600":"text-slate-500"}`}>
+                        {kg(Math.max(-item.allocation_summary.availableTons,0))}
                       </td>
                       <td className="px-3 py-2">
                         <span className={`rounded-full px-2 py-1 font-semibold ${status.className}`}>
@@ -107,7 +110,7 @@
                       </td>
                     </tr>;})}
                 {data.contracts.length===0&&<tr>
-                    <td colSpan={15}className="px-4 py-12 text-center text-sm text-slate-400">
+                    <td colSpan={16}className="px-4 py-12 text-center text-sm text-slate-400">
                       등록된 원자재 공급계약이 없습니다.
                     </td>
                   </tr>}

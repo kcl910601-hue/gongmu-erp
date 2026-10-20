@@ -45,7 +45,7 @@ import { getCalendarPermissions } from "@/lib/permissions";
 import { getCalendarTaskNoteDisplayPreviews, getLatestTaskNotes, shouldShowActiveImportantNoteReminder, TASK_NOTES_CHANGED_EVENT, type TaskNotePreview } from "@/lib/task-notes";
 import { buildCalendarProcessTypeMap, resolveCalendarProcessType, type CalendarProcessType } from "@/lib/calendar-process-type";
 import { CALENDAR_DATE_DIVIDER_CLASS, allocateCalendarCompanySlots, getCalendarCompanyGridPosition, getCalendarTaskScheduleRange, getCalendarWeekGridLayout } from "@/lib/calendar-variable-stack";
-import { getCalendarTaskMetadata, type CalendarTaskMetadataKind } from "@/lib/calendar-task-metadata";
+import { getCalendarTaskMetadata, getCalendarTaskTypePriority, type CalendarTaskMetadataKind } from "@/lib/calendar-task-metadata";
 import { getCalendarProjectScheduleDate, isCalendarCompanyItemCompleted, matchesCalendarCompletedVisibility, matchesCalendarPersonalCompletedVisibility } from "@/lib/calendar-completed-visibility";
 import { completeTask, updateTask } from "@/lib/task-actions";
 import { applyCalendarTaskQuickStatus, getCalendarTaskQuickAction, restoreCalendarTaskQuickStatus } from "@/lib/calendar-task-quick-complete";
@@ -109,7 +109,6 @@ function CalendarMetadataBadge({ kind, label, className = "" }: { kind: Calendar
   return <span className={`inline-flex w-auto shrink-0 whitespace-nowrap rounded px-1 py-0 text-[9px] font-medium leading-3 ring-1 ${variantClass} ${className}`}>{label}</span>;
 }
 
-const CALENDAR_PROJECT_NAME_MAX_LENGTH = 18;
 const CALENDAR_WEEK_COLUMNS_CLASS = "grid-cols-7 2xl:grid-cols-[minmax(0,0.7fr)_repeat(5,minmax(0,1fr))_minmax(0,0.7fr)]";
 
 function getTaskAssemblyVendorName(task: Task) {
@@ -122,18 +121,13 @@ function getTaskAssemblyVendorLabel(task: Task) {
 
 function getTaskCalendarTitle(project: Project | undefined, task: Task) {
   const projectName = project?.project_name.trim() || "프로젝트 미지정";
-  const projectIdentifier =
-    projectName.length <= CALENDAR_PROJECT_NAME_MAX_LENGTH
-      ? projectName
-      : project?.project_code?.trim() || `${projectName.slice(0, 12)}…`;
 
-  return `${projectIdentifier} · ${getTaskAssemblyVendorName(task)} · ${task.task_name?.trim() || "업무명 없음"}`;
+  return `${projectName} · ${getTaskAssemblyVendorName(task)} · ${task.task_name?.trim() || "업무명 없음"}`;
 }
 
 function getTaskCalendarDisplayTitle(project: Project | undefined, task: Task) {
   const projectName = project?.project_name.trim() || "프로젝트 미지정";
-  const projectIdentifier = projectName.length <= CALENDAR_PROJECT_NAME_MAX_LENGTH ? projectName : project?.project_code?.trim() || projectName;
-  return `${projectIdentifier} · ${task.task_name?.trim() || "업무명 없음"}`;
+  return `${projectName} · ${task.task_name?.trim() || "업무명 없음"}`;
 }
 
 function splitMonthIntoWeeks(days: Array<string | null>) {
@@ -713,6 +707,9 @@ export default function CalendarPage() {
       grouped[item.date].push(item);
     });
 
+    for (const items of Object.values(grouped)) {
+      items.sort((a, b) => getCalendarTaskTypePriority(a.taskType) - getCalendarTaskTypePriority(b.taskType));
+    }
     return Object.entries(grouped).sort(([a], [b]) => a.localeCompare(b));
   })();
 
@@ -736,6 +733,8 @@ export default function CalendarPage() {
         : item.date === selectedDate)
     )
     .sort((a, b) => {
+      const typeDiff = getCalendarTaskTypePriority(a.taskType) - getCalendarTaskTypePriority(b.taskType);
+      if (typeDiff !== 0) return typeDiff;
       const priorityDiff =
         getCalendarItemPriority(a) - getCalendarItemPriority(b);
 
@@ -1035,7 +1034,7 @@ export default function CalendarPage() {
             <div className="col-span-7 space-y-1.5 sm:space-y-2">
               {calendarWeeks.map((days) => {
                 const weekKey = days.join("-");
-                const companySlots = allocateCalendarCompanySlots(showCompanySchedule ? calendarVisibleItems : [], days, getItemRange);
+                const companySlots = allocateCalendarCompanySlots(showCompanySchedule ? calendarVisibleItems : [], days, getItemRange, item => item.id.startsWith("project-") ? -1 : getCalendarTaskTypePriority(item.taskType));
                 const weekGridLayout = getCalendarWeekGridLayout(companySlots.slotCount);
                 const weekRowCount = weekGridLayout.rowCount;
 

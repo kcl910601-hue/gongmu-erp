@@ -2,6 +2,7 @@ import { createSupabaseServerClient } from "@/lib/supabase-server";
 import { getEmployeeByAuth } from "@/lib/auth";
 import { hasPermission, isAuthorizedEmployee } from "@/lib/permissions";
 import { isPartnerType } from "@/lib/partners";
+import { parsePartnerImport } from "@/lib/partner-import";
 
 type PartnerPayload = {
   id?: unknown;
@@ -82,7 +83,25 @@ export async function POST(request: Request) {
     if (!employee || !hasPermission(employee.role, "manage_settings")) return Response.json({ error: "설정 관리 권한이 필요합니다." }, { status: 403 });
     if (!partnerCategoryId) return Response.json({ error: "업체 카테고리를 찾을 수 없습니다." }, { status: 500 });
 
-    const body = (await request.json()) as PartnerPayload;
+    const body = (await request.json()) as PartnerPayload & { rows?: unknown };
+    if (body.rows !== undefined) {
+      let rows;
+      try { rows = parsePartnerImport(body.rows); }
+      catch (error) { return Response.json({ error: error instanceof Error ? error.message : "입력 오류" }, { status: 400 }); }
+      const existingNames = new Set<string>();
+      for (let offset = 0; ; offset += 1000) {
+        const existing = await supabase.from("organizations").select("id,name").eq("category_id", partnerCategoryId).order("id").range(offset, offset + 999);
+        if (existing.error) return errorResponse(existing.error);
+        for (const item of existing.data) existingNames.add(String(item.name).trim().toLocaleLowerCase("ko-KR"));
+        if (existing.data.length < 1000) break;
+      }
+      const duplicates = rows.filter(row => existingNames.has(row.name.toLocaleLowerCase("ko-KR")));
+      if (duplicates.length) return Response.json({ error: `이미 등록된 업체입니다: ${duplicates.slice(0, 10).map(row => row.name).join(", ")}${duplicates.length > 10 ? " 외" : ""}. 해당 행을 제외하고 다시 업로드해주세요.` }, { status: 409 });
+      // One INSERT statement: a database error rolls back the entire upload.
+      const result = await supabase.from("organizations").insert(rows.map(row => ({ ...row, category_id: partnerCategoryId, function_code: "partner", is_active: true })));
+      if (result.error) return errorResponse(result.error, result.error.code === "23505" ? 409 : 400);
+      return Response.json({ count: rows.length }, { status: 201 });
+    }
     const name = typeof body.name === "string" ? body.name.trim() : "";
     if (!name || !isPartnerType(body.partner_type)) return Response.json({ error: "업체명과 유형을 확인해주세요." }, { status: 400 });
 

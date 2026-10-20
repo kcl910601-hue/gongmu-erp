@@ -1,18 +1,43 @@
+import { getTaskStatusLabel, normalizeTaskStatus } from "./status.ts";
+
 export type ShipmentScheduleItem = {
   id: number;
   shipmentDate: string;
   projectName: string;
+  clientName?: string | null;
   taskName: string;
+  shipmentLabel?: string;
   quantity: number | null;
   quantityUnit: string | null;
   memo: string | null;
+  status?: string | null;
+  processName?: string;
+  excluded?: boolean;
+  notes?: { id: string; text: string }[];
 };
 
 export type ShipmentScheduleOptions = {
   showCalendar: boolean;
   showDetails: boolean;
   includeCheckbox: boolean;
+  showQuantity?: boolean;
+  showStatus?: boolean;
+  paperSize?: "A4" | "A3";
+  weekly?: boolean;
+  separateDetails?: boolean;
 };
+
+export function shipmentStatusLabel(item: ShipmentScheduleItem, today: string) {
+  if (normalizeTaskStatus(item.status ?? null) !== "completed" && item.shipmentDate < today) return "지연";
+  return getTaskStatusLabel(item.status ?? null);
+}
+
+export function filterShipmentScheduleItems(items: ShipmentScheduleItem[], filters: { incompleteOnly: boolean; project: string; process: string }) {
+  return items.filter((item) => !item.excluded
+    && (!filters.incompleteOnly || normalizeTaskStatus(item.status ?? null) !== "completed")
+    && (!filters.project || item.projectName === filters.project)
+    && (!filters.process || item.processName === filters.process));
+}
 
 export type ShipmentScheduleRange = {
   start: string;
@@ -29,7 +54,6 @@ export type ShipmentCalendarCell = {
 };
 
 const WEEKDAY_LABELS = ["일", "월", "화", "수", "목", "금", "토"];
-const MAX_CALENDAR_ITEMS = 3;
 
 const LOCAL_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -137,71 +161,127 @@ export function buildShipmentCalendarWeeksForRange(range: ShipmentScheduleRange,
   return weeks;
 }
 
+
 export function renderShipmentCalendar(month: string, items: ShipmentScheduleItem[]) {
   return renderShipmentCalendarWeeks(buildShipmentCalendarWeeks(month, items));
 }
 
 export function renderShipmentCalendarRange(range: ShipmentScheduleRange, items: ShipmentScheduleItem[]) {
-  const weeks = buildShipmentCalendarWeeksForRange(range, items);
-  return renderShipmentCalendarWeeks(weeks);
+  return renderShipmentCalendarWeeks(buildShipmentCalendarWeeksForRange(range, items));
 }
 
-function renderShipmentCalendarWeeks(weeks: ShipmentCalendarCell[][]) {
-  return `<section class="calendar"><div class="weekdays">${WEEKDAY_LABELS.map((label, index) => `<div class="weekday ${index === 0 ? "sun" : index === 6 ? "sat" : ""}">${label}</div>`).join("")}</div>${weeks.map((week) => `<div class="week">${week.map((cell) => {
-    if (cell.day === null) return `<div class="day empty"></div>`;
-    const visibleItems = cell.items.slice(0, MAX_CALENDAR_ITEMS);
-    const remainingCount = cell.items.length - visibleItems.length;
-    return `<div class="day"><div class="day-number ${cell.isSunday ? "sun" : cell.isSaturday ? "sat" : ""}">${cell.dayLabel ?? cell.day}</div>${visibleItems.map((item) => `<div class="calendar-item"><strong>${escapeHtml(item.projectName)}</strong><span>${escapeHtml(item.taskName)}</span></div>`).join("")}${remainingCount > 0 ? `<div class="more">외 ${remainingCount}건</div>` : ""}</div>`;
-  }).join("")}</div>`).join("")}</section>`;
+function renderShipmentCalendarWeeks(weeks: ShipmentCalendarCell[][], options?: ShipmentScheduleOptions, today = "", editable = false) {
+  return '<section class="calendar"><div class="weekdays">' + WEEKDAY_LABELS.map((label, index) => '<div class="weekday ' + (index === 0 ? 'sun' : index === 6 ? 'sat' : '') + '">' + label + '</div>').join('') + '</div>' + weeks.map((week) => '<div class="week">' + week.map((cell) => {
+    if (cell.day === null) return '<div class="day empty"></div>';
+    return '<div class="day"><div class="day-number ' + (cell.isSunday ? 'sun' : cell.isSaturday ? 'sat' : '') + '">' + (cell.dayLabel ?? cell.day) + (editable ? '<button type="button" class="edit-action" data-add="' + cell.key + '" aria-label="' + cell.key + ' 일정 추가">+ 추가</button>' : '') + '</div>' + cell.items.map((item) => '<div class="calendar-item"><strong>' + escapeHtml(item.projectName) + '</strong>' + (item.clientName?.trim() ? '<span>발주처: ' + escapeHtml(item.clientName.trim()) + '</span>' : '') + '<span>' + escapeHtml(item.taskName) + '</span>' + (item.shipmentLabel ? '<span>' + escapeHtml(item.shipmentLabel) + '</span>' : '') + (options?.showQuantity && item.quantity !== null ? '<span>수량 ' + escapeHtml(formatShipmentQuantity(item)) + '</span>' : '') + (options?.showStatus ? '<span class="status">' + escapeHtml(shipmentStatusLabel(item, today)) + '</span>' : '') + (item.memo ? '<span class="memo">' + escapeHtml(item.memo) + '</span>' : '') + (editable ? '<button type="button" class="edit-action" data-edit="' + item.id + '">편집</button>' : '') + '</div>').join('') + '</div>';
+  }).join('') + '</div>').join('') + '</section>';
 }
 
-function renderDetails(items: ShipmentScheduleItem[], includeCheckbox: boolean, emptyPeriodLabel = "월") {
-  const safeItems = Array.isArray(items) ? items : [];
-  return `<section class="details"><h2>출고 상세목록</h2><table><thead><tr>${includeCheckbox ? "<th class=\"check\">체크</th>" : ""}<th>출고일</th><th>현장명</th><th>작업명</th><th>수량</th><th>비고</th></tr></thead><tbody>${safeItems.map((item) => `<tr>${includeCheckbox ? "<td class=\"check\">□</td>" : ""}<td>${escapeHtml(item.shipmentDate)}</td><td>${escapeHtml(item.projectName)}</td><td>${escapeHtml(item.taskName)}</td><td>${escapeHtml(formatShipmentQuantity(item))}</td><td>${escapeHtml(item.memo || "")}</td></tr>`).join("") || `<tr><td colspan="${includeCheckbox ? 6 : 5}" class="no-data">해당 ${emptyPeriodLabel}의 출고 일정이 없습니다.</td></tr>`}</tbody></table></section>`;
+function renderDetails(items: ShipmentScheduleItem[], options: ShipmentScheduleOptions, today: string, editable: boolean) {
+  const hasQuantity = items.some((item) => item.quantity !== null);
+  const columns = 5 + (hasQuantity ? 1 : 0) + (options.includeCheckbox ? 1 : 0) + (options.showStatus ? 1 : 0);
+  return '<section class="details"><h2>출고 상세목록</h2><table><thead><tr>' + (options.includeCheckbox ? '<th class="check">체크</th>' : '') + '<th>출고일</th><th>현장명</th><th>발주처</th><th>작업명</th>' + (hasQuantity ? '<th>수량</th>' : '') + (options.showStatus ? '<th>상태</th>' : '') + '<th>전달사항 / 비고</th></tr></thead><tbody>' + (items.map((item) => '<tr>' + (options.includeCheckbox ? '<td class="check">□</td>' : '') + '<td>' + escapeHtml(item.shipmentDate) + '</td><td>' + escapeHtml(item.projectName) + '</td><td>' + escapeHtml(item.clientName?.trim() || '') + '</td><td>' + escapeHtml(item.taskName) + (item.shipmentLabel ? '<br>' + escapeHtml(item.shipmentLabel) : '') + (editable ? '<br><button type="button" class="edit-action" data-edit="' + item.id + '">편집</button>' : '') + '</td>' + (hasQuantity ? '<td>' + (item.quantity === null ? '' : escapeHtml(formatShipmentQuantity(item))) + '</td>' : '') + (options.showStatus ? '<td>' + escapeHtml(shipmentStatusLabel(item, today)) + '</td>' : '') + '<td class="memo">' + escapeHtml(item.memo || '') + '</td></tr>').join('') || '<tr><td colspan="' + columns + '" class="no-data">해당 기간의 출고 일정이 없습니다.</td></tr>') + '</tbody></table></section>';
 }
 
 export function createShipmentScheduleFilename(month: string, vendorName: string) {
-  const safeVendorName = vendorName.replace(/[\\/:*?"<>|]/g, "_").trim() || "조립업체";
-  return `${month}_${safeVendorName}_출고일정.pdf`;
+  const safeVendorName = vendorName.replace(/[\\/:*?"<>|]/g, '_').trim() || '조립업체';
+  return month + '_' + safeVendorName + '_출고일정.pdf';
 }
 
 export function createShipmentScheduleRangeFilename(range: ShipmentScheduleRange, vendorName: string) {
-  const safeVendorName = vendorName.replace(/[\\/:*?"<>|]/g, "_").trim() || "조립업체";
-  return `${range.start}_${range.end}_${safeVendorName}_출고일정.pdf`;
+  return createShipmentScheduleFilename(range.start + '_' + range.end, vendorName);
 }
 
-export function printShipmentSchedulePdf(input: {
+export type ShipmentScheduleDocument = {
   month: string;
   range?: ShipmentScheduleRange;
   vendorName: string;
   printedAt: string;
   items: ShipmentScheduleItem[];
   options: ShipmentScheduleOptions;
-}) {
-  const popup = window.open("", "_blank", "width=1200,height=850");
-  if (!popup) throw new Error("팝업이 차단되었습니다. 브라우저에서 팝업을 허용해 주세요.");
-  popup.opener = null;
+};
 
-  const filename = input.range ? createShipmentScheduleRangeFilename(input.range, input.vendorName) : createShipmentScheduleFilename(input.month, input.vendorName);
-  const rangeLabel = input.range ? formatShipmentScheduleRange(input.range) : input.month;
-  const heading = input.range ? "조립업체 기간 출고 일정표" : "조립업체 월간 출고 일정표";
-  const sortedItems = [...(Array.isArray(input.items) ? input.items : [])].sort((a, b) => a.shipmentDate.localeCompare(b.shipmentDate) || a.projectName.localeCompare(b.projectName, "ko"));
-  popup.document.open();
-  popup.document.write(`<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>${escapeHtml(filename.replace(/\.pdf$/, ""))}</title><style>
-    @page { size: A4 landscape; margin: 9mm; }
-    * { box-sizing: border-box; } body { margin: 0; color: #0f172a; font-family: "Malgun Gothic", "Apple SD Gothic Neo", sans-serif; font-size: 10px; }
-    header { display: flex; justify-content: space-between; align-items: flex-end; border-bottom: 2px solid #1e3a8a; padding-bottom: 8px; margin-bottom: 10px; }
-    h1 { margin: 0; font-size: 22px; } .meta { display: grid; grid-template-columns: auto auto; gap: 3px 14px; text-align: right; }
-    .weekdays, .week { display: grid; grid-template-columns: repeat(7, 1fr); } .week { break-inside: avoid; page-break-inside: avoid; } .weekday { padding: 5px; border: 1px solid #cbd5e1; border-bottom: 0; background: #eff6ff; text-align: center; font-weight: 700; }
-    .day { min-height: 72px; border: 1px solid #cbd5e1; padding: 4px; overflow: hidden; } .day.empty { background: #f8fafc; } .day-number { font-weight: 700; margin-bottom: 3px; }
-    .sun { color: #dc2626; } .sat { color: #2563eb; } .calendar-item { margin-top: 2px; padding: 2px 3px; border-radius: 3px; background: #eff6ff; white-space: nowrap; overflow: hidden; }
-    .calendar-item strong, .calendar-item span { display: block; overflow: hidden; text-overflow: ellipsis; } .calendar-item span { color: #475569; } .more { margin-top: 3px; color: #475569; font-weight: 700; }
-    .details { margin-top: 12px; break-before: auto; } h2 { margin: 0 0 6px; font-size: 14px; } table { width: 100%; border-collapse: collapse; } th, td { border: 1px solid #94a3b8; padding: 5px 6px; text-align: left; } th { background: #e2e8f0; } .check { width: 42px; text-align: center; } .no-data { padding: 18px; text-align: center; color: #64748b; }
-    @media print { .details { page-break-inside: auto; } thead { display: table-header-group; } tr { page-break-inside: avoid; } }
-  </style></head><body><header><div><h1>${heading}</h1></div><div class="meta"><b>업체명</b><span>${escapeHtml(input.vendorName)}</span><b>${input.range ? "출력기간" : "출력월"}</b><span>${escapeHtml(rangeLabel)}</span><b>출력일</b><span>${escapeHtml(input.printedAt)}</span></div></header>${input.options.showCalendar ? input.range ? renderShipmentCalendarRange(input.range, sortedItems) : renderShipmentCalendar(input.month, sortedItems) : ""}${input.options.showDetails ? renderDetails(sortedItems, input.options.includeCheckbox, input.range ? "기간" : "월") : ""}</body></html>`);
-  popup.document.close();
-  popup.focus();
-  window.setTimeout(() => popup.print(), 250);
+// Preview and print deliberately share the same markup and scoped styles.
+export function shipmentScheduleStyles(options: ShipmentScheduleOptions) {
+  return '\n@page { size: ' + (options.paperSize === 'A3' ? 'A3' : 'A4') + ' landscape; margin: 9mm; }\n' + String.raw`
+    .shipment-document { box-sizing: border-box; color: #0f172a; font-family: "Malgun Gothic", "Apple SD Gothic Neo", sans-serif; font-size: 11px; line-height: 1.4; background: white; }
+    .shipment-document * { box-sizing: border-box; }
+    .shipment-document .sheet + .sheet { break-before: page; margin-top: 24px; }
+    .shipment-document header { display: flex; justify-content: space-between; align-items: flex-end; border-bottom: 2px solid #1e3a8a; padding-bottom: 8px; margin-bottom: 10px; gap: 16px; }
+    .shipment-document h1 { margin: 0; font-size: 22px; font-weight: 700; }
+    .shipment-document .meta { display: grid; grid-template-columns: auto auto; gap: 3px 14px; text-align: right; }
+    .shipment-document .weekdays, .shipment-document .week { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); }
+    .shipment-document .week { break-inside: avoid; }
+    .shipment-document .weekday { padding: 5px; border: 1px solid #cbd5e1; border-bottom: 0; background: #eff6ff; text-align: center; font-weight: 700; }
+    .shipment-document .day { min-height: 80px; border: 1px solid #cbd5e1; padding: 4px; min-width: 0; }
+    .shipment-document .weekly .day { min-height: 110mm; }
+    .shipment-document .day.empty { background: #f8fafc; }
+    .shipment-document .day-number { font-weight: 700; margin-bottom: 3px; }
+    .shipment-document .sun { color: #dc2626; } .shipment-document .sat { color: #2563eb; }
+    .shipment-document .calendar-item { margin-top: 3px; padding: 3px; border-radius: 3px; background: #eff6ff; overflow-wrap: anywhere; break-inside: avoid; }
+    .shipment-document .calendar-item strong, .shipment-document .calendar-item span { display: block; }
+    .shipment-document .calendar-item span { color: #475569; }
+    .shipment-document .status { font-weight: 700; }
+    .shipment-document .memo { white-space: pre-wrap; overflow-wrap: anywhere; }
+    .shipment-document .details { margin-top: 12px; }
+    .shipment-document h2 { margin: 0 0 6px; font-size: 14px; font-weight: 700; }
+    .shipment-document table { width: 100%; border-collapse: collapse; }
+    .shipment-document th, .shipment-document td { border: 1px solid #94a3b8; padding: 5px 6px; text-align: left; overflow-wrap: anywhere; }
+    .shipment-document th { background: #e2e8f0; }
+    .shipment-document .check { width: 42px; text-align: center; }
+    .shipment-document .no-data { padding: 18px; text-align: center; color: #64748b; }
+    .shipment-document .edit-action { color: #1d4ed8; font: inherit; cursor: pointer; padding: 2px 5px; background: white; border: 1px solid #bfdbfe; border-radius: 4px; margin-left: 4px; }
+    @media print {
+      body { margin: 0; }
+      .shipment-document + .shipment-document { break-before: page; }
+      .shipment-document .sheet + .sheet { margin-top: 0; }
+      .shipment-document thead { display: table-header-group; }
+      .shipment-document tr { break-inside: avoid; }
+      .shipment-document .edit-action { display: none; }
+    }
+  `;
 }
 
-export { MAX_CALENDAR_ITEMS, WEEKDAY_LABELS };
+export function renderShipmentScheduleDocument(input: ShipmentScheduleDocument, editable = false) {
+  const items = input.items.filter((item) => !item.excluded).sort((a, b) => a.shipmentDate.localeCompare(b.shipmentDate) || a.projectName.localeCompare(b.projectName, 'ko'));
+  const { options } = input;
+  const range = input.range ?? getShipmentMonthRange(input.month);
+  if (!range || validateShipmentScheduleRange(range)) return '';
+  const header = (label: string) => '<header><h1>조립업체 출고 일정표</h1><div class="meta"><b>업체명</b><span>' + escapeHtml(input.vendorName) + '</span><b>출력기간</b><span>' + escapeHtml(label) + '</span><b>출력일</b><span>' + escapeHtml(input.printedAt) + '</span></div></header>';
+  const weeks = buildShipmentCalendarWeeksForRange(range, items);
+  let pages = '';
+  if (options.showCalendar) {
+    if (options.weekly) {
+      pages = weeks.map((week) => {
+        const dates = week.filter((cell) => cell.day !== null).map((cell) => cell.key);
+        return '<section class="sheet weekly">' + header(formatShipmentScheduleRange({ start: dates[0], end: dates[dates.length - 1] })) + renderShipmentCalendarWeeks([week], options, input.printedAt, editable) + '</section>';
+      }).join('');
+    } else {
+      pages = '<section class="sheet">' + header(formatShipmentScheduleRange(range)) + renderShipmentCalendarWeeks(weeks, options, input.printedAt, editable) + '</section>';
+    }
+  }
+  if (options.showDetails) {
+    const details = renderDetails(items, options, input.printedAt, editable);
+    if (!options.showCalendar || options.separateDetails || options.weekly) {
+      pages += '<section class="sheet">' + header(formatShipmentScheduleRange(range)) + details + '</section>';
+    } else {
+      pages = pages.slice(0, -10) + details + '</section>';
+    }
+  }
+  return '<div class="shipment-document">' + pages + '</div>';
+}
+
+export function printShipmentSchedulePdf(input: ShipmentScheduleDocument, additional: ShipmentScheduleDocument[] = []) {
+  const popup = window.open('', '_blank', 'width=1200,height=850');
+  if (!popup) throw new Error('팝업이 차단되었습니다. 브라우저에서 팝업을 허용해 주세요.');
+  popup.opener = null;
+  const name = additional.length ? '여러업체' : input.vendorName;
+  const filename = input.range ? createShipmentScheduleRangeFilename(input.range, name) : createShipmentScheduleFilename(input.month, name);
+  popup.document.open();
+  popup.document.write('<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>' + escapeHtml(filename.replace(/\.pdf$/, '')) + '</title><style>' + shipmentScheduleStyles(input.options) + '</style></head><body>' + [input, ...additional].map((doc) => renderShipmentScheduleDocument(doc)).join('') + '</body></html>');
+  popup.document.close();
+  popup.focus();
+  void popup.document.fonts.ready.then(() => { if (!popup.closed) popup.print(); });
+}
+
+export { WEEKDAY_LABELS };

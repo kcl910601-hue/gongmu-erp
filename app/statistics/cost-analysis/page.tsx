@@ -5,6 +5,7 @@ import { Plus, Search } from "lucide-react";
 import { MaterialCostStatus } from "@/components/statistics/MaterialCostStatus";
 import { MaterialUsageDialog } from "@/components/statistics/cost-analysis/MaterialUsageDialog";
 import { LmeCostBasisSection } from "@/components/statistics/cost-analysis/LmeCostBasisSection";
+import { CoatingPlanPanel } from "@/components/statistics/coating/CoatingPlanPanel";
 import { ProjectAccessoryUsageSection } from "@/components/statistics/cost-analysis/ProjectAccessoryUsageSection";
 import {
   ProjectGlassCostSection,
@@ -268,9 +269,9 @@ export default function CostAnalysisPage() {
         </div>
       )}
       <section className="grid gap-4 xl:grid-cols-[300px_minmax(0,1fr)]">
-        <aside className="rounded-2xl border border-slate-200 bg-white p-4">
-          <h2 className="text-sm font-semibold">프로젝트 선택</h2>
-          <label className="mt-3 flex h-9 items-center gap-2 rounded-lg border px-3">
+        <aside className="flex max-h-[65dvh] min-h-0 flex-col self-start rounded-2xl border border-slate-200 bg-white p-4 xl:sticky xl:top-5 xl:h-[calc(100dvh-10rem)] xl:max-h-none">
+          <h2 className="shrink-0 text-sm font-semibold">프로젝트 선택</h2>
+          <label className="mt-3 flex h-9 shrink-0 items-center gap-2 rounded-lg border px-3">
             <Search size={15} className="text-slate-400" />
             <input
               value={search}
@@ -279,7 +280,7 @@ export default function CostAnalysisPage() {
               className="min-w-0 flex-1 text-sm outline-none"
             />
           </label>
-          <div className="mt-3 max-h-[620px] space-y-1 overflow-y-auto">
+          <div className="mt-3 min-h-0 flex-1 space-y-1 overflow-y-auto overscroll-contain [scrollbar-gutter:stable]">
             {filtered.map((project) => (
               <button
                 key={project.id}
@@ -357,6 +358,7 @@ export default function CostAnalysisPage() {
                 ))}
               </div>
               <LmeCostBasisSection key={selected.id} projectId={selected.id} canManage={isAdmin} onChanged={loadUsages} />
+              <CoatingPlanPanel key={`coating-plan-${selected.id}`} projectId={selected.id} summaryOnly />
               <ProjectCoatingCostSection
                 project={{
                   id: selected.id,

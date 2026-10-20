@@ -68,7 +68,7 @@
                   </span>
                 </div>
                 <span className="mt-1 block font-normal text-slate-500">
-                  수정 가능 최대 {formatNumber(maximum,4)}t
+                  계약 기준 잔여 {formatNumber(maximum,4)}t · 초과 배정 가능
                 </span>
               </label>
               <label className="text-xs font-semibold">

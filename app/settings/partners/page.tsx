@@ -10,6 +10,8 @@ import { PARTNER_TYPE_LABELS, PARTNER_TYPES, type PartnerType } from "@/lib/part
 import { EditingLockNotice } from "@/components/editing/EditingLockNotice";
 import { useEditingLock } from "@/hooks/useEditingLock";
 import { withShortEditingLock } from "@/lib/editing-locks";
+import { PartnerExcelImport } from "@/components/settings/PartnerExcelImport";
+import { hasPermission } from "@/lib/permissions";
 
 type Partner = {
   id: number;
@@ -218,8 +220,9 @@ export default function PartnerOrganizationsPage() {
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <p className="text-sm text-slate-500">조립업체, AL업체, 도장업체와 유리업체를 관리합니다.</p>
+        <p className="text-sm text-slate-500">조립업체, AL업체, 도장업체, 유리업체와 부자재업체를 관리합니다.</p>
         <div className="flex flex-wrap items-center gap-3">
+          {hasPermission(role, "manage_settings") && <PartnerExcelImport disabled={saving || deleting || loading} onComplete={async count => { setMessage(`${count}개 업체가 등록되었습니다. 유형 필터와 비활성 포함 설정에 따라 표시됩니다.`); await loadPartners(); }}/>}
           <select value={typeFilter} onChange={(event) => setTypeFilter(event.target.value as PartnerType | "all")} className="rounded-xl border border-slate-300 px-3 py-2 text-sm"><option value="all">전체 타입</option>{PARTNER_TYPES.map((type) => <option key={type} value={type}>{PARTNER_TYPE_LABELS[type]}</option>)}</select>
           <label className="flex items-center gap-2 text-sm text-slate-600"><input type="checkbox" checked={showInactive} onChange={(event) => setShowInactive(event.target.checked)} />비활성 포함</label>
           <button type="button" onClick={() => void loadPartners()} className="flex items-center gap-2 rounded-xl border border-slate-300 px-4 py-2 text-sm font-semibold hover:bg-slate-50"><RefreshCw size={15} />새로고침</button>

@@ -29,7 +29,7 @@ export async function GET(
       { error: "프로젝트 ID가 올바르지 않습니다." },
       { status: 400 },
     );
-  const [p, c, m, x, k, g, coating, accessories] = await Promise.all([
+  const [p, c, m, x, k, g, coating, accessories, estimates] = await Promise.all([
     supabase
       .from("projects")
       .select(
@@ -61,8 +61,11 @@ export async function GET(
       .eq("project_id", id)
       .eq("status", "active"),
     supabase.from("project_accessory_usages").select("id,project_id,total_cost_krw,status").eq("project_id", id).eq("status", "active"),
+    supabase.from("project_material_usages")
+      .select("expected_quantity_kg,expected_cost_krw")
+      .eq("project_id", id).eq("material_code", "AL"),
   ]);
-  if (p.error || c.error || m.error || x.error || k.error || g.error || coating.error || accessories.error)
+  if (p.error || c.error || m.error || x.error || k.error || g.error || coating.error || accessories.error || estimates.error)
     return Response.json(
       {
         error:
@@ -73,7 +76,7 @@ export async function GET(
           k.error?.message ??
           g.error?.message ??
           coating.error?.message ??
-          accessories.error?.message,
+          accessories.error?.message ?? estimates.error?.message,
       },
       { status: 500 },
     );
@@ -143,11 +146,28 @@ export async function GET(
     }));
   const statuses = await queryProjectMaterialCostStatuses(supabase, [id]);
   if (statuses.error) return Response.json({ error: statuses.error.message }, { status: 500 });
+  const progressTasks: { id: number; task_name: string | null; status: string | null; due_date: string | null }[] = [];
+  for (let offset = 0; ; offset += 1000) {
+    const tasks = await supabase.from("tasks").select("id,task_name,status,due_date")
+      .eq("project_id", id).order("id").range(offset, offset + 999);
+    if (tasks.error) return Response.json({ error: tasks.error.message }, { status: 500 });
+    progressTasks.push(...tasks.data);
+    if (tasks.data.length < 1000) break;
+  }
   return Response.json({
+    progress_tasks: progressTasks,
+    al_cost_comparison: {
+      estimates: (estimates.data ?? []).map(row => ({ quantityKg: Number(row.expected_quantity_kg), costKrw: Number(row.expected_cost_krw) })),
+      current: materials.filter(row => row.material_code === "AL").map(row => ({ quantityKg: Number(row.expected_quantity_kg), costKrw: Number(row.expected_cost_krw) })),
+    },
     material_cost_status: statuses.data.get(id),
     canManage: employee.role === "admin",
     project: p.data,
     contract_summary: record.contract_summary,
+    contract_change_entries: contracts.filter(entry => entry.status === "confirmed").map(entry => ({
+      id: entry.id, entry_type: entry.entry_type, contract_title: entry.contract_title,
+      effective_date: entry.effective_date, supply_amount_krw: Number(entry.supply_amount_krw),
+    })),
     contract_entry_count: contracts.filter((e) => e.status === "confirmed")
       .length,
     material_cost_summary: record.material_cost_summary,

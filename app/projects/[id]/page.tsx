@@ -120,6 +120,9 @@ type Employee = {
 };
 
 const statusList = ["pending", "in_progress", "completed"];
+function showsTaskDueDate(taskType: string | null) {
+  return Boolean(taskType?.includes("제작") || taskType?.includes("출고"));
+}
 const getSectionOpenKey = (vendorId: number, sectionId: number) => `${vendorId}:${sectionId}`;
 const taskNotePreviewTimeFormatter = new Intl.DateTimeFormat("ko-KR", {
   month: "2-digit",
@@ -1056,7 +1059,7 @@ export default function ProjectDetail() {
           assignee: savedAssignee,
           status: taskForm.status,
           start_date: taskForm.start_date || null,
-          due_date: taskForm.due_date || null,
+          due_date: showsTaskDueDate(taskForm.task_type) ? taskForm.due_date || null : null,
           completed_date:
             isTaskCompleted(taskForm.status)
               ? new Date().toISOString().slice(0, 10)
@@ -1326,6 +1329,8 @@ export default function ProjectDetail() {
 
   async function updateTaskDueDate(taskId: number, newDueDate: string | null) {
     if (isUpdating) return;
+    const task = tasks.find((item) => item.id === taskId);
+    if (!task || !showsTaskDueDate(task.task_type)) return;
 
     setIsUpdating(true);
 
@@ -1372,6 +1377,42 @@ export default function ProjectDetail() {
     }
 
     setIsUpdating(false);
+  }
+
+  async function restoreTaskVendor(taskId: number, organizationId: number) {
+    if (isUpdating || !canEditTaskName) return;
+    const existingVendor = assemblyVendors.find((vendor) => vendor.organizationId === organizationId);
+    if (existingVendor) {
+      await updateTaskVendor(taskId, existingVendor.id);
+      return;
+    }
+    const vendor = assemblyVendorOptions.find((option) => option.id === organizationId);
+    if (!vendor || !canUpdateProject) return;
+
+    setIsUpdating(true);
+    try {
+      const { error } = await supabase.rpc("restore_unassigned_task_vendor", {
+        p_project_id: Number(projectId),
+        p_task_id: taskId,
+        p_organization_id: organizationId,
+      });
+      if (error) {
+        toast.error(error.message);
+        return;
+      }
+      await addActivity({
+        type: "task_update",
+        title: "미지정 업무 조립업체 복구",
+        description: `${vendor.name} 업체를 프로젝트에 다시 연결하고 기존 업무를 배정했습니다.`,
+        projectId: Number(projectId),
+        targetType: "task",
+        targetId: taskId,
+        metadata: { organizationId },
+      });
+      await loadProject();
+    } finally {
+      setIsUpdating(false);
+    }
   }
 
   async function updateTaskVendor(taskId: number, projectAssemblyVendorId: number) {
@@ -2581,7 +2622,7 @@ export default function ProjectDetail() {
                       />
                     </td>
                     <td className="h-14 px-2 py-2 align-middle">
-                      <div className="flex min-w-0 items-center gap-1.5">
+                      {showsTaskDueDate(task.task_type) && <div className="flex min-w-0 items-center gap-1.5">
                         <DatePicker
                           value={task.due_date}
                           disabled={isUpdating}
@@ -2590,7 +2631,7 @@ export default function ProjectDetail() {
                           className="min-w-0 flex-1"
                         />
                         {!isTaskCompleted(task.status) && <DdayBadge targetDate={task.due_date} className="shrink-0 whitespace-nowrap px-2 py-0.5 text-[11px]" />}
-                      </div>
+                      </div>}
                     </td>
                     <td className="h-14 px-2 py-2 align-middle">
                       <select
@@ -2682,7 +2723,31 @@ export default function ProjectDetail() {
         {tasks.some((task) => task.project_assembly_vendor_id == null) && (
           <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
             <b>조립업체 미지정 레거시 업무 {tasks.filter((task) => task.project_assembly_vendor_id == null).length}건</b>
-            <p className="mt-1 text-xs">조립업체가 없는 프로젝트의 기존 업무는 호환성을 위해 미지정 상태로 유지됩니다.</p>
+            <p className="mt-1 text-xs">조립업체 연결이 없는 기존 업무입니다. 변경 전 업체도 다시 선택할 수 있으며, 현재 프로젝트에 없는 업체는 추가로 연결합니다. 기존 내용과 메모는 유지됩니다.</p>
+            <div className="mt-3 space-y-2">
+              {tasks.filter((task) => task.project_assembly_vendor_id == null).map((task) => (
+                <div key={task.id} className="flex flex-wrap items-center justify-between gap-2">
+                  <span>{task.task_name || `업무 #${task.id}`}</span>
+                  <select
+                    aria-label={`${task.task_name || "업무"} 조립업체 지정`}
+                    value=""
+                    disabled={isUpdating || !canEditTaskName}
+                    onChange={(event) => void restoreTaskVendor(task.id, Number(event.target.value))}
+                    className="rounded-lg border border-amber-200 bg-white px-2 py-1 text-xs disabled:opacity-50"
+                  >
+                    <option value="" disabled>조립업체 선택</option>
+                    {assemblyVendors.map((vendor) => (
+                      <option key={vendor.id} value={vendor.organizationId}>{vendor.organizationName}</option>
+                    ))}
+                    {assemblyVendorOptions.filter((option) => !assemblyVendors.some((vendor) => vendor.organizationId === option.id)).map((option) => (
+                      <option key={`additional-${option.id}`} value={option.id} disabled={!canUpdateProject}>
+                        {option.name} (프로젝트에 다시 연결{!canUpdateProject ? " · 관리자/매니저 권한 필요" : ""})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              ))}
+            </div>
           </div>
         )}
         {sections.length === 0 && <EmptyState message="등록된 공정이 없습니다." />}
@@ -2814,6 +2879,7 @@ export default function ProjectDetail() {
                   setTaskForm({
                     ...taskForm,
                     task_type: e.target.value,
+                    due_date: showsTaskDueDate(e.target.value) ? taskForm.due_date : "",
                     quantity: e.target.value.includes("출고") ? taskForm.quantity : "",
                   })
                 }
@@ -2894,7 +2960,7 @@ export default function ProjectDetail() {
                 placeholder="시작일 선택"
                 className="w-full"
               />
-              <DatePicker
+              {showsTaskDueDate(taskForm.task_type) && <DatePicker
                 value={taskForm.due_date || null}
                 onSave={(date) =>
                   setTaskForm((current) => ({
@@ -2904,7 +2970,7 @@ export default function ProjectDetail() {
                 }
                 placeholder="마감일 선택"
                 className="w-full"
-              />
+              />}
               <select
                 className="h-10 w-full rounded-2xl border border-slate-200 bg-slate-50 px-3 text-sm outline-none transition-colors focus:border-blue-300 focus:bg-white"
                 value={taskForm.status}
